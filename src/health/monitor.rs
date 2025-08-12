@@ -181,6 +181,7 @@ impl HealthMonitor {
         }
 
         // Check if we need to send an alarm (but NOT for maintenance status)
+        // This prevents false alarms when nodes are deliberately down for maintenance
         if !matches!(health.status, HealthStatus::Maintenance) && self.should_send_alarm(node_name, &health).await {
             if let Err(e) = self.send_health_alarm(node_name, &health).await {
                 error!("Failed to send alarm for node {}: {}", node_name, e);

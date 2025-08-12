@@ -306,12 +306,10 @@ impl SshManager {
             .start_maintenance(&node_name, "pruning", 30, server_name)
             .await?;
 
-        // STEP 2: Send maintenance start notification
-        if let Err(e) = self.send_maintenance_notification(&node_name, "started", "pruning").await {
-            warn!("Failed to send maintenance start notification: {}", e);
-        }
+        // STEP 2: No start notification sent to avoid information overload
+        // The maintenance tracker will handle showing maintenance status in the UI
 
-        // STEP 3: Execute pruning with proper error handling
+        // STEP 2: Execute pruning with proper error handling
         let pruning_result = async {
             // Stop the service
             self.stop_service(server_name, service_name).await?;
@@ -333,18 +331,18 @@ impl SshManager {
         }
         .await;
 
-        // STEP 4: End maintenance mode (regardless of success/failure)
+        // STEP 3: End maintenance mode (regardless of success/failure)
         if let Err(e) = self.maintenance_tracker.end_maintenance(&node_name).await {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // STEP 5: Send completion notification
+        // STEP 4: Send completion notification (success or failure)
         let completion_status = if pruning_result.is_ok() { "completed" } else { "failed" };
         if let Err(e) = self.send_maintenance_notification(&node_name, completion_status, "pruning").await {
             warn!("Failed to send maintenance completion notification: {}", e);
         }
 
-        // STEP 6: Return the actual pruning result
+        // STEP 5: Return the actual pruning result
         match pruning_result {
             Ok(_) => {
                 info!("Pruning completed successfully for node {} on server {}", node_name, server_name);
@@ -358,6 +356,9 @@ impl SshManager {
     }
 
     /// Send maintenance notification webhook
+    /// Note: Only sends completion/failure notifications, not start notifications
+    /// to avoid information overload. The health monitor automatically suppresses
+    /// down/unhealthy alerts when nodes are in maintenance mode.
     async fn send_maintenance_notification(&self, node_name: &str, status: &str, operation: &str) -> Result<()> {
         if self.config.alarm_webhook_url.is_empty() {
             return Ok(());
