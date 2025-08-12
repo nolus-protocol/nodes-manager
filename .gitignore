@@ -47,10 +47,12 @@ Thumbs.db
 !*.pub
 
 # Configuration files with sensitive data
-# Uncomment these if your configs contain secrets
-# config/*.toml
-# config/*.yaml
-# config/*.json
+config/*.toml
+config/*.yaml
+config/*.json
+!config/*.toml.example
+!config/*.yaml.example
+!config/*.json.example
 
 # Environment files
 .env

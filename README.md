@@ -1,26 +1,30 @@
 # Blockchain Nodes Manager
 
-A robust, production-ready Rust application for managing 20+ blockchain nodes with automated health monitoring, scheduled maintenance, and Hermes relayer management through a comprehensive web interface and REST API.
+A comprehensive Rust-based system for managing 20+ blockchain nodes with health monitoring, automated pruning using cosmos-pruner, and Hermes relayer management through a web interface.
 
-## 🌟 Features
+## 🚀 Features
 
-- **🔍 Real-time Health Monitoring** - Continuous monitoring of blockchain nodes via RPC calls
-- **⚙️ Automated Maintenance** - Scheduled pruning operations with configurable parameters
-- **🔗 Hermes Relayer Management** - Automated restart and dependency management for IBC relayers
-- **🖥️ Multi-Server Support** - Manage nodes across multiple servers with SSH connection pooling
-- **📊 Web Dashboard** - Clean web interface with real-time status updates
-- **🛡️ Concurrent Safety** - Server-specific connection limits and parallel operations
-- **📈 Health Metrics** - Comprehensive node health tracking with historical data
-- **🔧 Hot Configuration Reload** - Update configurations without service restart
-- **📋 Comprehensive Logging** - Structured logging with configurable levels
-- **🎯 Batch Operations** - Execute operations across multiple nodes simultaneously
+### Core Functionality
+- **Health Monitoring**: Real-time RPC status checks with configurable intervals
+- **Automated Pruning**: Integration with `cosmos-pruner` tool for efficient blockchain data management
+- **Hermes Management**: Smart relayer restarts with RPC-based dependency validation
+- **Web Interface**: RESTful API with comprehensive endpoints for all operations
+- **SSH Management**: Async connection pooling with per-server concurrency limits
+- **Configuration**: Hot-reload capability with multi-server support
+
+### Advanced Capabilities
+- **Parallel Operations**: Execute maintenance across multiple servers simultaneously
+- **Dependency Validation**: Hermes restarts only when dependent nodes are healthy and synced
+- **Scheduled Maintenance**: Cron-based automation with timezone awareness
+- **Real-time Monitoring**: Continuous health checks with database persistence
+- **Batch Operations**: Execute pruning/restarts across multiple nodes efficiently
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Web Interface │    │  Health Monitor │    │ Maintenance     │
-│   (Axum + HTML)│    │  (1-2 min cycle)│    │ Scheduler       │
+│   (Axum + API)  │    │  (RPC Polling)  │    │ Scheduler       │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -28,316 +32,258 @@ A robust, production-ready Rust application for managing 20+ blockchain nodes wi
          ┌─────────────────────────────────────────────────┐
          │              Core Engine                        │
          │  ┌─────────────┐  ┌─────────────┐  ┌──────────┐│
-         │  │Config Mgmt  │  │  Database   │  │SSH Client││
+         │  │Config Mgmt  │  │  Database   │  │SSH Pool  ││
+         │  │(Hot Reload) │  │  (SQLite)   │  │Manager   ││
          │  └─────────────┘  └─────────────┘  └──────────┘│
          └─────────────────────────────────────────────────┘
                                  │
          ┌─────────────────────────────────────────────────┐
-         │              External Systems                   │
+         │            Blockchain Infrastructure            │
          │  ┌─────────────┐  ┌─────────────┐  ┌──────────┐│
-         │  │Blockchain   │  │   n8n       │  │ Remote   ││
-         │  │RPC Nodes    │  │(Webhooks)   │  │ Servers  ││
+         │  │   Cosmos    │  │   Hermes    │  │ Remote   ││
+         │  │   Nodes     │  │  Relayers   │  │ Servers  ││
          │  └─────────────┘  └─────────────┘  └──────────┘│
          └─────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+## 🛠️ Installation
 
 ### Prerequisites
-
 - Rust 1.70+
-- SSH access to blockchain node servers
-- SQLite (automatically managed)
+- `cosmos-pruner` tool installed on target servers
+- SSH access to all blockchain servers
+- SQLite3
 
-### Installation
+### Build & Setup
+```bash
+# Clone repository
+git clone https://github.com/nolus-protocol/nodes-manager.git
+cd nodes-manager
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-username/blockchain-nodes-manager.git
-   cd blockchain-nodes-manager
-   ```
+# Build release version
+cargo build --release
 
-2. **Build the application**
-   ```bash
-   cargo build --release
-   ```
+# Create required directories
+mkdir -p data static config
 
-3. **Set up configuration**
-   ```bash
-   mkdir -p config
-   cp config/main.toml.example config/main.toml
-   cp config/server.toml.example config/discovery.toml
-   # Edit configuration files as needed
-   ```
+# Set up configuration files
+cp config/main.toml.example config/main.toml
+cp config/discovery.toml.example config/discovery.toml
+# Edit configurations with your server details
 
-4. **Run the application**
-   ```bash
-   ./target/release/nodes-manager
-   ```
-
-5. **Access the web interface**
-   ```
-   http://localhost:8095
-   ```
+# Ensure SSH keys have correct permissions
+chmod 600 /path/to/your/ssh/keys
+```
 
 ## ⚙️ Configuration
 
 ### Main Configuration (`config/main.toml`)
-
 ```toml
-# Server settings
 host = "0.0.0.0"
 port = 8095
-
-# Monitoring settings
 check_interval_seconds = 90
 rpc_timeout_seconds = 10
 alarm_webhook_url = "http://your-n8n-instance/webhook/node-alarm"
-
-# Hermes settings
 hermes_min_uptime_minutes = 5
 ```
 
-### Server Configuration (`config/server_name.toml`)
-
+### Server Configuration Example (`config/discovery.toml`)
 ```toml
 [server]
-host = "192.168.1.10"
-ssh_key_path = "/path/to/ssh-key"
+host = "192.168.11.206"
+ssh_key_path = "/path/to/ssh/key"
 ssh_username = "root"
 max_concurrent_ssh = 5
 ssh_timeout_seconds = 30
 
-[nodes.node-name]
-rpc_url = "http://192.168.1.10:26657"
+[nodes.osmosis-1]
+rpc_url = "http://192.168.11.206:26657"
 network = "osmosis-1"
-server_host = "server_name"
+server_host = "discovery"
 enabled = true
 pruning_enabled = true
-pruning_schedule = "0 0 12 * * 2"  # Tuesdays at 12:00
+pruning_schedule = "0 0 6 * * 2"  # Tuesdays at 6AM UTC
 pruning_keep_blocks = 8000
 pruning_keep_versions = 8000
-pruning_deploy_path = "/opt/deploy/osmosis"
+pruning_deploy_path = "/opt/deploy/osmosis/data"
 pruning_service_name = "osmosis"
 
-[hermes.relay-name]
-server_host = "server_name"
+[hermes.relay-discovery]
+server_host = "discovery"
 service_name = "hermes"
 log_path = "/var/log/hermes"
-restart_schedule = "0 0 16 * * 2"  # Tuesdays at 16:00
-dependent_nodes = ["node-name"]
+restart_schedule = "0 0 16 * * 2"  # Tuesdays at 4PM UTC
+dependent_nodes = ["discovery-osmosis-1", "discovery-neutron-1"]
 ```
 
-## 📡 API Reference
+## 🚀 Usage
 
-### Health Monitoring
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/nodes/health` | Get health status of all nodes |
-| `GET` | `/api/nodes/{name}/health` | Get specific node health |
-| `GET` | `/api/nodes/{name}/history?limit=50` | Get node health history |
-| `POST` | `/api/nodes/{name}/check` | Force immediate health check |
-
-### Maintenance Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/maintenance/schedule` | Get all scheduled operations |
-| `POST` | `/api/maintenance/pruning` | Schedule node pruning |
-| `POST` | `/api/maintenance/hermes-restart` | Schedule Hermes restart |
-| `DELETE` | `/api/maintenance/{id}` | Cancel scheduled operation |
-| `POST` | `/api/maintenance/run-now` | Execute operation immediately |
-| `GET` | `/api/maintenance/logs?limit=100` | Get maintenance logs |
-| `POST` | `/api/maintenance/prune-multiple` | Batch pruning operations |
-| `POST` | `/api/maintenance/restart-multiple` | Batch Hermes restarts |
-| `GET` | `/api/maintenance/status/{operation_id}` | Get operation status |
-| `GET` | `/api/maintenance/summary` | Get operations summary |
-
-### Hermes Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/hermes/instances` | Get all Hermes instances |
-| `POST` | `/api/hermes/{name}/restart` | Restart specific Hermes instance |
-| `GET` | `/api/hermes/{name}/status` | Get Hermes instance status |
-| `POST` | `/api/hermes/restart-all` | Restart all Hermes instances |
-
-### Configuration Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/config/nodes` | Get all node configurations |
-| `PUT` | `/api/config/nodes/{name}` | Update node configuration |
-| `GET` | `/api/config/hermes` | Get Hermes configurations |
-| `GET` | `/api/config/servers` | Get server configurations |
-| `POST` | `/api/config/reload` | Hot reload configurations |
-| `POST` | `/api/config/validate` | Validate configuration |
-| `GET` | `/api/config/files` | List configuration files |
-
-### System Status
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/system/status` | Overall system health |
-| `GET` | `/api/system/ssh-connections` | SSH connection pool status |
-| `GET` | `/api/system/operations` | Running operations |
-| `GET` | `/api/system/health` | Service health check |
-| `GET` | `/api/system/connectivity` | Test server connectivity |
-| `GET` | `/api/system/services` | All service statuses |
-
-### Utility Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/docs` | API documentation |
-| `GET` | `/api/version` | Version information |
-| `GET` | `/health` | Simple health check |
-
-## 🛠️ Production Deployment
-
-Simply build and run the binary in your preferred environment:
-
+### Start the Service
 ```bash
-# Build for production
-cargo build --release
-
-# Run with custom configuration
-RUST_LOG=info ./target/release/nodes-manager
-
-# Or run in background
-nohup ./target/release/nodes-manager > /var/log/nodes-manager.log 2>&1 &
+./target/release/nodes-manager
 ```
 
-## 📊 Usage Examples
+### API Endpoints
 
-### Batch Operations
-
+#### Health Monitoring
 ```bash
-# Prune multiple nodes
-curl -X POST http://localhost:8095/api/maintenance/prune-multiple \
-  -H "Content-Type: application/json" \
-  -d '{"node_names": ["node1", "node2", "node3"]}'
+# Get all nodes health
+GET /api/nodes/health
+
+# Get specific node health
+GET /api/nodes/{name}/health
+
+# Force health check
+POST /api/nodes/{name}/check
+```
+
+#### Maintenance Operations
+```bash
+# Execute immediate pruning
+POST /api/maintenance/run-now
+{
+  "operation_type": "pruning",
+  "target_name": "discovery-osmosis-1",
+  "schedule": "immediate"
+}
+
+# Batch pruning multiple nodes
+POST /api/maintenance/prune-multiple
+{
+  "node_names": ["discovery-osmosis-1", "enterprise-neutron-1"]
+}
+
+# Get maintenance logs
+GET /api/maintenance/logs
+```
+
+#### Hermes Management
+```bash
+# Restart Hermes instance
+POST /api/hermes/{name}/restart
 
 # Restart all Hermes instances
-curl -X POST http://localhost:8095/api/hermes/restart-all
+POST /api/hermes/restart-all
 
-# Check system status
-curl http://localhost:8095/api/system/status | jq
+# Get Hermes status
+GET /api/hermes/{name}/status
 ```
 
-### Scheduling Operations
-
+#### Configuration Management
 ```bash
-# Schedule weekly pruning
-curl -X POST http://localhost:8095/api/maintenance/pruning \
-  -H "Content-Type: application/json" \
-  -d '{
-    "operation_type": "pruning",
-    "target_name": "osmosis-node",
-    "schedule": "0 0 12 * * 1"
-  }'
+# Reload configuration
+POST /api/config/reload
+
+# Validate configuration
+POST /api/config/validate
+
+# Update node configuration
+PUT /api/config/nodes/{name}
 ```
 
-### Monitoring
+## 🔧 Key Features in Detail
 
+### Pruning with cosmos-pruner
+The system uses the `cosmos-pruner` tool instead of custom scripts:
 ```bash
-# Get all node health
-curl http://localhost:8095/api/nodes/health | jq
-
-# Get specific node history
-curl "http://localhost:8095/api/nodes/osmosis-1/history?limit=10" | jq
+cosmos-pruner prune /opt/deploy/osmosis/data --blocks=8000 --versions=8000
 ```
 
-## 🔧 Development
+**Process:**
+1. Stop blockchain service
+2. Execute cosmos-pruner with configured parameters
+3. Restart blockchain service
+4. Verify service health
 
-### Building from Source
+### Intelligent Hermes Restart
+Hermes relayers restart only when ALL dependent nodes are:
+- ✅ **Healthy** (RPC status check passes)
+- ✅ **Synced** (not catching up)
+- ✅ **Recent** (health data less than 5 minutes old)
 
+### Async SSH Operations
+- **Connection pooling** per server
+- **Configurable concurrency limits** (3-5 connections per server)
+- **Parallel execution** across different servers
+- **Sequential execution** on same server (prevents conflicts)
+
+### Timezone Handling
+⚠️ **Important**: All cron schedules run in the timezone where the Node Manager is deployed.
+
+**Time Conversion Example:**
+- Local time: 10:00 EEST (UTC+3)
+- Config schedule: `"0 0 7 * * 2"` (7:00 AM UTC)
+- Result: Runs at 10:00 AM local time
+
+## 🔍 Monitoring & Debugging
+
+### System Status
 ```bash
-# Development build
-cargo build
+# Overall system status
+curl http://localhost:8095/api/system/status
 
-# Release build
-cargo build --release
+# SSH connections status
+curl http://localhost:8095/api/system/ssh-connections
 
-# Run tests
-cargo test
-
-# Check code formatting
-cargo fmt --check
-
-# Run clippy lints
-cargo clippy
+# Running operations
+curl http://localhost:8095/api/system/operations
 ```
 
-### Project Structure
-
-```
-blockchain-nodes-manager/
-├── src/
-│   ├── config/         # Configuration management
-│   ├── database.rs     # SQLite database operations
-│   ├── health/         # Health monitoring system
-│   ├── scheduler/      # Maintenance scheduling
-│   ├── ssh/           # SSH connection management
-│   ├── web/           # Web server and API handlers
-│   └── main.rs        # Application entry point
-├── config/            # Configuration files
-├── static/            # Web interface assets
-└── data/             # Runtime data (databases, logs)
+### Health Check Endpoint
+```bash
+curl http://localhost:8095/health
 ```
 
-## 🚨 Alarm System
+### Logs and Troubleshooting
+- Health checks run every 90 seconds (configurable)
+- Failed operations are logged with detailed error messages
+- SSH connection failures automatically trigger reconnection
+- Database cleanup runs hourly for old records
 
-The system can send webhooks to external systems (like n8n) when nodes become unhealthy:
+## 🔐 Security Considerations
 
-```json
-{
-  "timestamp": "2025-08-11T10:00:00Z",
-  "alarm_type": "node_health",
-  "severity": "high",
-  "node_name": "osmosis-mainnet-1",
-  "message": "Node is not responding",
-  "details": {
-    "current_block": 15228588,
-    "catching_up": true,
-    "network": "osmosis-1"
-  }
-}
-```
+- SSH key permissions: `chmod 600 /path/to/keys`
+- Config files may contain sensitive information
+- Use firewalls to restrict API access
+- Monitor SSH connection limits per server
+- Regular security updates for all dependencies
+
+## 🛡️ Production Deployment
+
+### Backup Strategy
+- Regular database backups: `data/nodes.db`
+- Configuration backup: `config/*.toml`
+- Log rotation for maintenance logs
+
+## 📊 Performance
+
+- **Health checks**: 20+ nodes in <5 seconds (parallel execution)
+- **SSH connections**: Pooled and reused (configurable limits)
+- **Database**: SQLite with indexed queries for fast access
+- **Memory usage**: ~20-50MB typical operation
+- **Pruning operations**: Depends on node size (typically 10-30 minutes)
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-### Code Style
+## 📄 License
 
-- Follow Rust standard formatting (`cargo fmt`)
-- Run clippy lints (`cargo clippy`)
-- Add tests for new functionality
-- Update documentation for API changes
+MIT License - see [LICENSE](LICENSE) file for details.
 
-## 📝 License
+## 🆘 Support
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+For issues, questions, or contributions:
+- GitHub Issues: [Create an issue](https://github.com/nolus-protocol/nodes-manager/issues)
+- Documentation: Check the `/docs` directory
+- API Documentation: `GET /api/docs` when service is running
 
-## 🙏 Acknowledgments
+## 🔗 Related Projects
 
-- Built with [Axum](https://github.com/tokio-rs/axum) web framework
-- Uses [SQLx](https://github.com/launchbadge/sqlx) for database operations
-- SSH operations powered by [async-ssh2-tokio](https://github.com/TatriX/async-ssh2-tokio)
-- Scheduling with [tokio-cron-scheduler](https://github.com/mvniekerk/tokio-cron-scheduler)
-
-## 📞 Support
-
-- Create an [Issue](https://github.com/your-username/blockchain-nodes-manager/issues) for bug reports
-- Start a [Discussion](https://github.com/your-username/blockchain-nodes-manager/discussions) for questions
-- Check the [Wiki](https://github.com/your-username/blockchain-nodes-manager/wiki) for detailed guides
-
----
-
-**Made with ❤️ for the blockchain infrastructure community**
+- [cosmos-pruner](https://github.com/osmosis-labs/cosmos-pruner) - Blockchain state pruning tool
+- [Hermes](https://github.com/informalsystems/hermes) - IBC relayer
+- [Cosmos SDK](https://github.com/cosmos/cosmos-sdk) - Blockchain application framework
