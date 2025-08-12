@@ -1203,7 +1203,7 @@
                                         </td>
                                         <td>
                                             <div style="font-weight: 500; color: var(--text-primary);">
-                                                ${op.next_run ? formatTime(op.next_run) : 'Not scheduled'}
+                                                ${op.next_run ? formatNextRun(op.next_run) : 'Not scheduled'}
                                             </div>
                                             ${op.next_run ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${getTimeUntil(op.next_run)}</div>` : ''}
                                         </td>
@@ -1363,7 +1363,6 @@
                         <tr>
                             <th>Server</th>
                             <th>Connection Status</th>
-                            <th>Last Activity</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1375,9 +1374,6 @@
                                         <div class="status-dot-small"></div>
                                         ${connected ? 'Connected' : 'Disconnected'}
                                     </span>
-                                </td>
-                                <td style="color: var(--text-muted); font-size: 0.75rem;">
-                                    ${connected ? 'Active' : 'No recent activity'}
                                 </td>
                             </tr>
                         `).join('')}
@@ -1478,7 +1474,7 @@
             console.log('Show details for node:', nodeName);
         }
 
-        // Utility functions
+        // FIXED: Updated formatTime function to handle both past and future timestamps
         function formatTime(timestamp) {
             if (!timestamp) return 'Never';
 
@@ -1486,11 +1482,46 @@
             const now = new Date();
             const diff = now - date;
 
+            // Handle future times (negative diff)
+            if (diff < 0) {
+                const absDiff = Math.abs(diff);
+                if (absDiff < 60000) return 'In less than a minute';
+                if (absDiff < 3600000) return `In ${Math.floor(absDiff / 60000)} minutes`;
+                if (absDiff < 86400000) return `In ${Math.floor(absDiff / 3600000)} hours`;
+
+                // For dates more than 24 hours in future, show the actual date/time
+                return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }
+
+            // Handle past times (positive diff) - existing logic
             if (diff < 60000) return 'Just now';
             if (diff < 3600000) return Math.floor(diff / 60000) + ' minutes ago';
             if (diff < 86400000) return Math.floor(diff / 3600000) + ' hours ago';
 
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        // NEW: Dedicated function for formatting future timestamps (Next Run column)
+        function formatNextRun(timestamp) {
+            if (!timestamp) return 'Not scheduled';
+
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = date - now; // Future time calculation
+
+            if (diff <= 0) return 'Overdue';
+
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+            if (days > 0) {
+                return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+            } else if (hours > 0) {
+                return `Today at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+            } else {
+                return `In ${minutes} minute${minutes !== 1 ? 's' : ''}`;
+            }
         }
 
         function formatNodeName(technicalName) {

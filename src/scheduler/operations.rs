@@ -495,16 +495,102 @@ impl MaintenanceScheduler {
         Ok(operation_id)
     }
 
+    // NEW METHOD: Update scheduled operation when manual operation completes
+    pub async fn update_scheduled_operation_result(
+        &self,
+        target_name: &str,
+        operation_type: &OperationType,
+        success: bool,
+        error_message: Option<String>,
+    ) -> Result<()> {
+        let mut scheduled_ops = self.scheduled_operations.write().await;
+
+        // Find matching scheduled operation
+        for (operation_id, operation) in scheduled_ops.iter_mut() {
+            if operation.target_name == target_name && operation.operation_type == *operation_type {
+                let result = OperationResult {
+                    success,
+                    message: if success {
+                        "Manual operation completed successfully".to_string()
+                    } else {
+                        error_message.unwrap_or_else(|| "Manual operation failed".to_string())
+                    },
+                    duration_seconds: 0, // Manual operations duration not tracked here
+                    executed_at: Utc::now(),
+                };
+
+                operation.last_run = Some(Utc::now());
+                operation.update_result(result);
+
+                info!(
+                    "Updated scheduled operation {} with manual execution result: {}",
+                    operation_id,
+                    if success { "success" } else { "failure" }
+                );
+
+                // Update next run time after manual execution
+                if let Err(e) = self.update_operation_next_run(operation_id).await {
+                    warn!("Failed to update next run time for operation {}: {}", operation_id, e);
+                }
+
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    // UPDATED: Execute immediate pruning with scheduled operation tracking
     pub async fn execute_immediate_pruning(&self, node_name: &str) -> Result<()> {
         info!("Executing immediate pruning for node: {}", node_name);
-        self.execute_node_pruning(node_name).await
+
+        let result = self.execute_node_pruning(node_name).await;
+        let success = result.is_ok();
+        let error_message = if let Err(ref e) = result {
+            Some(e.to_string())
+        } else {
+            None
+        };
+
+        // Update corresponding scheduled operation
+        if let Err(e) = self.update_scheduled_operation_result(
+            node_name,
+            &OperationType::NodePruning,
+            success,
+            error_message.clone(),
+        ).await {
+            warn!("Failed to update scheduled operation for manual pruning: {}", e);
+        }
+
+        result
     }
 
+    // UPDATED: Execute immediate hermes restart with scheduled operation tracking
     pub async fn execute_immediate_hermes_restart(&self, hermes_name: &str) -> Result<()> {
         info!("Executing immediate Hermes restart: {}", hermes_name);
-        self.execute_hermes_restart(hermes_name).await
+
+        let result = self.execute_hermes_restart(hermes_name).await;
+        let success = result.is_ok();
+        let error_message = if let Err(ref e) = result {
+            Some(e.to_string())
+        } else {
+            None
+        };
+
+        // Update corresponding scheduled operation
+        if let Err(e) = self.update_scheduled_operation_result(
+            hermes_name,
+            &OperationType::HermesRestart,
+            success,
+            error_message.clone(),
+        ).await {
+            warn!("Failed to update scheduled operation for manual Hermes restart: {}", e);
+        }
+
+        result
     }
 
+    // UPDATED: Batch pruning should also update scheduled operations
     pub async fn execute_batch_pruning(&self, node_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch pruning for {} nodes", node_names.len());
 
@@ -519,6 +605,18 @@ impl MaintenanceScheduler {
 
         let result = self.ssh_manager.prune_multiple_nodes(nodes).await;
 
+        // Update scheduled operations for each completed node
+        for operation_result in &result.results {
+            if let Err(e) = self.update_scheduled_operation_result(
+                &operation_result.target_name,
+                &OperationType::NodePruning,
+                operation_result.success,
+                operation_result.error_message.clone(),
+            ).await {
+                warn!("Failed to update scheduled operation for batch pruning {}: {}", operation_result.target_name, e);
+            }
+        }
+
         info!(
             "Batch pruning completed: {}/{} successful",
             result.successful,
@@ -528,6 +626,7 @@ impl MaintenanceScheduler {
         Ok(result)
     }
 
+    // UPDATED: Batch hermes restart should also update scheduled operations
     pub async fn execute_batch_hermes_restart(&self, hermes_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch Hermes restart for {} instances", hermes_names.len());
 
@@ -539,6 +638,18 @@ impl MaintenanceScheduler {
         }
 
         let result = self.ssh_manager.restart_multiple_hermes(hermes_instances).await;
+
+        // Update scheduled operations for each completed hermes instance
+        for operation_result in &result.results {
+            if let Err(e) = self.update_scheduled_operation_result(
+                &operation_result.target_name,
+                &OperationType::HermesRestart,
+                operation_result.success,
+                operation_result.error_message.clone(),
+            ).await {
+                warn!("Failed to update scheduled operation for batch hermes restart {}: {}", operation_result.target_name, e);
+            }
+        }
 
         info!(
             "Batch Hermes restart completed: {}/{} successful",
