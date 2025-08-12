@@ -18,6 +18,7 @@ use tracing::info;
 use crate::config::ConfigManager;
 use crate::database::Database;
 use crate::health::HealthMonitor;
+use crate::maintenance_tracker::MaintenanceTracker;
 use crate::scheduler::MaintenanceScheduler;
 use crate::ssh::SshManager;
 use crate::web::{handlers, AppState};
@@ -30,6 +31,7 @@ pub async fn start_web_server(
     ssh_manager: Arc<SshManager>,
     scheduler: Arc<MaintenanceScheduler>,
     config_manager: Arc<ConfigManager>,
+    maintenance_tracker: Arc<MaintenanceTracker>,
 ) -> Result<()> {
     let app_state = AppState::new(
         config.clone(),
@@ -38,6 +40,7 @@ pub async fn start_web_server(
         ssh_manager,
         scheduler,
         config_manager,
+        maintenance_tracker,
     );
 
     let app = create_app(app_state).await;
@@ -47,6 +50,7 @@ pub async fn start_web_server(
 
     info!("Web server starting on http://{}", addr);
     info!("API documentation available at http://{}/api/docs", addr);
+    info!("Maintenance tracking enabled via /api/maintenance/* endpoints");
 
     axum::serve(listener, app).await?;
 
@@ -73,6 +77,12 @@ async fn create_app(app_state: AppState) -> Router {
         .route("/maintenance/restart-multiple", post(handlers::execute_batch_hermes_restart))
         .route("/maintenance/status/:operation_id", get(handlers::get_operation_status))
         .route("/maintenance/summary", get(handlers::get_operations_summary))
+
+        // Maintenance tracking endpoints
+        .route("/maintenance/active", get(handlers::get_active_maintenance))
+        .route("/maintenance/stats", get(handlers::get_maintenance_stats))
+        .route("/maintenance/emergency-clear", post(handlers::emergency_clear_maintenance))
+        .route("/maintenance/clear/:node_name", post(handlers::clear_specific_maintenance)) // NEW ROUTE
 
         // Hermes management endpoints
         .route("/hermes/instances", get(handlers::get_all_hermes_instances))
@@ -148,6 +158,7 @@ pub async fn start_simple_server(
     ssh_manager: Arc<SshManager>,
     scheduler: Arc<MaintenanceScheduler>,
     config_manager: Arc<ConfigManager>,
+    maintenance_tracker: Arc<MaintenanceTracker>,
 ) -> Result<()> {
     let app_state = AppState::new(
         config.clone(),
@@ -156,6 +167,7 @@ pub async fn start_simple_server(
         ssh_manager,
         scheduler,
         config_manager,
+        maintenance_tracker,
     );
 
     // Simplified router for testing
@@ -163,6 +175,7 @@ pub async fn start_simple_server(
         .route("/health", get(handlers::health_check))
         .route("/api/nodes/health", get(handlers::get_all_nodes_health))
         .route("/api/system/status", get(handlers::get_system_status))
+        .route("/api/maintenance/active", get(handlers::get_active_maintenance))
         .with_state(app_state)
         .layer(TraceLayer::new_for_http());
 
@@ -207,7 +220,8 @@ pub async fn start_custom_server(
     ssh_manager: Arc<SshManager>,
     scheduler: Arc<MaintenanceScheduler>,
     config_manager: Arc<ConfigManager>,
-    server_config: ServerConfig,
+    maintenance_tracker: Arc<MaintenanceTracker>,
+    _server_config: ServerConfig,
 ) -> Result<()> {
     let app_state = AppState::new(
         config.clone(),
@@ -216,18 +230,10 @@ pub async fn start_custom_server(
         ssh_manager,
         scheduler,
         config_manager,
+        maintenance_tracker,
     );
 
-    let mut app = create_app(app_state).await;
-
-    // Apply server configuration
-    if !server_config.enable_cors {
-        // Remove CORS layer - would need to be implemented differently in practice
-    }
-
-    if server_config.max_body_size != 1024 * 1024 {
-        app = app.layer(DefaultBodyLimit::max(server_config.max_body_size));
-    }
+    let app = create_app(app_state).await;
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -251,7 +257,8 @@ pub async fn get_server_metrics() -> serde_json::Value {
             "tracing",
             "static_files",
             "json_api",
-            "health_checks"
+            "health_checks",
+            "maintenance_tracking"
         ]
     })
 }

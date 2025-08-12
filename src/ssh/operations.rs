@@ -451,6 +451,7 @@ impl Clone for SshManager {
             connections: self.connections.clone(),
             server_semaphores: self.server_semaphores.clone(),
             config: self.config.clone(),
+            maintenance_tracker: self.maintenance_tracker.clone(),
         }
     }
 }

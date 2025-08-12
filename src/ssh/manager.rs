@@ -1,23 +1,26 @@
 // File: src/ssh/manager.rs
 
 use anyhow::Result;
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 
+use crate::maintenance_tracker::MaintenanceTracker;
 use crate::ssh::{ServiceStatus, SshConnection};
-use crate::{Config, HermesConfig, NodeConfig, ServerConfig};
+use crate::{AlarmPayload, Config, HermesConfig, NodeConfig, ServerConfig};
 
 pub struct SshManager {
     pub connections: Arc<RwLock<HashMap<String, Arc<Mutex<SshConnection>>>>>,
     pub server_semaphores: Arc<RwLock<HashMap<String, Arc<Semaphore>>>>,
     pub config: Arc<Config>,
+    pub maintenance_tracker: Arc<MaintenanceTracker>,
 }
 
 impl SshManager {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, maintenance_tracker: Arc<MaintenanceTracker>) -> Self {
         let mut server_semaphores = HashMap::new();
 
         // Create semaphore for each server based on its max_concurrent_ssh setting
@@ -36,6 +39,7 @@ impl SshManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             server_semaphores: Arc::new(RwLock::new(server_semaphores)),
             config,
+            maintenance_tracker,
         }
     }
 
@@ -278,6 +282,7 @@ impl SshManager {
         Ok(())
     }
 
+    /// Enhanced pruning with maintenance mode integration
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -291,29 +296,102 @@ impl SshManager {
         let keep_blocks = node.pruning_keep_blocks.unwrap_or(1000);
         let keep_versions = node.pruning_keep_versions.unwrap_or(1000);
 
-        info!("Starting pruning for node on server {}", server_name);
+        // Create node identifier
+        let node_name = format!("{}-{}", server_name, node.network);
 
-        // Stop the service
-        self.stop_service(server_name, service_name).await?;
+        info!("Starting pruning for node {} on server {}", node_name, server_name);
 
-        // Run cosmos-pruner command using the exact path from configuration
-        let prune_command = format!(
-            "cosmos-pruner prune {} --blocks={} --versions={}",
-            deploy_path, keep_blocks, keep_versions
-        );
+        // STEP 1: Start maintenance mode
+        self.maintenance_tracker
+            .start_maintenance(&node_name, "pruning", 30, server_name)
+            .await?;
 
-        info!("Executing cosmos-pruner command: {}", prune_command);
+        // STEP 2: Send maintenance start notification
+        if let Err(e) = self.send_maintenance_notification(&node_name, "started", "pruning").await {
+            warn!("Failed to send maintenance start notification: {}", e);
+        }
 
-        let output = self.execute_command(server_name, &prune_command).await?;
-        info!("Pruning output: {}", output);
+        // STEP 3: Execute pruning with proper error handling
+        let pruning_result = async {
+            // Stop the service
+            self.stop_service(server_name, service_name).await?;
 
-        // Start the service
-        self.start_service(server_name, service_name).await?;
+            // Run cosmos-pruner command using the exact path from configuration
+            let prune_command = format!(
+                "cosmos-pruner prune {} --blocks={} --versions={}",
+                deploy_path, keep_blocks, keep_versions
+            );
 
-        info!(
-            "Pruning completed successfully for node on server {}",
-            server_name
-        );
+            info!("Executing cosmos-pruner command: {}", prune_command);
+            let output = self.execute_command(server_name, &prune_command).await?;
+            info!("Pruning output: {}", output);
+
+            // Start the service
+            self.start_service(server_name, service_name).await?;
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        // STEP 4: End maintenance mode (regardless of success/failure)
+        if let Err(e) = self.maintenance_tracker.end_maintenance(&node_name).await {
+            error!("Failed to end maintenance mode for {}: {}", node_name, e);
+        }
+
+        // STEP 5: Send completion notification
+        let completion_status = if pruning_result.is_ok() { "completed" } else { "failed" };
+        if let Err(e) = self.send_maintenance_notification(&node_name, completion_status, "pruning").await {
+            warn!("Failed to send maintenance completion notification: {}", e);
+        }
+
+        // STEP 6: Return the actual pruning result
+        match pruning_result {
+            Ok(_) => {
+                info!("Pruning completed successfully for node {} on server {}", node_name, server_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Pruning failed for node {} on server {}: {}", node_name, server_name, e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Send maintenance notification webhook
+    async fn send_maintenance_notification(&self, node_name: &str, status: &str, operation: &str) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let server_host = self.get_server_for_node(node_name).await.unwrap_or_else(|| "unknown".to_string());
+
+        let alarm = AlarmPayload {
+            timestamp: chrono::Utc::now(),
+            alarm_type: "node_maintenance".to_string(),
+            severity: "info".to_string(),
+            node_name: node_name.to_string(),
+            message: format!("Node {} maintenance {}: {}", node_name, status, operation),
+            details: json!({
+                "maintenance_status": status,
+                "operation_type": operation,
+                "server_host": server_host,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        };
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&self.config.alarm_webhook_url)
+            .json(&alarm)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            info!("Sent maintenance notification for {}: {} {}", node_name, operation, status);
+        } else {
+            warn!("Failed to send maintenance notification: HTTP {}", response.status());
+        }
+
         Ok(())
     }
 
@@ -333,6 +411,12 @@ impl SshManager {
             if !node_config.enabled {
                 warn!("Dependent node {} is disabled, skipping", node_name);
                 continue; // Skip disabled nodes
+            }
+
+            // Check if node is in maintenance - if so, consider it temporarily unhealthy
+            if self.maintenance_tracker.is_in_maintenance(node_name).await {
+                warn!("Dependent node {} is in maintenance", node_name);
+                return Ok(false);
             }
 
             // Make a quick RPC call to check if node is responding
@@ -568,6 +652,25 @@ impl SshManager {
     pub async fn get_active_connections(&self) -> usize {
         let connections = self.connections.read().await;
         connections.len()
+    }
+
+    async fn get_server_for_node(&self, node_name: &str) -> Option<String> {
+        // Try to extract server from node name format "server-network"
+        if let Some(dash_pos) = node_name.find('-') {
+            let server_part = &node_name[..dash_pos];
+            if self.config.servers.contains_key(server_part) {
+                return Some(server_part.to_string());
+            }
+        }
+
+        // Fallback: search through nodes config
+        for (config_node_name, node_config) in &self.config.nodes {
+            if config_node_name == node_name {
+                return Some(node_config.server_host.clone());
+            }
+        }
+
+        None
     }
 
     #[allow(dead_code)]

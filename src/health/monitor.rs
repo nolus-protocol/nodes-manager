@@ -1,4 +1,4 @@
-// File: src/health/monitor.rs (simple escalating alarms)
+// File: src/health/monitor.rs
 
 use anyhow::Result;
 use chrono::Utc;
@@ -12,6 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::database::Database;
 use crate::health::{parse_rpc_response, parse_block_height, parse_block_time, HealthMetrics, HealthThresholds};
+use crate::maintenance_tracker::MaintenanceTracker;
 use crate::{AlarmPayload, Config, HealthStatus, NodeConfig, NodeHealth};
 
 pub struct HealthMonitor {
@@ -22,10 +23,11 @@ pub struct HealthMonitor {
     failure_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
     last_alarm_times: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
     alarm_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
+    maintenance_tracker: Arc<MaintenanceTracker>,
 }
 
 impl HealthMonitor {
-    pub fn new(config: Arc<Config>, database: Arc<Database>) -> Self {
+    pub fn new(config: Arc<Config>, database: Arc<Database>, maintenance_tracker: Arc<MaintenanceTracker>) -> Self {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(config.rpc_timeout_seconds))
             .build()
@@ -39,14 +41,18 @@ impl HealthMonitor {
             failure_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             last_alarm_times: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             alarm_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            maintenance_tracker,
         }
     }
 
     pub async fn start_monitoring(&self) -> Result<()> {
-        info!("Starting health monitoring service");
+        info!("Starting health monitoring service with maintenance awareness");
 
         let check_interval = Duration::from_secs(self.config.check_interval_seconds);
         info!("Health check interval: {}s", check_interval.as_secs());
+
+        // Start maintenance cleanup task
+        self.start_maintenance_cleanup_task().await;
 
         loop {
             let start_time = Instant::now();
@@ -78,12 +84,18 @@ impl HealthMonitor {
             let results = futures::future::join_all(tasks).await;
             let mut successful_checks = 0;
             let mut failed_checks = 0;
+            let mut maintenance_checks = 0;
 
             for task_result in results {
                 match task_result {
                     Ok(check_result) => {
                         match check_result {
-                            Ok(_) => successful_checks += 1,
+                            Ok(health) => {
+                                successful_checks += 1;
+                                if matches!(health.status, HealthStatus::Maintenance) {
+                                    maintenance_checks += 1;
+                                }
+                            }
                             Err(e) => {
                                 failed_checks += 1;
                                 error!("Health check failed: {}", e);
@@ -99,10 +111,11 @@ impl HealthMonitor {
 
             let check_duration = start_time.elapsed();
             info!(
-                "Health check cycle completed in {:.2}s: {} successful, {} failed",
+                "Health check cycle completed in {:.2}s: {} successful, {} failed, {} in maintenance",
                 check_duration.as_secs_f64(),
                 successful_checks,
-                failed_checks
+                failed_checks,
+                maintenance_checks
             );
 
             // Cleanup old health records periodically (once per hour)
@@ -119,12 +132,30 @@ impl HealthMonitor {
         }
     }
 
-    async fn check_and_process_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<()> {
+    async fn start_maintenance_cleanup_task(&self) {
+        let maintenance_tracker = self.maintenance_tracker.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Every hour
+
+            loop {
+                interval.tick().await;
+
+                // Cleanup maintenance windows that have been running too long (4 hours max)
+                let cleaned = maintenance_tracker.cleanup_expired_maintenance(4).await;
+                if cleaned > 0 {
+                    warn!("Cleaned up {} expired maintenance windows", cleaned);
+                }
+            }
+        });
+    }
+
+    async fn check_and_process_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<NodeHealth> {
         debug!("Checking health for node: {}", node_name);
 
-        let health = self.check_node_health(node_name, node_config).await;
+        let health = self.check_node_health_with_maintenance(node_name, node_config).await;
 
-        // Handle recovery notification
+        // Handle recovery notification (only for non-maintenance status)
         if matches!(health.status, HealthStatus::Healthy) {
             // Check if node was previously unhealthy and send recovery notification
             let had_alarms = {
@@ -149,16 +180,56 @@ impl HealthMonitor {
             error!("Failed to save health data for node {}: {}", node_name, e);
         }
 
-        // Check if we need to send an alarm
-        if self.should_send_alarm(node_name, &health).await {
+        // Check if we need to send an alarm (but NOT for maintenance status)
+        if !matches!(health.status, HealthStatus::Maintenance) && self.should_send_alarm(node_name, &health).await {
             if let Err(e) = self.send_health_alarm(node_name, &health).await {
                 error!("Failed to send alarm for node {}: {}", node_name, e);
             }
         }
 
-        Ok(())
+        Ok(health)
     }
 
+    /// Enhanced health check that considers maintenance status
+    pub async fn check_node_health_with_maintenance(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
+        // STEP 1: Check if node is in maintenance
+        if self.maintenance_tracker.is_in_maintenance(node_name).await {
+            if let Some(maintenance) = self.maintenance_tracker.get_maintenance_status(node_name).await {
+                let duration = Utc::now().signed_duration_since(maintenance.started_at);
+
+                return NodeHealth {
+                    node_name: node_name.to_string(),
+                    status: HealthStatus::Maintenance,
+                    latest_block_height: None,
+                    latest_block_time: None,
+                    catching_up: None,
+                    last_check: Utc::now(),
+                    error_message: Some(format!(
+                        "Node is undergoing {} ({}m elapsed, estimated {}m total)",
+                        maintenance.operation_type,
+                        duration.num_minutes(),
+                        maintenance.estimated_duration_minutes
+                    )),
+                };
+            } else {
+                // Maintenance tracker says it's in maintenance but no details
+                return NodeHealth {
+                    node_name: node_name.to_string(),
+                    status: HealthStatus::Maintenance,
+                    latest_block_height: None,
+                    latest_block_time: None,
+                    catching_up: None,
+                    last_check: Utc::now(),
+                    error_message: Some("Node is undergoing scheduled maintenance".to_string()),
+                };
+            }
+        }
+
+        // STEP 2: Regular health check (not in maintenance)
+        self.check_node_health(node_name, node).await
+    }
+
+    /// Standard health check without maintenance considerations
     pub async fn check_node_health(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
         let start_time = Instant::now();
         let check_time = Utc::now();
@@ -303,7 +374,7 @@ impl HealthMonitor {
     }
 
     async fn should_send_alarm(&self, node_name: &str, health: &NodeHealth) -> bool {
-        if matches!(health.status, HealthStatus::Healthy) {
+        if matches!(health.status, HealthStatus::Healthy | HealthStatus::Maintenance) {
             return false;
         }
 
@@ -375,6 +446,10 @@ impl HealthMonitor {
                 let count = alarm_counts.get(node_name).copied().unwrap_or(0);
                 alarm_counts.insert(node_name.to_string(), count + 1);
             }
+
+            info!("Sent health alarm for node: {}", node_name);
+        } else {
+            warn!("Failed to send health alarm: HTTP {}", response.status());
         }
 
         Ok(())
@@ -403,6 +478,7 @@ impl HealthMonitor {
             .send()
             .await?;
 
+        info!("Sent recovery notification for node: {}", node_name);
         Ok(())
     }
 
@@ -412,10 +488,22 @@ impl HealthMonitor {
     }
 
     async fn get_server_for_node(&self, node_name: &str) -> Option<String> {
-        self.config
-            .nodes
-            .get(node_name)
-            .map(|node| node.server_host.clone())
+        // Try to extract server from node name format "server-network"
+        if let Some(dash_pos) = node_name.find('-') {
+            let server_part = &node_name[..dash_pos];
+            if self.config.servers.contains_key(server_part) {
+                return Some(server_part.to_string());
+            }
+        }
+
+        // Fallback: search through nodes config
+        for (config_node_name, node_config) in &self.config.nodes {
+            if config_node_name == node_name {
+                return Some(node_config.server_host.clone());
+            }
+        }
+
+        None
     }
 
     pub async fn get_all_health_status(&self) -> Result<Vec<NodeHealth>> {
@@ -433,9 +521,21 @@ impl HealthMonitor {
             .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        let health = self.check_node_health(node_name, node_config).await;
+        let health = self.check_node_health_with_maintenance(node_name, node_config).await;
         self.database.save_node_health(&health).await?;
         Ok(health)
+    }
+
+    /// Get maintenance status for all nodes
+    pub async fn get_maintenance_status(&self) -> HashMap<String, crate::maintenance_tracker::MaintenanceWindow> {
+        let maintenance_windows = self.maintenance_tracker.get_all_in_maintenance().await;
+        let mut status = HashMap::new();
+
+        for window in maintenance_windows {
+            status.insert(window.node_name.clone(), window);
+        }
+
+        status
     }
 }
 
@@ -449,6 +549,7 @@ impl Clone for HealthMonitor {
             failure_counts: self.failure_counts.clone(),
             last_alarm_times: self.last_alarm_times.clone(),
             alarm_counts: self.alarm_counts.clone(),
+            maintenance_tracker: self.maintenance_tracker.clone(),
         }
     }
 }

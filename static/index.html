@@ -18,6 +18,7 @@
             --success-color: #38a169;
             --warning-color: #d69e2e;
             --error-color: #e53e3e;
+            --maintenance-color: #3182ce;
             --bg-primary: #f7fafc;
             --bg-secondary: #ffffff;
             --text-primary: #1a202c;
@@ -105,6 +106,11 @@
             color: var(--error-color);
         }
 
+        .status-indicator.maintenance {
+            background-color: rgba(49, 130, 206, 0.1);
+            color: var(--maintenance-color);
+        }
+
         .status-dot {
             width: 8px;
             height: 8px;
@@ -116,6 +122,60 @@
             max-width: 1400px;
             margin: 0 auto;
             padding: 2rem;
+        }
+
+        /* Active Maintenance Alert Banner */
+        .maintenance-banner {
+            background: linear-gradient(135deg, rgba(49, 130, 206, 0.1), rgba(49, 130, 206, 0.05));
+            border: 1px solid rgba(49, 130, 206, 0.2);
+            border-radius: 0.5rem;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
+            display: none;
+        }
+
+        .maintenance-banner.active {
+            display: block;
+        }
+
+        .maintenance-banner-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }
+
+        .maintenance-banner-title {
+            font-weight: 600;
+            color: var(--maintenance-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .maintenance-operations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .maintenance-operation {
+            background: rgba(49, 130, 206, 0.1);
+            border: 1px solid rgba(49, 130, 206, 0.2);
+            border-radius: 0.375rem;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .maintenance-operation-node {
+            font-weight: 600;
+            color: var(--maintenance-color);
+        }
+
+        .maintenance-operation-details {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
         }
 
         .metrics-grid {
@@ -186,6 +246,9 @@
             padding: 1.25rem 1.5rem;
             border-bottom: 1px solid var(--border-color);
             background: #f8fafc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .panel-title {
@@ -193,6 +256,52 @@
             font-weight: 600;
             color: var(--text-primary);
             margin: 0;
+        }
+
+        .panel-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .btn:hover {
+            background: #f7fafc;
+            border-color: var(--text-muted);
+        }
+
+        .btn-danger {
+            background: rgba(229, 62, 62, 0.1);
+            border-color: rgba(229, 62, 62, 0.2);
+            color: var(--error-color);
+        }
+
+        .btn-danger:hover {
+            background: rgba(229, 62, 62, 0.15);
+        }
+
+        .btn-warning {
+            background: rgba(214, 158, 46, 0.1);
+            border-color: rgba(214, 158, 46, 0.2);
+            color: var(--warning-color);
+        }
+
+        .btn-warning:hover {
+            background: rgba(214, 158, 46, 0.15);
         }
 
         .panel-content {
@@ -252,7 +361,7 @@
 
         .status-maintenance {
             background-color: rgba(49, 130, 206, 0.1);
-            color: var(--accent-color);
+            color: var(--maintenance-color);
         }
 
         .status-dot-small {
@@ -260,6 +369,42 @@
             height: 6px;
             border-radius: 50%;
             background-color: currentColor;
+        }
+
+        .maintenance-details {
+            margin-top: 0.5rem;
+            padding: 0.75rem;
+            background: rgba(49, 130, 206, 0.05);
+            border: 1px solid rgba(49, 130, 206, 0.1);
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+        }
+
+        .maintenance-progress {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .maintenance-progress-bar {
+            flex: 1;
+            height: 0.375rem;
+            background: rgba(49, 130, 206, 0.1);
+            border-radius: 0.1875rem;
+            overflow: hidden;
+        }
+
+        .maintenance-progress-fill {
+            height: 100%;
+            background: var(--maintenance-color);
+            transition: width 0.3s ease-in-out;
+        }
+
+        .maintenance-progress-text {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            white-space: nowrap;
         }
 
         .block-height {
@@ -478,38 +623,6 @@
             color: #8b5cf6;
         }
 
-        .schedule-frequency {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
-            padding: 0.125rem 0.5rem;
-            border-radius: 0.25rem;
-            font-size: 0.75rem;
-            font-weight: 500;
-            margin-bottom: 0.25rem;
-        }
-
-        .frequency-daily {
-            background-color: rgba(34, 197, 94, 0.1);
-            color: #22c55e;
-        }
-
-        .frequency-weekly {
-            background-color: rgba(59, 130, 246, 0.1);
-            color: #3b82f6;
-        }
-
-        .frequency-monthly {
-            background-color: rgba(168, 85, 247, 0.1);
-            color: #a855f7;
-        }
-
-        .time-until {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            font-style: italic;
-        }
-
         .progress-bar {
             width: 100%;
             height: 0.5rem;
@@ -551,6 +664,15 @@
             .tabs {
                 flex-direction: column;
             }
+
+            .panel-actions {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .maintenance-operations {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -573,6 +695,26 @@
     </header>
 
     <main class="main-container">
+        <!-- Active Maintenance Banner -->
+        <div class="maintenance-banner" id="maintenance-banner">
+            <div class="maintenance-banner-header">
+                <div class="maintenance-banner-title">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                        <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+                    </svg>
+                    <span id="maintenance-banner-text">Active Maintenance Operations</span>
+                </div>
+                <button class="btn btn-danger" onclick="emergencyClearMaintenance()" title="Emergency clear all maintenance">
+                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/>
+                    </svg>
+                    Emergency Clear
+                </button>
+            </div>
+            <div class="maintenance-operations" id="maintenance-operations"></div>
+        </div>
+
         <div class="metrics-grid">
             <div class="metric-card">
                 <div class="metric-header">
@@ -612,20 +754,40 @@
 
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Operations</div>
+                    <div class="metric-title">Maintenance</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
                         <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
                     </svg>
                 </div>
-                <div class="metric-value" id="running-operations">-</div>
-                <div class="metric-subtitle" id="scheduled-operations">- scheduled tasks</div>
+                <div class="metric-value" id="maintenance-nodes">-</div>
+                <div class="metric-subtitle" id="maintenance-operations-count">- active operations</div>
             </div>
         </div>
 
         <div class="panel">
             <div class="panel-header">
                 <h2 class="panel-title">Node Status Overview</h2>
+                <div class="panel-actions">
+                    <button class="btn" onclick="forceHealthCheck()">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                        </svg>
+                        Refresh All
+                    </button>
+                    <button class="btn btn-warning" onclick="executeBatchPruning()">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                        </svg>
+                        Batch Pruning
+                    </button>
+                    <button class="btn btn-warning" onclick="restartAllHermes()">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
+                        </svg>
+                        Restart Hermes
+                    </button>
+                </div>
             </div>
             <div class="panel-content">
                 <div id="nodes-container">
@@ -640,6 +802,7 @@
         <div class="panel">
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('scheduled')">Scheduled Operations</button>
+                <button class="tab" onclick="switchTab('maintenance')">Active Maintenance</button>
                 <button class="tab" onclick="switchTab('logs')">Maintenance Logs</button>
                 <button class="tab" onclick="switchTab('system')">System Information</button>
             </div>
@@ -649,6 +812,15 @@
                     <div class="loading">
                         <div class="spinner"></div>
                         Loading scheduled operations...
+                    </div>
+                </div>
+            </div>
+
+            <div id="maintenance-content" class="tab-content">
+                <div id="maintenance-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading active maintenance...
                     </div>
                 </div>
             </div>
@@ -691,6 +863,7 @@
                 await Promise.all([
                     loadNodes(),
                     loadScheduledOperations(),
+                    loadActiveMaintenance(),
                     loadMaintenanceLogs(),
                     loadSystemStatus()
                 ]);
@@ -744,7 +917,8 @@
                                 <td>
                                     <div style="font-weight: 600;">${formatNodeName(node.node_name)}</div>
                                     <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${node.node_name}</div>
-                                    ${node.error_message ? `<div style="font-size: 0.75rem; color: var(--error-color); margin-top: 0.25rem;">${node.error_message}</div>` : ''}
+                                    ${node.error_message && node.status !== 'Maintenance' ? `<div style="font-size: 0.75rem; color: var(--error-color); margin-top: 0.25rem;">${node.error_message}</div>` : ''}
+                                    ${node.maintenance_info ? renderMaintenanceDetails(node.maintenance_info) : ''}
                                 </td>
                                 <td>
                                     <div class="node-status-badge status-${node.status.toLowerCase()}">
@@ -780,22 +954,54 @@
             container.innerHTML = tableHtml;
         }
 
+        function renderMaintenanceDetails(maintenance) {
+            const progress = calculateMaintenanceProgress(maintenance.elapsed_minutes, maintenance.estimated_duration_minutes);
+
+            return `
+                <div class="maintenance-details">
+                    <div style="font-weight: 600; color: var(--maintenance-color); margin-bottom: 0.375rem;">
+                        🔧 ${maintenance.operation_type} in progress
+                    </div>
+                    <div style="color: var(--text-muted); margin-bottom: 0.375rem;">
+                        Started: ${formatTime(maintenance.started_at)}
+                    </div>
+                    <div class="maintenance-progress">
+                        <div class="maintenance-progress-bar">
+                            <div class="maintenance-progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                        <div class="maintenance-progress-text">
+                            ${maintenance.elapsed_minutes}m / ${maintenance.estimated_duration_minutes}m
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function calculateMaintenanceProgress(elapsed, estimated) {
+            if (!elapsed || !estimated || estimated === 0) return 0;
+            return Math.min(Math.round((elapsed / estimated) * 100), 100);
+        }
+
         function updateMetrics(nodes) {
             const totalNodes = nodes.length;
             const healthyNodes = nodes.filter(n => n.status === 'Healthy').length;
+            const maintenanceNodes = nodes.filter(n => n.status === 'Maintenance').length;
             const healthPercentage = totalNodes > 0 ? Math.round((healthyNodes / totalNodes) * 100) : 0;
 
             document.getElementById('total-nodes').textContent = totalNodes;
             document.getElementById('healthy-nodes').textContent = healthyNodes;
+            document.getElementById('maintenance-nodes').textContent = maintenanceNodes;
             document.getElementById('health-percentage').textContent = `${healthPercentage}% operational`;
             document.getElementById('health-progress').style.width = `${healthPercentage}%`;
 
             // Update system status indicator
             const statusElement = document.getElementById('system-status');
-            const statusDot = statusElement.querySelector('.status-dot');
             const statusText = statusElement.querySelector('span');
 
-            if (healthPercentage === 100) {
+            if (maintenanceNodes > 0) {
+                statusElement.className = 'status-indicator maintenance';
+                statusText.textContent = `${maintenanceNodes} Node${maintenanceNodes > 1 ? 's' : ''} in Maintenance`;
+            } else if (healthPercentage === 100) {
                 statusElement.className = 'status-indicator healthy';
                 statusText.textContent = 'All Systems Operational';
             } else if (healthPercentage >= 80) {
@@ -805,6 +1011,130 @@
                 statusElement.className = 'status-indicator error';
                 statusText.textContent = 'Critical Issues';
             }
+        }
+
+        async function loadActiveMaintenance() {
+            try {
+                const response = await fetch('/api/maintenance/active');
+                const data = await response.json();
+
+                if (data.success) {
+                    updateMaintenanceBanner(data.data);
+                    updateMaintenanceMetrics(data.data);
+
+                    if (currentTab === 'maintenance') {
+                        displayActiveMaintenance(data.data);
+                    }
+                } else {
+                    throw new Error('Failed to load active maintenance');
+                }
+            } catch (error) {
+                console.error('Failed to load active maintenance:', error);
+            }
+        }
+
+        function updateMaintenanceBanner(activeMaintenance) {
+            const banner = document.getElementById('maintenance-banner');
+            const operations = document.getElementById('maintenance-operations');
+            const bannerText = document.getElementById('maintenance-banner-text');
+
+            if (activeMaintenance.length === 0) {
+                banner.classList.remove('active');
+                return;
+            }
+
+            banner.classList.add('active');
+            bannerText.textContent = `${activeMaintenance.length} Active Maintenance Operation${activeMaintenance.length > 1 ? 's' : ''}`;
+
+            const operationsHtml = activeMaintenance.map(op => `
+                <div class="maintenance-operation">
+                    <div class="maintenance-operation-node">${formatNodeName(op.node_name)}</div>
+                    <div class="maintenance-operation-details">
+                        ${op.operation_type} • ${calculateDuration(op.started_at)} elapsed
+                        • Server: ${op.server_host}
+                    </div>
+                </div>
+            `).join('');
+
+            operations.innerHTML = operationsHtml;
+        }
+
+        function updateMaintenanceMetrics(activeMaintenance) {
+            document.getElementById('maintenance-operations-count').textContent =
+                `${activeMaintenance.length} active operation${activeMaintenance.length !== 1 ? 's' : ''}`;
+        }
+
+        function displayActiveMaintenance(activeMaintenance) {
+            const container = document.getElementById('maintenance-container');
+
+            if (!activeMaintenance || activeMaintenance.length === 0) {
+                container.innerHTML = '<div class="loading">No active maintenance operations</div>';
+                return;
+            }
+
+            const html = `
+                <h3 style="margin-bottom: 1rem; color: var(--text-primary);">Currently Running Maintenance Operations</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Node</th>
+                            <th>Operation</th>
+                            <th>Server</th>
+                            <th>Started</th>
+                            <th>Progress</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${activeMaintenance.map(op => {
+                            const progress = calculateMaintenanceProgress(
+                                Math.floor((new Date() - new Date(op.started_at)) / 60000),
+                                op.estimated_duration_minutes
+                            );
+                            return `
+                                <tr>
+                                    <td>
+                                        <div style="font-weight: 600;">${formatNodeName(op.node_name)}</div>
+                                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${op.node_name}</div>
+                                    </td>
+                                    <td>
+                                        <span class="operation-type-badge ${op.operation_type.toLowerCase()}">${op.operation_type}</span>
+                                    </td>
+                                    <td><span class="server-name">${op.server_host}</span></td>
+                                    <td>
+                                        <div>${formatTime(op.started_at)}</div>
+                                        <div style="font-size: 0.75rem; color: var(--text-muted);">${calculateDuration(op.started_at)} ago</div>
+                                    </td>
+                                    <td>
+                                        <div class="maintenance-progress">
+                                            <div class="maintenance-progress-bar">
+                                                <div class="maintenance-progress-fill" style="width: ${progress}%"></div>
+                                            </div>
+                                            <div class="maintenance-progress-text">
+                                                ${Math.floor((new Date() - new Date(op.started_at)) / 60000)}m / ${op.estimated_duration_minutes}m
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-danger" onclick="clearSpecificMaintenance('${op.node_name}')" title="Force clear this maintenance">
+                                            Clear
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+
+                <div style="margin-top: 2rem; padding: 1rem; background: rgba(214, 158, 46, 0.1); border: 1px solid rgba(214, 158, 46, 0.2); border-radius: 0.375rem;">
+                    <div style="font-weight: 600; color: var(--warning-color); margin-bottom: 0.5rem;">⚠️ Maintenance Safety Notice</div>
+                    <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                        Active maintenance operations will automatically clear when completed. Only use manual clearing if an operation appears stuck or failed.
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
         }
 
         async function loadScheduledOperations() {
@@ -937,8 +1267,9 @@
             const running = data.running ? data.running.length : 0;
             const scheduled = data.scheduled ? data.scheduled.length : 0;
 
-            document.getElementById('running-operations').textContent = running;
-            document.getElementById('scheduled-operations').textContent = scheduled;
+            // Update the operations metric if it exists (we changed it to maintenance)
+            // document.getElementById('running-operations').textContent = running;
+            // document.getElementById('scheduled-operations').textContent = scheduled;
         }
 
         async function loadMaintenanceLogs() {
@@ -1042,8 +1373,16 @@
                         <div class="system-metric-label">Healthy Nodes</div>
                     </div>
                     <div class="system-metric">
-                        <div class="system-metric-value">${status.running_operations}</div>
+                        <div class="system-metric-value">${status.maintenance_nodes || 0}</div>
+                        <div class="system-metric-label">Maintenance Nodes</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.active_maintenance_operations || 0}</div>
                         <div class="system-metric-label">Active Operations</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.running_operations}</div>
+                        <div class="system-metric-label">Running Tasks</div>
                     </div>
                 </div>
 
@@ -1089,12 +1428,16 @@
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
-            const tabIndex = tabName === 'scheduled' ? 0 : tabName === 'logs' ? 1 : 2;
+            const tabIndex = tabName === 'scheduled' ? 0 :
+                           tabName === 'maintenance' ? 1 :
+                           tabName === 'logs' ? 2 : 3;
             document.querySelectorAll('.tab')[tabIndex].classList.add('active');
             document.getElementById(`${tabName}-content`).classList.add('active');
 
             if (tabName === 'scheduled') {
                 loadScheduledOperations();
+            } else if (tabName === 'maintenance') {
+                loadActiveMaintenance();
             } else if (tabName === 'logs') {
                 loadMaintenanceLogs();
             } else if (tabName === 'system') {
@@ -1102,13 +1445,67 @@
             }
         }
 
-        async function executeBatchPruning() {
-            if (!confirm('Are you sure you want to execute batch pruning on all nodes? This operation may take significant time and will stop/restart node services.')) {
+        // New maintenance management functions
+        async function emergencyClearMaintenance() {
+            if (!confirm('⚠️ EMERGENCY CLEAR ALL MAINTENANCE\n\nThis will forcefully clear ALL active maintenance operations, including those that may be legitimately running.\n\nOnly proceed if you are certain that maintenance operations are stuck or failed.\n\nContinue?')) {
                 return;
             }
 
             try {
-                showAlert('Initiating batch pruning operation...', 'success');
+                showAlert('🚨 Emergency clearing all maintenance operations...', 'warning');
+
+                const response = await fetch('/api/maintenance/emergency-clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Emergency clear completed: ${data.data.cleared_count} maintenance operations cleared`, 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Emergency clear failed');
+                }
+            } catch (error) {
+                showAlert('Emergency clear failed: ' + error.message, 'error');
+            }
+        }
+
+        // FIXED: Updated clearSpecificMaintenance function
+        async function clearSpecificMaintenance(nodeName) {
+            if (!confirm(`Clear maintenance for ${formatNodeName(nodeName)}?\n\nThis should only be done if the maintenance operation appears stuck or failed.`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Clearing maintenance for ${formatNodeName(nodeName)}...`, 'warning');
+
+                const response = await fetch(`/api/maintenance/clear/${encodeURIComponent(nodeName)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`✅ Maintenance cleared for ${formatNodeName(nodeName)}`, 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Failed to clear maintenance');
+                }
+            } catch (error) {
+                showAlert('❌ Failed to clear maintenance: ' + error.message, 'error');
+            }
+        }
+
+        async function executeBatchPruning() {
+            if (!confirm('⚠️ BATCH PRUNING OPERATION\n\nThis will start pruning operations on ALL configured nodes. During pruning:\n\n• Node services will be stopped temporarily\n• Nodes will show "Maintenance" status\n• The process may take 30+ minutes per node\n• Operations run in parallel across different servers\n\nProceed with batch pruning?')) {
+                return;
+            }
+
+            try {
+                showAlert('🔧 Initiating batch pruning operation...', 'success');
 
                 const nodesResponse = await fetch('/api/config/nodes');
                 const nodesData = await nodesResponse.json();
@@ -1128,23 +1525,23 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert(`Batch pruning operation completed: ${data.data.successful}/${data.data.total_operations} nodes processed successfully`, 'success');
+                    showAlert(`✅ Batch pruning operation completed: ${data.data.successful}/${data.data.total_operations} nodes processed successfully`, 'success');
                     loadAllData();
                 } else {
                     throw new Error(data.message || 'Batch pruning operation failed');
                 }
             } catch (error) {
-                showAlert('Batch pruning operation failed: ' + error.message, 'error');
+                showAlert('❌ Batch pruning operation failed: ' + error.message, 'error');
             }
         }
 
         async function restartAllHermes() {
-            if (!confirm('Are you sure you want to restart all Hermes relay instances? This will temporarily interrupt relaying operations.')) {
+            if (!confirm('⚠️ HERMES RESTART OPERATION\n\nThis will restart ALL Hermes relay instances. During restart:\n\n• Relay operations will be temporarily interrupted\n• Dependencies will be checked before restart\n• This may affect cross-chain transactions temporarily\n\nProceed with Hermes restart?')) {
                 return;
             }
 
             try {
-                showAlert('Initiating Hermes restart operation...', 'success');
+                showAlert('🔄 Initiating Hermes restart operation...', 'success');
 
                 const response = await fetch('/api/hermes/restart-all', {
                     method: 'POST',
@@ -1154,19 +1551,19 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert(`Hermes restart operation completed: ${data.data.successful}/${data.data.total_instances} instances restarted successfully`, 'success');
+                    showAlert(`✅ Hermes restart operation completed: ${data.data.successful}/${data.data.total_instances} instances restarted successfully`, 'success');
                     loadAllData();
                 } else {
                     throw new Error(data.message || 'Hermes restart operation failed');
                 }
             } catch (error) {
-                showAlert('Hermes restart operation failed: ' + error.message, 'error');
+                showAlert('❌ Hermes restart operation failed: ' + error.message, 'error');
             }
         }
 
         async function forceHealthCheck() {
             try {
-                showAlert('Initiating comprehensive health check...', 'success');
+                showAlert('🔍 Initiating comprehensive health check...', 'success');
 
                 const nodesResponse = await fetch('/api/config/nodes');
                 const nodesData = await nodesResponse.json();
@@ -1187,47 +1584,28 @@
                     }
                 }
 
-                showAlert(`Health check completed: ${completedChecks}/${nodeNames.length} nodes checked successfully`, 'success');
+                showAlert(`✅ Health check completed: ${completedChecks}/${nodeNames.length} nodes checked successfully`, 'success');
                 loadNodes();
             } catch (error) {
-                showAlert('Health check operation failed: ' + error.message, 'error');
+                showAlert('❌ Health check operation failed: ' + error.message, 'error');
             }
         }
 
         async function reloadConfig() {
             try {
-                showAlert('Reloading system configuration...', 'success');
+                showAlert('⚙️ Reloading system configuration...', 'success');
 
                 const response = await fetch('/api/config/reload', { method: 'POST' });
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('Configuration reloaded successfully', 'success');
+                    showAlert('✅ Configuration reloaded successfully', 'success');
                     loadAllData();
                 } else {
                     throw new Error(data.message || 'Configuration reload failed');
                 }
             } catch (error) {
-                showAlert('Configuration reload failed: ' + error.message, 'error');
-            }
-        }
-
-        async function validateConfig() {
-            try {
-                const response = await fetch('/api/config/validate', { method: 'POST' });
-                const data = await response.json();
-
-                if (data.success) {
-                    if (data.data.valid) {
-                        showAlert('Configuration validation successful - all settings are valid', 'success');
-                    } else {
-                        showAlert('Configuration validation failed: ' + data.data.error, 'error');
-                    }
-                } else {
-                    throw new Error(data.message || 'Configuration validation failed');
-                }
-            } catch (error) {
-                showAlert('Configuration validation failed: ' + error.message, 'error');
+                showAlert('❌ Configuration reload failed: ' + error.message, 'error');
             }
         }
 

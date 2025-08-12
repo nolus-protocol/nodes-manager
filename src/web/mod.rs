@@ -16,11 +16,12 @@ use std::sync::Arc;
 use crate::config::ConfigManager;
 use crate::database::Database;
 use crate::health::HealthMonitor;
+use crate::maintenance_tracker::MaintenanceTracker;
 use crate::scheduler::MaintenanceScheduler;
 use crate::ssh::SshManager;
 use crate::Config;
 
-// Shared application state
+// Shared application state with maintenance tracker
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -29,6 +30,7 @@ pub struct AppState {
     pub ssh_manager: Arc<SshManager>,
     pub scheduler: Arc<MaintenanceScheduler>,
     pub config_manager: Arc<ConfigManager>,
+    pub maintenance_tracker: Arc<MaintenanceTracker>,
 }
 
 impl AppState {
@@ -39,6 +41,7 @@ impl AppState {
         ssh_manager: Arc<SshManager>,
         scheduler: Arc<MaintenanceScheduler>,
         config_manager: Arc<ConfigManager>,
+        maintenance_tracker: Arc<MaintenanceTracker>,
     ) -> Self {
         Self {
             config,
@@ -47,6 +50,7 @@ impl AppState {
             ssh_manager,
             scheduler,
             config_manager,
+            maintenance_tracker,
         }
     }
 }
@@ -165,9 +169,11 @@ pub struct SystemStatusResponse {
     pub hermes_count: usize,
     pub healthy_nodes: usize,
     pub unhealthy_nodes: usize,
+    pub maintenance_nodes: usize,
     pub active_ssh_connections: usize,
     pub running_operations: usize,
     pub scheduled_operations: usize,
+    pub active_maintenance_operations: usize,
     pub uptime_seconds: u64,
 }
 
@@ -180,6 +186,15 @@ pub struct NodeHealthSummary {
     pub last_check: String,
     pub error_message: Option<String>,
     pub server_host: String,
+    pub maintenance_info: Option<MaintenanceInfo>,
+}
+
+#[derive(serde::Serialize)]
+pub struct MaintenanceInfo {
+    pub operation_type: String,
+    pub started_at: String,
+    pub estimated_duration_minutes: u32,
+    pub elapsed_minutes: i64,
 }
 
 #[derive(serde::Serialize)]
@@ -189,6 +204,7 @@ pub struct ServerStatusSummary {
     pub connected: bool,
     pub node_count: usize,
     pub hermes_count: usize,
+    pub nodes_in_maintenance: usize,
     pub last_activity: Option<String>,
 }
 
@@ -201,6 +217,7 @@ pub struct HealthCheckResponse {
     pub database_connected: bool,
     pub monitoring_active: bool,
     pub scheduler_active: bool,
+    pub maintenance_tracking_active: bool,
 }
 
 // Utility functions
@@ -240,15 +257,33 @@ pub fn validate_hermes_name(hermes_name: &str, config: &Config) -> ApiResult<()>
 }
 
 // Response transformation utilities
-pub fn transform_health_to_summary(
+pub async fn transform_health_to_summary(
     health: &crate::NodeHealth,
     config: &Config,
+    maintenance_tracker: &MaintenanceTracker,
 ) -> NodeHealthSummary {
     let server_host = config
         .nodes
         .get(&health.node_name)
         .map(|node| node.server_host.clone())
         .unwrap_or_else(|| "unknown".to_string());
+
+    // Get maintenance info if node is in maintenance
+    let maintenance_info = if matches!(health.status, crate::HealthStatus::Maintenance) {
+        if let Some(maintenance) = maintenance_tracker.get_maintenance_status(&health.node_name).await {
+            let elapsed = chrono::Utc::now().signed_duration_since(maintenance.started_at);
+            Some(MaintenanceInfo {
+                operation_type: maintenance.operation_type,
+                started_at: maintenance.started_at.to_rfc3339(),
+                estimated_duration_minutes: maintenance.estimated_duration_minutes,
+                elapsed_minutes: elapsed.num_minutes(),
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     NodeHealthSummary {
         node_name: health.node_name.clone(),
@@ -258,6 +293,7 @@ pub fn transform_health_to_summary(
         last_check: health.last_check.to_rfc3339(),
         error_message: health.error_message.clone(),
         server_host,
+        maintenance_info,
     }
 }
 

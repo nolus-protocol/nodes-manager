@@ -72,17 +72,58 @@ impl MaintenanceScheduler {
         Ok(())
     }
 
+    // NEW: Calculate next run time based on cron schedule
+    fn calculate_next_run(&self, schedule: &str, after: &chrono::DateTime<Utc>) -> Option<chrono::DateTime<Utc>> {
+        let parts: Vec<&str> = schedule.split_whitespace().collect();
+        if parts.len() != 6 {
+            warn!("Invalid schedule format for next run calculation: {}", schedule);
+            return None;
+        }
+
+        let sec: u32 = parts[0].parse().ok()?;
+        let min: u32 = parts[1].parse().ok()?;
+        let hour: u32 = parts[2].parse().ok()?;
+        // parts[3] and parts[4] are * (day and month) - not used in current implementation
+        let weekday: u32 = parts[5].parse().ok()?; // 0=Sunday, 1=Monday, 2=Tuesday...
+
+        // Start from tomorrow to avoid running today if we're past the time
+        let mut candidate = *after + chrono::Duration::days(1);
+
+        // Find next occurrence of the target weekday
+        for _ in 0..7 {
+            let current_weekday = candidate.weekday().number_from_sunday() % 7;
+
+            if current_weekday == weekday {
+                // Found the right weekday, set the time
+                if let Some(target_time) = candidate.date_naive().and_hms_opt(hour, min, sec) {
+                    if let Some(target_datetime) = target_time.and_local_timezone(chrono::Utc).single() {
+                        return Some(target_datetime);
+                    }
+                }
+            }
+            candidate = candidate + chrono::Duration::days(1);
+        }
+
+        None
+    }
+
     async fn load_operations_from_config(&self) -> Result<()> {
         let mut operations = HashMap::new();
+        let now = Utc::now();
 
         // Load node pruning schedules
         for (node_name, node_config) in &self.config.nodes {
             if let Some(schedule) = &node_config.pruning_schedule {
                 if node_config.pruning_enabled.unwrap_or(false) {
-                    let operation = ScheduledOperation::new_pruning(
+                    let mut operation = ScheduledOperation::new_pruning(
                         node_name.clone(),
                         schedule.clone(),
                     );
+
+                    // CALCULATE NEXT RUN TIME
+                    operation.next_run = self.calculate_next_run(schedule, &now);
+                    debug!("Calculated next run for {}: {:?}", node_name, operation.next_run);
+
                     operations.insert(operation.id.clone(), operation);
                 }
             }
@@ -90,10 +131,15 @@ impl MaintenanceScheduler {
 
         // Load hermes restart schedules
         for (hermes_name, hermes_config) in &self.config.hermes {
-            let operation = ScheduledOperation::new_hermes_restart(
+            let mut operation = ScheduledOperation::new_hermes_restart(
                 hermes_name.clone(),
                 hermes_config.restart_schedule.clone(),
             );
+
+            // CALCULATE NEXT RUN TIME
+            operation.next_run = self.calculate_next_run(&hermes_config.restart_schedule, &now);
+            debug!("Calculated next run for {}: {:?}", hermes_name, operation.next_run);
+
             operations.insert(operation.id.clone(), operation);
         }
 
@@ -103,7 +149,7 @@ impl MaintenanceScheduler {
             *scheduled_ops = operations;
         }
 
-        info!("Loaded {} scheduled operations from configuration", operation_count);
+        info!("Loaded {} scheduled operations from configuration with calculated next run times", operation_count);
         Ok(())
     }
 
@@ -236,6 +282,17 @@ impl MaintenanceScheduler {
         false
     }
 
+    // NEW: Update next run time after operation execution
+    async fn update_operation_next_run(&self, operation_id: &str) -> Result<()> {
+        let mut scheduled_ops = self.scheduled_operations.write().await;
+        if let Some(operation) = scheduled_ops.get_mut(operation_id) {
+            let now = Utc::now();
+            operation.next_run = self.calculate_next_run(&operation.schedule, &now);
+            info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
+        }
+        Ok(())
+    }
+
     async fn execute_scheduled_operation(
         &self,
         operation_id: &str,
@@ -315,6 +372,11 @@ impl MaintenanceScheduler {
             }
         }
 
+        // CALCULATE NEXT RUN TIME after execution
+        if let Err(e) = self.update_operation_next_run(operation_id).await {
+            warn!("Failed to update next run time for operation {}: {}", operation_id, e);
+        }
+
         // Update maintenance operation in database
         let mut updated_maintenance_op = maintenance_op;
         updated_maintenance_op.completed_at = Some(end_time);
@@ -390,10 +452,14 @@ impl MaintenanceScheduler {
     pub async fn schedule_pruning(&self, node_name: &str, schedule: &str) -> Result<String> {
         validate_cron_expression(schedule)?;
 
-        let operation = ScheduledOperation::new_pruning(
+        let mut operation = ScheduledOperation::new_pruning(
             node_name.to_string(),
             schedule.to_string(),
         );
+
+        // CALCULATE NEXT RUN TIME for new operation
+        let now = Utc::now();
+        operation.next_run = self.calculate_next_run(schedule, &now);
 
         let operation_id = operation.id.clone();
 
@@ -409,10 +475,14 @@ impl MaintenanceScheduler {
     pub async fn schedule_hermes_restart(&self, hermes_name: &str, schedule: &str) -> Result<String> {
         validate_cron_expression(schedule)?;
 
-        let operation = ScheduledOperation::new_hermes_restart(
+        let mut operation = ScheduledOperation::new_hermes_restart(
             hermes_name.to_string(),
             schedule.to_string(),
         );
+
+        // CALCULATE NEXT RUN TIME for new operation
+        let now = Utc::now();
+        operation.next_run = self.calculate_next_run(schedule, &now);
 
         let operation_id = operation.id.clone();
 

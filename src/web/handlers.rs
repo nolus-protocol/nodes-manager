@@ -27,19 +27,16 @@ pub async fn get_all_nodes_health(
 
     let health_records = state.health_monitor.get_all_health_status().await?;
 
-    let summaries: Vec<NodeHealthSummary> = health_records
-        .iter()
-        .filter(|health| {
-            if include_disabled {
-                true
-            } else {
-                state.config.nodes.get(&health.node_name)
-                    .map(|node| node.enabled)
-                    .unwrap_or(false)
-            }
-        })
-        .map(|health| transform_health_to_summary(health, &state.config))
-        .collect();
+    let mut summaries = Vec::new();
+    for health in health_records.iter() {
+        if include_disabled || state.config.nodes.get(&health.node_name)
+            .map(|node| node.enabled)
+            .unwrap_or(false)
+        {
+            let summary = transform_health_to_summary(health, &state.config, &state.maintenance_tracker).await;
+            summaries.push(summary);
+        }
+    }
 
     Ok(Json(ApiResponse::success(summaries)))
 }
@@ -54,7 +51,7 @@ pub async fn get_node_health(
 
     match health {
         Some(h) => {
-            let summary = transform_health_to_summary(&h, &state.config);
+            let summary = transform_health_to_summary(&h, &state.config, &state.maintenance_tracker).await;
             Ok(Json(ApiResponse::success(summary)))
         }
         None => Err(ApiError::not_found(format!("No health data found for node {}", node_name))),
@@ -75,10 +72,11 @@ pub async fn get_node_health_history(
 
     let history = state.health_monitor.get_node_health_history(&node_name, validated_limit).await?;
 
-    let summaries: Vec<NodeHealthSummary> = history
-        .iter()
-        .map(|health| transform_health_to_summary(health, &state.config))
-        .collect();
+    let mut summaries = Vec::new();
+    for health in history.iter() {
+        let summary = transform_health_to_summary(health, &state.config, &state.maintenance_tracker).await;
+        summaries.push(summary);
+    }
 
     Ok(Json(ApiResponse::success(summaries)))
 }
@@ -92,7 +90,7 @@ pub async fn force_health_check(
     info!("Forcing health check for node: {}", node_name);
 
     let health = state.health_monitor.force_health_check(&node_name).await?;
-    let summary = transform_health_to_summary(&health, &state.config);
+    let summary = transform_health_to_summary(&health, &state.config, &state.maintenance_tracker).await;
 
     Ok(Json(ApiResponse::success_with_message(
         summary,
@@ -286,6 +284,78 @@ pub async fn get_operations_summary(
     Ok(Json(ApiResponse::success(summary)))
 }
 
+// New maintenance tracking handlers
+pub async fn get_active_maintenance(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<Vec<crate::maintenance_tracker::MaintenanceWindow>>>> {
+    let active_maintenance = state.maintenance_tracker.get_all_in_maintenance().await;
+    let count = active_maintenance.len(); // Get count before moving
+
+    Ok(Json(ApiResponse::success_with_message(
+        active_maintenance,
+        format!("Found {} active maintenance operations", count),
+    )))
+}
+
+pub async fn get_maintenance_stats(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<crate::maintenance_tracker::MaintenanceStats>>> {
+    let stats = state.maintenance_tracker.get_maintenance_stats().await;
+
+    Ok(Json(ApiResponse::success(stats)))
+}
+
+pub async fn emergency_clear_maintenance(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
+    info!("Emergency clearing all maintenance windows");
+
+    let cleared_count = state.maintenance_tracker.emergency_clear_all_maintenance().await;
+
+    let response = json!({
+        "cleared_count": cleared_count,
+        "timestamp": Utc::now().to_rfc3339(),
+        "action": "emergency_clear_all"
+    });
+
+    Ok(Json(ApiResponse::success_with_message(
+        response,
+        format!("Emergency cleared {} maintenance windows", cleared_count),
+    )))
+}
+
+// NEW: Clear specific maintenance handler
+pub async fn clear_specific_maintenance(
+    State(state): State<AppState>,
+    Path(node_name): Path<String>,
+) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
+    validate_node_name(&node_name, &state.config)?;
+
+    info!("Clearing maintenance for specific node: {}", node_name);
+
+    // Check if node is actually in maintenance
+    if !state.maintenance_tracker.is_in_maintenance(&node_name).await {
+        return Err(ApiError::bad_request(format!(
+            "Node {} is not currently in maintenance",
+            node_name
+        )));
+    }
+
+    // End maintenance for the specific node
+    state.maintenance_tracker.end_maintenance(&node_name).await?;
+
+    let response = json!({
+        "node_name": node_name,
+        "action": "cleared_maintenance",
+        "timestamp": Utc::now().to_rfc3339()
+    });
+
+    Ok(Json(ApiResponse::success_with_message(
+        response,
+        format!("Maintenance cleared for node {}", node_name),
+    )))
+}
+
 // Hermes management handlers
 pub async fn get_all_hermes_instances(
     State(state): State<AppState>,
@@ -441,12 +511,19 @@ pub async fn get_all_server_configs(
         let node_count = state.config_manager.get_nodes_for_server(&server_config.host).await.len();
         let hermes_count = state.config_manager.get_hermes_for_server(&server_config.host).await.len();
 
+        // Count nodes in maintenance for this server
+        let maintenance_windows = state.maintenance_tracker.get_all_in_maintenance().await;
+        let nodes_in_maintenance = maintenance_windows.iter()
+            .filter(|window| &window.server_host == server_name)
+            .count();
+
         servers.push(ServerStatusSummary {
             server_name: server_name.clone(),
             host: server_config.host.clone(),
             connected: connection_status.get(server_name).copied().unwrap_or(false),
             node_count,
             hermes_count,
+            nodes_in_maintenance,
             last_activity: None, // Could be implemented with connection tracking
         });
     }
@@ -513,7 +590,14 @@ pub async fn get_system_status(
     let healthy_nodes = health_records.iter()
         .filter(|h| matches!(h.status, crate::HealthStatus::Healthy))
         .count();
-    let unhealthy_nodes = health_records.len() - healthy_nodes;
+    let unhealthy_nodes = health_records.iter()
+        .filter(|h| matches!(h.status, crate::HealthStatus::Unhealthy | crate::HealthStatus::Unknown))
+        .count();
+    let maintenance_nodes = health_records.iter()
+        .filter(|h| matches!(h.status, crate::HealthStatus::Maintenance))
+        .count();
+
+    let active_maintenance_operations = state.maintenance_tracker.get_all_in_maintenance().await.len();
 
     let response = SystemStatusResponse {
         server_count: state.config.servers.len(),
@@ -521,9 +605,11 @@ pub async fn get_system_status(
         hermes_count: state.config.hermes.len(),
         healthy_nodes,
         unhealthy_nodes,
+        maintenance_nodes,
         active_ssh_connections: state.ssh_manager.get_active_connections().await,
         running_operations: state.scheduler.get_running_operations().await.len(),
         scheduled_operations: state.scheduler.get_scheduled_operations().await.len(),
+        active_maintenance_operations,
         uptime_seconds: 0, // Would need to track server start time
     };
 
@@ -562,6 +648,7 @@ pub async fn health_check(
         database_connected: true, // Could implement actual DB health check
         monitoring_active: true,  // Could check if monitoring is running
         scheduler_active: true,   // Could check if scheduler is running
+        maintenance_tracking_active: true, // Maintenance tracker is always active
     };
 
     Ok(Json(response))
@@ -603,7 +690,7 @@ pub async fn api_documentation() -> Json<serde_json::Value> {
     Json(json!({
         "name": "Blockchain Nodes Manager API",
         "version": env!("CARGO_PKG_VERSION"),
-        "description": "REST API for managing blockchain nodes and Hermes relayers",
+        "description": "REST API for managing blockchain nodes and Hermes relayers with maintenance tracking",
         "endpoints": {
             "health_monitoring": [
                 "GET /api/nodes/health",
@@ -619,7 +706,11 @@ pub async fn api_documentation() -> Json<serde_json::Value> {
                 "POST /api/maintenance/run-now",
                 "GET /api/maintenance/logs",
                 "POST /api/maintenance/prune-multiple",
-                "POST /api/maintenance/restart-multiple"
+                "POST /api/maintenance/restart-multiple",
+                "GET /api/maintenance/active",
+                "GET /api/maintenance/stats",
+                "POST /api/maintenance/emergency-clear",
+                "POST /api/maintenance/clear/{node_name}"
             ],
             "hermes": [
                 "GET /api/hermes/instances",
@@ -651,6 +742,13 @@ pub async fn get_version_info() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "description": env!("CARGO_PKG_DESCRIPTION"),
         "build_timestamp": Utc::now().to_rfc3339(),
-        "rust_version": option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown")
+        "rust_version": option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"),
+        "features": [
+            "health_monitoring",
+            "maintenance_tracking",
+            "scheduled_operations",
+            "ssh_management",
+            "hermes_integration"
+        ]
     }))
 }
