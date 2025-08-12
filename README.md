@@ -67,9 +67,8 @@ cargo build --release
 mkdir -p data static config
 
 # Set up configuration files
-cp config/main.toml.example config/main.toml
-cp config/discovery.toml.example config/discovery.toml
-# Edit configurations with your server details
+mkdir -p config
+# Create your configuration files based on the examples below
 
 # Ensure SSH keys have correct permissions
 chmod 600 /path/to/your/ssh/keys
@@ -77,7 +76,8 @@ chmod 600 /path/to/your/ssh/keys
 
 ## ⚙️ Configuration
 
-### Main Configuration (`config/main.toml`)
+### Main Configuration
+Create `config/main.toml` with:
 ```toml
 host = "0.0.0.0"
 port = 8095
@@ -87,7 +87,8 @@ alarm_webhook_url = "http://your-n8n-instance/webhook/node-alarm"
 hermes_min_uptime_minutes = 5
 ```
 
-### Server Configuration Example (`config/discovery.toml`)
+### Server Configuration Example
+Create files like `config/discovery.toml` with this structure:
 ```toml
 [server]
 host = "192.168.11.206"
@@ -252,7 +253,7 @@ curl http://localhost:8095/health
 
 ### Backup Strategy
 - Regular database backups: `data/nodes.db`
-- Configuration backup: `config/*.toml`
+- Configuration backup: `config/*.toml` (keep separate secure copies)
 - Log rotation for maintenance logs
 
 ## 📊 Performance
@@ -279,7 +280,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 For issues, questions, or contributions:
 - GitHub Issues: [Create an issue](https://github.com/nolus-protocol/nodes-manager/issues)
-- Documentation: Check the `/docs` directory
 - API Documentation: `GET /api/docs` when service is running
 
 ## 🔗 Related Projects

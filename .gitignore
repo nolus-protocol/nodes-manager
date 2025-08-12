@@ -46,13 +46,8 @@ Thumbs.db
 *.pfx
 !*.pub
 
-# Configuration files with sensitive data
-config/*.toml
-config/*.yaml
-config/*.json
-!config/*.toml.example
-!config/*.yaml.example
-!config/*.json.example
+# Configuration directory (contains sensitive data)
+config/
 
 # Environment files
 .env
