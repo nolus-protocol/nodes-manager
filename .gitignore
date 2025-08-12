@@ -1,0 +1,189 @@
+# File: .gitignore
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.#*
+\#*#
+.*.orig
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Application specific
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+/logs/
+/log/
+
+# SSH Keys and Certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+!*.pub
+
+# Configuration files with sensitive data
+# Uncomment these if your configs contain secrets
+# config/*.toml
+# config/*.yaml
+# config/*.json
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# Backup files
+*.bak
+*.backup
+*.orig
+*.tmp
+
+# Build artifacts
+*.exe
+*.msi
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# Documentation builds
+/book/
+/docs/_build/
+
+# Testing
+/coverage/
+*.profraw
+
+# Local development
+.local/
+local/
+temp/
+tmp/
+
+# Runtime files
+*.pid
+*.sock
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+*.stackdump
+
+# JetBrains IDEs
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# Tags
+tags
+TAGS
+.tags
+.TAGS
+
+# ctags
+.ctags
+
+# cscope
+cscope.out
+cscope.in.out
+cscope.po.out
+
+# Binary files
+*.so
+*.dylib
+*.dll
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Node.js (if using any JS tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if using any Python tools)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Local notes
+notes.txt
+TODO.txt
+NOTES.md

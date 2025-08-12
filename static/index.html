@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blockchain Infrastructure Management Console</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #1a365d;
+            --secondary-color: #2d3748;
+            --accent-color: #3182ce;
+            --success-color: #38a169;
+            --warning-color: #d69e2e;
+            --error-color: #e53e3e;
+            --bg-primary: #f7fafc;
+            --bg-secondary: #ffffff;
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .header-title h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin: 0;
+        }
+
+        .header-subtitle {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-left: 1rem;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            font-size: 0.875rem;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 0.375rem;
+            font-weight: 500;
+        }
+
+        .status-indicator.healthy {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+
+        .status-indicator.warning {
+            background-color: rgba(214, 158, 46, 0.1);
+            color: var(--warning-color);
+        }
+
+        .status-indicator.error {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .metric-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .metric-title {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+
+        .metric-icon {
+            width: 1.25rem;
+            height: 1.25rem;
+            color: var(--text-muted);
+        }
+
+        .metric-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1;
+        }
+
+        .metric-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: #f8fafc;
+        }
+
+        .panel-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .panel-content {
+            padding: 1.5rem;
+        }
+
+        .nodes-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .nodes-table th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .nodes-table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        .nodes-table tr:hover {
+            background-color: #f7fafc;
+        }
+
+        .node-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-healthy {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+
+        .status-unhealthy {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+
+        .status-unknown {
+            background-color: rgba(214, 158, 46, 0.1);
+            color: var(--warning-color);
+        }
+
+        .status-maintenance {
+            background-color: rgba(49, 130, 206, 0.1);
+            color: var(--accent-color);
+        }
+
+        .status-dot-small {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+
+        .block-height {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .server-name {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem 0.5rem 0 0;
+            margin-bottom: 0;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.15s ease-in-out;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+            background-color: #f7fafc;
+        }
+
+        .tab.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+            background-color: var(--bg-secondary);
+        }
+
+        .tab-content {
+            display: none;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 0.5rem 0.5rem;
+            padding: 1.5rem;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        .data-table th {
+            text-align: left;
+            padding: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-bottom: 2px solid var(--border-color);
+            background: #f8fafc;
+        }
+
+        .data-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .data-table tr:hover {
+            background-color: #f7fafc;
+        }
+
+        .code {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.75rem;
+            background: #f7fafc;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            color: var(--text-secondary);
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 0.375rem;
+            border: 1px solid;
+            margin-bottom: 1rem;
+        }
+
+        .alert-success {
+            background-color: rgba(56, 161, 105, 0.1);
+            border-color: rgba(56, 161, 105, 0.2);
+            color: var(--success-color);
+        }
+
+        .alert-error {
+            background-color: rgba(229, 62, 62, 0.1);
+            border-color: rgba(229, 62, 62, 0.2);
+            color: var(--error-color);
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+
+        .spinner {
+            width: 1.5rem;
+            height: 1.5rem;
+            border: 2px solid var(--border-color);
+            border-top: 2px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.75rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .system-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .system-metric {
+            text-align: center;
+        }
+
+        .system-metric-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .system-metric-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .logs-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+        }
+
+        .log-entry {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-timestamp {
+            color: var(--text-muted);
+            font-weight: 500;
+            min-width: 130px;
+        }
+
+        .log-level {
+            padding: 0.125rem 0.5rem;
+            border-radius: 0.25rem;
+            font-weight: 600;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .log-info { background: rgba(49, 130, 206, 0.1); color: var(--accent-color); }
+        .log-success { background: rgba(56, 161, 105, 0.1); color: var(--success-color); }
+        .log-warning { background: rgba(214, 158, 46, 0.1); color: var(--warning-color); }
+        .log-error { background: rgba(229, 62, 62, 0.1); color: var(--error-color); }
+
+        .operation-type-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background-color: rgba(49, 130, 206, 0.1);
+            color: var(--accent-color);
+        }
+
+        .operation-type-badge.pruning {
+            background-color: rgba(214, 158, 46, 0.1);
+            color: var(--warning-color);
+        }
+
+        .operation-type-badge.hermes {
+            background-color: rgba(139, 92, 246, 0.1);
+            color: #8b5cf6;
+        }
+
+        .schedule-frequency {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .frequency-daily {
+            background-color: rgba(34, 197, 94, 0.1);
+            color: #22c55e;
+        }
+
+        .frequency-weekly {
+            background-color: rgba(59, 130, 246, 0.1);
+            color: #3b82f6;
+        }
+
+        .frequency-monthly {
+            background-color: rgba(168, 85, 247, 0.1);
+            color: #a855f7;
+        }
+
+        .time-until {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 0.5rem;
+            background-color: var(--border-color);
+            border-radius: 0.25rem;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: var(--success-color);
+            transition: width 0.3s ease-in-out;
+        }
+
+        @media (max-width: 1024px) {
+            .metrics-grid {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-container {
+                padding: 1rem;
+            }
+
+            .header-content {
+                padding: 0 1rem;
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+
+            .header-status {
+                align-self: stretch;
+                justify-content: space-between;
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="header-title">
+                <h1>Blockchain Infrastructure Management Console</h1>
+            </div>
+            <div class="header-status">
+                <div class="status-indicator healthy" id="system-status">
+                    <div class="status-dot"></div>
+                    <span>All Systems Operational</span>
+                </div>
+                <div id="last-updated" style="color: var(--text-muted); font-size: 0.75rem;">
+                    Last updated: Never
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Total Nodes</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="total-nodes">-</div>
+                <div class="metric-subtitle">Blockchain nodes monitored</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Healthy Nodes</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="healthy-nodes">-</div>
+                <div class="metric-subtitle" id="health-percentage">-% operational</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="health-progress" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Active Servers</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="active-servers">-</div>
+                <div class="metric-subtitle" id="server-connections">- SSH connections</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Operations</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                        <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="running-operations">-</div>
+                <div class="metric-subtitle" id="scheduled-operations">- scheduled tasks</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Node Status Overview</h2>
+            </div>
+            <div class="panel-content">
+                <div id="nodes-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading infrastructure status...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('scheduled')">Scheduled Operations</button>
+                <button class="tab" onclick="switchTab('logs')">Maintenance Logs</button>
+                <button class="tab" onclick="switchTab('system')">System Information</button>
+            </div>
+
+            <div id="scheduled-content" class="tab-content active">
+                <div id="scheduled-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading scheduled operations...
+                    </div>
+                </div>
+            </div>
+
+            <div id="logs-content" class="tab-content">
+                <div id="logs-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading maintenance logs...
+                    </div>
+                </div>
+            </div>
+
+            <div id="system-content" class="tab-content">
+                <div id="system-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading system information...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let refreshInterval;
+        let currentTab = 'scheduled';
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAllData();
+            startAutoRefresh();
+        });
+
+        function startAutoRefresh() {
+            refreshInterval = setInterval(loadAllData, 30000);
+        }
+
+        async function loadAllData() {
+            try {
+                await Promise.all([
+                    loadNodes(),
+                    loadScheduledOperations(),
+                    loadMaintenanceLogs(),
+                    loadSystemStatus()
+                ]);
+                updateLastUpdated();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showAlert('Failed to load data: ' + error.message, 'error');
+            }
+        }
+
+        async function loadNodes() {
+            try {
+                const response = await fetch('/api/nodes/health');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayNodes(data.data);
+                    updateMetrics(data.data);
+                } else {
+                    throw new Error('Failed to load nodes');
+                }
+            } catch (error) {
+                document.getElementById('nodes-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load node status: ' + error.message + '</div>';
+            }
+        }
+
+        function displayNodes(nodes) {
+            const container = document.getElementById('nodes-container');
+
+            if (!nodes || nodes.length === 0) {
+                container.innerHTML = '<div class="loading">No nodes configured</div>';
+                return;
+            }
+
+            const tableHtml = `
+                <table class="nodes-table">
+                    <thead>
+                        <tr>
+                            <th>Node Name</th>
+                            <th>Status</th>
+                            <th>Block Height</th>
+                            <th>Server</th>
+                            <th>Sync Status</th>
+                            <th>Last Check</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${nodes.map(node => `
+                            <tr onclick="showNodeDetails('${node.node_name}')" style="cursor: pointer;">
+                                <td>
+                                    <div style="font-weight: 600;">${formatNodeName(node.node_name)}</div>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${node.node_name}</div>
+                                    ${node.error_message ? `<div style="font-size: 0.75rem; color: var(--error-color); margin-top: 0.25rem;">${node.error_message}</div>` : ''}
+                                </td>
+                                <td>
+                                    <div class="node-status-badge status-${node.status.toLowerCase()}">
+                                        <div class="status-dot-small"></div>
+                                        ${node.status}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="block-height">${node.latest_block_height || 'Unknown'}</div>
+                                </td>
+                                <td>
+                                    <div class="server-name">${getServerFromNodeName(node.node_name)}</div>
+                                </td>
+                                <td>
+                                    ${node.catching_up !== null ?
+                                        (node.catching_up ?
+                                            '<span style="color: var(--warning-color);">Catching Up</span>' :
+                                            '<span style="color: var(--success-color);">Synced</span>') :
+                                        '<span style="color: var(--text-muted);">Unknown</span>'
+                                    }
+                                </td>
+                                <td>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted);">
+                                        ${formatTime(node.last_check)}
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = tableHtml;
+        }
+
+        function updateMetrics(nodes) {
+            const totalNodes = nodes.length;
+            const healthyNodes = nodes.filter(n => n.status === 'Healthy').length;
+            const healthPercentage = totalNodes > 0 ? Math.round((healthyNodes / totalNodes) * 100) : 0;
+
+            document.getElementById('total-nodes').textContent = totalNodes;
+            document.getElementById('healthy-nodes').textContent = healthyNodes;
+            document.getElementById('health-percentage').textContent = `${healthPercentage}% operational`;
+            document.getElementById('health-progress').style.width = `${healthPercentage}%`;
+
+            // Update system status indicator
+            const statusElement = document.getElementById('system-status');
+            const statusDot = statusElement.querySelector('.status-dot');
+            const statusText = statusElement.querySelector('span');
+
+            if (healthPercentage === 100) {
+                statusElement.className = 'status-indicator healthy';
+                statusText.textContent = 'All Systems Operational';
+            } else if (healthPercentage >= 80) {
+                statusElement.className = 'status-indicator warning';
+                statusText.textContent = 'Some Issues Detected';
+            } else {
+                statusElement.className = 'status-indicator error';
+                statusText.textContent = 'Critical Issues';
+            }
+        }
+
+        async function loadScheduledOperations() {
+            if (currentTab !== 'scheduled') return;
+
+            try {
+                const response = await fetch('/api/maintenance/schedule');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayScheduledOperations(data.data);
+                    updateOperationsMetrics(data.data);
+                } else {
+                    throw new Error('Failed to load scheduled operations');
+                }
+            } catch (error) {
+                document.getElementById('scheduled-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load scheduled operations: ' + error.message + '</div>';
+            }
+        }
+
+        function displayScheduledOperations(data) {
+            const container = document.getElementById('scheduled-container');
+            const scheduled = data.scheduled || [];
+            const running = data.running || [];
+
+            let html = '';
+
+            if (running.length > 0) {
+                html += '<h3 style="margin-bottom: 1rem; color: var(--text-primary);">Currently Running Operations</h3>';
+                html += `
+                    <table class="data-table" style="margin-bottom: 2rem;">
+                        <thead>
+                            <tr>
+                                <th>Operation</th>
+                                <th>Target</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${running.map(op => `
+                                <tr>
+                                    <td>${op.operation_type.replace(/([A-Z])/g, ' $1').trim()}</td>
+                                    <td>
+                                        <div style="font-weight: 600;">${formatNodeName(op.target_name)}</div>
+                                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${op.target_name}</div>
+                                    </td>
+                                    <td><span class="node-status-badge status-${op.status}">${op.status}</span></td>
+                                    <td>${formatTime(op.started_at)}</td>
+                                    <td>${op.started_at ? calculateDuration(op.started_at) : '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            if (scheduled.length > 0) {
+                html += '<h3 style="margin-bottom: 1rem; color: var(--text-primary);">Scheduled Operations</h3>';
+                html += `
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Target</th>
+                                <th>Operation Type</th>
+                                <th>Schedule</th>
+                                <th>Next Run</th>
+                                <th>Last Result</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${scheduled.map(op => {
+                                const scheduleInfo = parseCronExpression(op.schedule);
+                                return `
+                                    <tr>
+                                        <td>
+                                            <div style="font-weight: 600;">${formatNodeName(op.target_name)}</div>
+                                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${op.target_name}</div>
+                                        </td>
+                                        <td>
+                                            <span class="operation-type-badge">${formatOperationType(op.operation_type)}</span>
+                                        </td>
+                                        <td>
+                                            <div style="margin-bottom: 0.25rem;">
+                                                <strong style="color: var(--text-primary);">${scheduleInfo.readable}</strong>
+                                            </div>
+                                            <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">${op.schedule}</div>
+                                        </td>
+                                        <td>
+                                            <div style="font-weight: 500; color: var(--text-primary);">
+                                                ${op.next_run ? formatTime(op.next_run) : 'Not scheduled'}
+                                            </div>
+                                            ${op.next_run ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${getTimeUntil(op.next_run)}</div>` : ''}
+                                        </td>
+                                        <td>
+                                            ${op.last_result ?
+                                                (op.last_result.success ?
+                                                    '<span style="color: var(--success-color); font-weight: 500;">✓ Success</span>' :
+                                                    '<span style="color: var(--error-color); font-weight: 500;">✗ Failed</span>') :
+                                                '<span style="color: var(--text-muted);">Not run yet</span>'
+                                            }
+                                            ${op.last_result && op.last_result.executed_at ?
+                                                `<div style="font-size: 0.75rem; color: var(--text-muted);">${formatTime(op.last_result.executed_at)}</div>` :
+                                                ''
+                                            }
+                                        </td>
+                                        <td>
+                                            <span class="node-status-badge ${op.enabled ? 'status-healthy' : 'status-unknown'}">
+                                                <div class="status-dot-small"></div>
+                                                ${op.enabled ? 'Active' : 'Disabled'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else if (running.length === 0) {
+                html = '<div class="loading">No scheduled operations configured</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function updateOperationsMetrics(data) {
+            const running = data.running ? data.running.length : 0;
+            const scheduled = data.scheduled ? data.scheduled.length : 0;
+
+            document.getElementById('running-operations').textContent = running;
+            document.getElementById('scheduled-operations').textContent = scheduled;
+        }
+
+        async function loadMaintenanceLogs() {
+            if (currentTab !== 'logs') return;
+
+            try {
+                const response = await fetch('/api/maintenance/logs?limit=50');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayMaintenanceLogs(data.data);
+                } else {
+                    throw new Error('Failed to load maintenance logs');
+                }
+            } catch (error) {
+                document.getElementById('logs-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load logs: ' + error.message + '</div>';
+            }
+        }
+
+        function displayMaintenanceLogs(logs) {
+            const container = document.getElementById('logs-container');
+
+            if (!logs || logs.length === 0) {
+                container.innerHTML = '<div class="loading">No maintenance logs available</div>';
+                return;
+            }
+
+            const logsHtml = logs.map(log => {
+                const level = log.status === 'completed' ? 'success' :
+                             log.status === 'failed' ? 'error' :
+                             log.status === 'running' ? 'warning' : 'info';
+
+                return `
+                    <div class="log-entry">
+                        <div class="log-timestamp">${formatTime(log.started_at)}</div>
+                        <div class="log-level log-${level}">${log.status.toUpperCase()}</div>
+                        <div style="flex: 1;">
+                            <strong>${log.operation_type}</strong> - ${formatNodeName(log.target_name)}
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.125rem;">${log.target_name}</div>
+                            ${log.error_message ? `<br><span style="color: var(--error-color); font-size: 0.7rem;">${log.error_message}</span>` : ''}
+                        </div>
+                        ${log.completed_at && log.started_at ?
+                            `<div style="color: var(--text-muted); font-size: 0.7rem;">${calculateDuration(log.started_at, log.completed_at)}</div>` :
+                            ''
+                        }
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `<div class="logs-container">${logsHtml}</div>`;
+        }
+
+        async function loadSystemStatus() {
+            if (currentTab !== 'system') return;
+
+            try {
+                const [statusResponse, connectivityResponse] = await Promise.all([
+                    fetch('/api/system/status'),
+                    fetch('/api/system/ssh-connections')
+                ]);
+
+                const statusData = await statusResponse.json();
+                const connectivityData = await connectivityResponse.json();
+
+                if (statusData.success && connectivityData.success) {
+                    displaySystemStatus(statusData.data, connectivityData.data);
+                    updateServerMetrics(statusData.data, connectivityData.data);
+                } else {
+                    throw new Error('Failed to load system status');
+                }
+            } catch (error) {
+                document.getElementById('system-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load system status: ' + error.message + '</div>';
+            }
+        }
+
+        function displaySystemStatus(status, connectivity) {
+            const container = document.getElementById('system-container');
+
+            const html = `
+                <div class="system-grid">
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.server_count}</div>
+                        <div class="system-metric-label">Total Servers</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${connectivity.active_connections}</div>
+                        <div class="system-metric-label">SSH Connections</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.node_count}</div>
+                        <div class="system-metric-label">Managed Nodes</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.hermes_count}</div>
+                        <div class="system-metric-label">Hermes Instances</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.healthy_nodes}</div>
+                        <div class="system-metric-label">Healthy Nodes</div>
+                    </div>
+                    <div class="system-metric">
+                        <div class="system-metric-value">${status.running_operations}</div>
+                        <div class="system-metric-label">Active Operations</div>
+                    </div>
+                </div>
+
+                <h3 style="margin: 2rem 0 1rem 0; color: var(--text-primary);">Server Connection Status</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Server</th>
+                            <th>Connection Status</th>
+                            <th>Last Activity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${Object.entries(connectivity.connection_status).map(([server, connected]) => `
+                            <tr>
+                                <td>${server}</td>
+                                <td>
+                                    <span class="node-status-badge ${connected ? 'status-healthy' : 'status-unhealthy'}">
+                                        <div class="status-dot-small"></div>
+                                        ${connected ? 'Connected' : 'Disconnected'}
+                                    </span>
+                                </td>
+                                <td style="color: var(--text-muted); font-size: 0.75rem;">
+                                    ${connected ? 'Active' : 'No recent activity'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function updateServerMetrics(status, connectivity) {
+            document.getElementById('active-servers').textContent = status.server_count;
+            document.getElementById('server-connections').textContent = `${connectivity.active_connections} SSH connections`;
+        }
+
+        function switchTab(tabName) {
+            currentTab = tabName;
+
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            const tabIndex = tabName === 'scheduled' ? 0 : tabName === 'logs' ? 1 : 2;
+            document.querySelectorAll('.tab')[tabIndex].classList.add('active');
+            document.getElementById(`${tabName}-content`).classList.add('active');
+
+            if (tabName === 'scheduled') {
+                loadScheduledOperations();
+            } else if (tabName === 'logs') {
+                loadMaintenanceLogs();
+            } else if (tabName === 'system') {
+                loadSystemStatus();
+            }
+        }
+
+        async function executeBatchPruning() {
+            if (!confirm('Are you sure you want to execute batch pruning on all nodes? This operation may take significant time and will stop/restart node services.')) {
+                return;
+            }
+
+            try {
+                showAlert('Initiating batch pruning operation...', 'success');
+
+                const nodesResponse = await fetch('/api/config/nodes');
+                const nodesData = await nodesResponse.json();
+
+                if (!nodesData.success) {
+                    throw new Error('Failed to retrieve node configuration');
+                }
+
+                const nodeNames = Object.keys(nodesData.data);
+
+                const response = await fetch('/api/maintenance/prune-multiple', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ node_names: nodeNames })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Batch pruning operation completed: ${data.data.successful}/${data.data.total_operations} nodes processed successfully`, 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Batch pruning operation failed');
+                }
+            } catch (error) {
+                showAlert('Batch pruning operation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function restartAllHermes() {
+            if (!confirm('Are you sure you want to restart all Hermes relay instances? This will temporarily interrupt relaying operations.')) {
+                return;
+            }
+
+            try {
+                showAlert('Initiating Hermes restart operation...', 'success');
+
+                const response = await fetch('/api/hermes/restart-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Hermes restart operation completed: ${data.data.successful}/${data.data.total_instances} instances restarted successfully`, 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Hermes restart operation failed');
+                }
+            } catch (error) {
+                showAlert('Hermes restart operation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function forceHealthCheck() {
+            try {
+                showAlert('Initiating comprehensive health check...', 'success');
+
+                const nodesResponse = await fetch('/api/config/nodes');
+                const nodesData = await nodesResponse.json();
+
+                if (!nodesData.success) {
+                    throw new Error('Failed to retrieve node configuration');
+                }
+
+                const nodeNames = Object.keys(nodesData.data);
+                let completedChecks = 0;
+
+                for (const nodeName of nodeNames) {
+                    try {
+                        await fetch(`/api/nodes/${nodeName}/check`, { method: 'POST' });
+                        completedChecks++;
+                    } catch (error) {
+                        console.warn(`Health check failed for node ${nodeName}:`, error);
+                    }
+                }
+
+                showAlert(`Health check completed: ${completedChecks}/${nodeNames.length} nodes checked successfully`, 'success');
+                loadNodes();
+            } catch (error) {
+                showAlert('Health check operation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function reloadConfig() {
+            try {
+                showAlert('Reloading system configuration...', 'success');
+
+                const response = await fetch('/api/config/reload', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('Configuration reloaded successfully', 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Configuration reload failed');
+                }
+            } catch (error) {
+                showAlert('Configuration reload failed: ' + error.message, 'error');
+            }
+        }
+
+        async function validateConfig() {
+            try {
+                const response = await fetch('/api/config/validate', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    if (data.data.valid) {
+                        showAlert('Configuration validation successful - all settings are valid', 'success');
+                    } else {
+                        showAlert('Configuration validation failed: ' + data.data.error, 'error');
+                    }
+                } else {
+                    throw new Error(data.message || 'Configuration validation failed');
+                }
+            } catch (error) {
+                showAlert('Configuration validation failed: ' + error.message, 'error');
+            }
+        }
+
+        function showNodeDetails(nodeName) {
+            // Future implementation: show detailed node information modal
+            console.log('Show details for node:', nodeName);
+        }
+
+        // Utility functions
+        function formatTime(timestamp) {
+            if (!timestamp) return 'Never';
+
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return Math.floor(diff / 60000) + ' minutes ago';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + ' hours ago';
+
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        function formatNodeName(technicalName) {
+            // Convert technical names like "enterprise-neutron-1" to "Enterprise Neutron"
+            if (!technicalName) return technicalName;
+
+            const parts = technicalName.split('-');
+            if (parts.length < 2) return technicalName;
+
+            // Take server and network parts, skip version numbers
+            const serverName = parts[0];
+            const networkName = parts[1];
+
+            // Capitalize first letter of each part
+            const formatPart = (part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+
+            // Handle special network names
+            const networkMap = {
+                'osmosis': 'Osmosis',
+                'neutron': 'Neutron',
+                'vitosha': 'Vitosha',
+                'rila': 'Rila',
+                'pion': 'Pion'
+            };
+
+            const formattedServer = formatPart(serverName);
+            const formattedNetwork = networkMap[networkName.toLowerCase()] || formatPart(networkName);
+
+            return `${formattedServer} ${formattedNetwork}`;
+        }
+
+        function getServerFromNodeName(nodeName) {
+            // Extract server name from technical node name
+            if (!nodeName) return 'Unknown';
+            const parts = nodeName.split('-');
+            return parts[0] ? parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase() : 'Unknown';
+        }
+
+        function calculateDuration(startTime, endTime = null) {
+            const start = new Date(startTime);
+            const end = endTime ? new Date(endTime) : new Date();
+            const diff = end - start;
+
+            const seconds = Math.floor(diff / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+
+            if (hours > 0) return `${hours}h ${minutes % 60}m`;
+            if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+            return `${seconds}s`;
+        }
+
+        function updateLastUpdated() {
+            document.getElementById('last-updated').textContent =
+                'Last updated: ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+        }
+
+        function showAlert(message, type) {
+            const existingAlerts = document.querySelectorAll('.alert');
+            existingAlerts.forEach(alert => alert.remove());
+
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+
+            const mainContainer = document.querySelector('.main-container');
+            mainContainer.insertBefore(alertDiv, mainContainer.firstChild);
+
+            setTimeout(() => alertDiv.remove(), type === 'error' ? 8000 : 5000);
+        }
+
+        // Cron expression parsing and formatting functions
+        function parseCronExpression(cronExpr) {
+            const parts = cronExpr.trim().split(/\s+/);
+
+            if (parts.length !== 6) {
+                return { readable: 'Invalid schedule', frequency: 'unknown' };
+            }
+
+            const [sec, min, hour, day, month, weekday] = parts;
+
+            // Handle weekly schedules (most common for our use case)
+            if (weekday !== '*' && day === '*' && month === '*') {
+                const weekdayName = getWeekdayName(weekday);
+                const timeStr = formatTime24(hour, min);
+                return {
+                    readable: `Every ${weekdayName} at ${timeStr}`,
+                    frequency: 'weekly'
+                };
+            }
+
+            // Handle daily schedules
+            if (weekday === '*' && day === '*' && month === '*') {
+                const timeStr = formatTime24(hour, min);
+                return {
+                    readable: `Daily at ${timeStr}`,
+                    frequency: 'daily'
+                };
+            }
+
+            // Handle monthly schedules
+            if (day !== '*' && month === '*' && weekday === '*') {
+                const timeStr = formatTime24(hour, min);
+                const dayStr = getDayWithSuffix(day);
+                return {
+                    readable: `Monthly on the ${dayStr} at ${timeStr}`,
+                    frequency: 'monthly'
+                };
+            }
+
+            // Fallback for complex expressions
+            return {
+                readable: 'Custom schedule',
+                frequency: 'custom'
+            };
+        }
+
+        function getWeekdayName(weekdayValue) {
+            const weekdays = {
+                '0': 'Sunday',
+                '1': 'Monday',
+                '2': 'Tuesday',
+                '3': 'Wednesday',
+                '4': 'Thursday',
+                '5': 'Friday',
+                '6': 'Saturday',
+                '7': 'Sunday' // Alternative Sunday representation
+            };
+            return weekdays[weekdayValue] || `Day ${weekdayValue}`;
+        }
+
+        function formatTime24(hour, minute) {
+            const h = hour === '*' ? '00' : hour.padStart(2, '0');
+            const m = minute === '*' ? '00' : minute.padStart(2, '0');
+
+            // Convert to 12-hour format for better readability
+            const hour24 = parseInt(h);
+            const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+            const ampm = hour24 >= 12 ? 'PM' : 'AM';
+
+            return `${hour12}:${m} ${ampm}`;
+        }
+
+        function getDayWithSuffix(day) {
+            if (day === '*') return 'every day';
+
+            const dayNum = parseInt(day);
+            const suffix = getDaySuffix(dayNum);
+            return `${dayNum}${suffix}`;
+        }
+
+        function getDaySuffix(day) {
+            if (day >= 11 && day <= 13) return 'th';
+            switch (day % 10) {
+                case 1: return 'st';
+                case 2: return 'nd';
+                case 3: return 'rd';
+                default: return 'th';
+            }
+        }
+
+        function formatOperationType(opType) {
+            const types = {
+                'NodePruning': 'Node Pruning',
+                'HermesRestart': 'Hermes Restart',
+                'SystemMaintenance': 'System Maintenance'
+            };
+            return types[opType] || opType.replace(/([A-Z])/g, ' $1').trim();
+        }
+
+        function getTimeUntil(targetTime) {
+            const now = new Date();
+            const target = new Date(targetTime);
+            const diff = target - now;
+
+            if (diff <= 0) {
+                return 'Overdue';
+            }
+
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+            if (days > 0) {
+                return `in ${days} day${days > 1 ? 's' : ''}, ${hours}h`;
+            } else if (hours > 0) {
+                return `in ${hours}h ${minutes}m`;
+            } else {
+                return `in ${minutes} minute${minutes !== 1 ? 's' : ''}`;
+            }
+        }
+    </script>
+</body>
+</html>
