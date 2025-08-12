@@ -1,4 +1,4 @@
-// File: src/health/monitor.rs
+// File: src/health/monitor.rs (simple escalating alarms)
 
 use anyhow::Result;
 use chrono::Utc;
@@ -21,6 +21,7 @@ pub struct HealthMonitor {
     thresholds: HealthThresholds,
     failure_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
     last_alarm_times: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
+    alarm_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
 }
 
 impl HealthMonitor {
@@ -37,6 +38,7 @@ impl HealthMonitor {
             thresholds: HealthThresholds::default(),
             failure_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             last_alarm_times: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            alarm_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -122,16 +124,22 @@ impl HealthMonitor {
 
         let health = self.check_node_health(node_name, node_config).await;
 
-        // Update failure count
-        {
-            let mut failure_counts = self.failure_counts.write().await;
-            match health.status {
-                HealthStatus::Healthy => {
-                    failure_counts.insert(node_name.to_string(), 0);
-                }
-                _ => {
-                    let count = failure_counts.get(node_name).unwrap_or(&0) + 1;
-                    failure_counts.insert(node_name.to_string(), count);
+        // Handle recovery notification
+        if matches!(health.status, HealthStatus::Healthy) {
+            // Check if node was previously unhealthy and send recovery notification
+            let had_alarms = {
+                let alarm_counts = self.alarm_counts.read().await;
+                alarm_counts.get(node_name).copied().unwrap_or(0) > 0
+            };
+
+            if had_alarms {
+                self.send_recovery_notification(node_name).await.ok();
+                // Reset alarm state
+                {
+                    let mut alarm_counts = self.alarm_counts.write().await;
+                    let mut last_alarms = self.last_alarm_times.write().await;
+                    alarm_counts.remove(node_name);
+                    last_alarms.remove(node_name);
                 }
             }
         }
@@ -186,7 +194,13 @@ impl HealthMonitor {
                                     let block_time = parse_block_time(&rpc_status.result.sync_info.latest_block_time);
                                     let catching_up = rpc_status.result.sync_info.catching_up;
 
-                                    // Create health metrics for evaluation
+                                    // Reset failure count when RPC succeeds
+                                    {
+                                        let mut failure_counts = self.failure_counts.write().await;
+                                        failure_counts.insert(node_name.to_string(), 0);
+                                    }
+
+                                    // Create health metrics
                                     let metrics = HealthMetrics {
                                         node_name: node_name.to_string(),
                                         network: node.network.clone(),
@@ -194,15 +208,15 @@ impl HealthMonitor {
                                         block_time,
                                         catching_up,
                                         response_time_ms: response_time.as_millis() as u64,
-                                        peers_count: None, // We could add a separate call to get peer count
+                                        peers_count: None,
                                         last_check: check_time,
-                                        consecutive_failures: self.get_failure_count(node_name).await,
+                                        consecutive_failures: 0,
                                     };
 
                                     let status = if metrics.is_healthy(&self.thresholds) {
                                         HealthStatus::Healthy
                                     } else if catching_up {
-                                        HealthStatus::Unknown // Catching up might be temporary
+                                        HealthStatus::Unknown
                                     } else {
                                         HealthStatus::Unhealthy
                                     };
@@ -218,7 +232,7 @@ impl HealthMonitor {
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Failed to parse RPC response for {}: {}", node_name, e);
+                                    self.increment_failure_count(node_name).await;
                                     NodeHealth {
                                         node_name: node_name.to_string(),
                                         status: HealthStatus::Unhealthy,
@@ -232,7 +246,7 @@ impl HealthMonitor {
                             }
                         }
                         Err(e) => {
-                            warn!("Failed to read response body for {}: {}", node_name, e);
+                            self.increment_failure_count(node_name).await;
                             NodeHealth {
                                 node_name: node_name.to_string(),
                                 status: HealthStatus::Unhealthy,
@@ -245,7 +259,7 @@ impl HealthMonitor {
                         }
                     }
                 } else {
-                    warn!("HTTP error for {}: {}", node_name, response.status());
+                    self.increment_failure_count(node_name).await;
                     NodeHealth {
                         node_name: node_name.to_string(),
                         status: HealthStatus::Unhealthy,
@@ -258,7 +272,7 @@ impl HealthMonitor {
                 }
             }
             Err(e) => {
-                warn!("Network error for {}: {}", node_name, e);
+                self.increment_failure_count(node_name).await;
                 NodeHealth {
                     node_name: node_name.to_string(),
                     status: HealthStatus::Unhealthy,
@@ -272,32 +286,54 @@ impl HealthMonitor {
         }
     }
 
+    async fn increment_failure_count(&self, node_name: &str) {
+        let mut failure_counts = self.failure_counts.write().await;
+        let count = failure_counts.get(node_name).unwrap_or(&0) + 1;
+        failure_counts.insert(node_name.to_string(), count);
+    }
+
+    fn get_alarm_interval_hours(&self, alarm_count: u32) -> u64 {
+        match alarm_count {
+            0 => 0,   // 1st alarm: immediate
+            1 => 6,   // 2nd alarm: 6 hours later
+            2 => 12,  // 3rd alarm: 12 hours later
+            3 => 24,  // 4th alarm: 24 hours later
+            _ => 48,  // 5th+ alarms: 48 hours later
+        }
+    }
+
     async fn should_send_alarm(&self, node_name: &str, health: &NodeHealth) -> bool {
-        // Only send alarms for unhealthy nodes
         if matches!(health.status, HealthStatus::Healthy) {
             return false;
         }
 
-        // Check alarm rate limiting (don't spam alarms)
-        let alarm_cooldown = Duration::from_secs(300); // 5 minutes
-        {
-            let last_alarms = self.last_alarm_times.read().await;
-            if let Some(last_alarm) = last_alarms.get(node_name) {
-                let time_since_last = Utc::now().signed_duration_since(*last_alarm);
-                if time_since_last.to_std().unwrap_or(Duration::ZERO) < alarm_cooldown {
-                    return false;
-                }
-            }
+        let failure_count = self.get_failure_count(node_name).await;
+        if failure_count < self.thresholds.max_consecutive_failures {
+            return false;
         }
 
-        // Check failure threshold
-        let failure_count = self.get_failure_count(node_name).await;
-        failure_count >= self.thresholds.max_consecutive_failures
+        // Check alarm interval
+        let alarm_count = {
+            let alarm_counts = self.alarm_counts.read().await;
+            alarm_counts.get(node_name).copied().unwrap_or(0)
+        };
+
+        let required_hours = self.get_alarm_interval_hours(alarm_count);
+        if required_hours == 0 {
+            return true; // First alarm - send immediately
+        }
+
+        let last_alarms = self.last_alarm_times.read().await;
+        if let Some(last_alarm) = last_alarms.get(node_name) {
+            let hours_since = Utc::now().signed_duration_since(*last_alarm).num_hours();
+            hours_since >= required_hours as i64
+        } else {
+            true // No previous alarm
+        }
     }
 
     async fn send_health_alarm(&self, node_name: &str, health: &NodeHealth) -> Result<()> {
         if self.config.alarm_webhook_url.is_empty() {
-            debug!("No alarm webhook URL configured, skipping alarm");
             return Ok(());
         }
 
@@ -323,8 +359,6 @@ impl HealthMonitor {
             }),
         };
 
-        info!("Sending alarm for node {}: {:?}", node_name, alarm.severity);
-
         let response = self
             .http_client
             .post(&self.config.alarm_webhook_url)
@@ -333,20 +367,41 @@ impl HealthMonitor {
             .await?;
 
         if response.status().is_success() {
-            info!("Alarm sent successfully for node {}", node_name);
-
-            // Update last alarm time
+            // Update alarm tracking
             {
                 let mut last_alarms = self.last_alarm_times.write().await;
+                let mut alarm_counts = self.alarm_counts.write().await;
                 last_alarms.insert(node_name.to_string(), Utc::now());
+                let count = alarm_counts.get(node_name).copied().unwrap_or(0);
+                alarm_counts.insert(node_name.to_string(), count + 1);
             }
-        } else {
-            warn!(
-                "Alarm webhook returned status {} for node {}",
-                response.status(),
-                node_name
-            );
         }
+
+        Ok(())
+    }
+
+    async fn send_recovery_notification(&self, node_name: &str) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let alarm = AlarmPayload {
+            timestamp: Utc::now(),
+            alarm_type: "node_recovery".to_string(),
+            severity: "info".to_string(),
+            node_name: node_name.to_string(),
+            message: format!("Node {} has recovered and is now healthy", node_name),
+            details: json!({
+                "status": "Healthy",
+                "server_host": self.get_server_for_node(node_name).await,
+            }),
+        };
+
+        self.http_client
+            .post(&self.config.alarm_webhook_url)
+            .json(&alarm)
+            .send()
+            .await?;
 
         Ok(())
     }
@@ -379,15 +434,11 @@ impl HealthMonitor {
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
         let health = self.check_node_health(node_name, node_config).await;
-
-        // Save to database
         self.database.save_node_health(&health).await?;
-
         Ok(health)
     }
 }
 
-// Implement Clone for parallel operations
 impl Clone for HealthMonitor {
     fn clone(&self) -> Self {
         Self {
@@ -397,6 +448,7 @@ impl Clone for HealthMonitor {
             thresholds: self.thresholds.clone(),
             failure_counts: self.failure_counts.clone(),
             last_alarm_times: self.last_alarm_times.clone(),
+            alarm_counts: self.alarm_counts.clone(),
         }
     }
 }

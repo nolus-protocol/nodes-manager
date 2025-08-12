@@ -5,7 +5,7 @@ use chrono::Utc;
 use futures::future::join_all;
 use serde::Serialize;
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::ssh::SshManager;
@@ -157,7 +157,7 @@ impl SshManager {
             instances.len()
         );
 
-        // Group hermes instances by server
+        // Group hermes instances by server for sequential processing
         let mut hermes_by_server: HashMap<String, Vec<HermesConfig>> = HashMap::new();
         for hermes in instances.iter() {
             hermes_by_server
@@ -171,7 +171,7 @@ impl SshManager {
         for (server_name, server_hermes) in hermes_by_server {
             let ssh_manager = self.clone();
             let task = tokio::spawn(async move {
-                ssh_manager.restart_hermes_on_server(server_name, server_hermes).await
+                ssh_manager.restart_hermes_on_server_with_deps(server_name, server_hermes).await
             });
             tasks.push(task);
         }
@@ -213,7 +213,8 @@ impl SshManager {
         result
     }
 
-    async fn restart_hermes_on_server(
+    // Restart Hermes instances on a server with dependency checking
+    async fn restart_hermes_on_server_with_deps(
         &self,
         server_name: String,
         hermes_instances: Vec<HermesConfig>,
@@ -221,17 +222,18 @@ impl SshManager {
         let mut results = Vec::new();
 
         info!(
-            "Restarting {} Hermes instances sequentially on server {}",
+            "Restarting {} Hermes instances on server {} with dependency checking",
             hermes_instances.len(),
             server_name
         );
 
         // Process Hermes instances sequentially on the same server
-        // Note: Dependency checking is now handled at the scheduler level before calling this method
+        // Dependency checking is now handled inside restart_hermes method
         for hermes in hermes_instances {
             let start_time = Utc::now();
             let hermes_id = format!("{}-{}", server_name, hermes.service_name);
 
+            // Use the updated restart_hermes method (with dependency checking)
             match self.restart_hermes(&hermes).await {
                 Ok(_) => {
                     let duration = Utc::now().signed_duration_since(start_time);
@@ -366,6 +368,79 @@ impl SshManager {
         }
 
         all_statuses
+    }
+
+    // Additional method for checking all Hermes dependencies at once
+    pub async fn validate_hermes_dependencies(&self) -> HashMap<String, bool> {
+        info!("Validating dependencies for all Hermes instances");
+
+        let mut dependency_status = HashMap::new();
+
+        for (hermes_name, hermes_config) in &self.config.hermes {
+            let dependencies_healthy = self
+                .check_node_dependencies(&hermes_config.dependent_nodes)
+                .await
+                .unwrap_or(false);
+
+            dependency_status.insert(hermes_name.clone(), dependencies_healthy);
+
+            if dependencies_healthy {
+                info!("All dependencies healthy for Hermes: {}", hermes_name);
+            } else {
+                warn!("Some dependencies unhealthy for Hermes: {}", hermes_name);
+            }
+        }
+
+        dependency_status
+    }
+
+    // Method to get detailed dependency health report
+    pub async fn get_hermes_dependency_report(&self) -> HashMap<String, serde_json::Value> {
+        info!("Generating detailed dependency report for all Hermes instances");
+
+        let mut report = HashMap::new();
+
+        for (hermes_name, hermes_config) in &self.config.hermes {
+            let mut dependency_details = Vec::new();
+
+            for node_name in &hermes_config.dependent_nodes {
+                let node_config = self.config.nodes.get(node_name);
+
+                let status = match node_config {
+                    Some(config) => {
+                        if !config.enabled {
+                            "disabled".to_string()
+                        } else {
+                            match self.quick_node_health_check(node_name, config).await {
+                                Ok(true) => "healthy".to_string(),
+                                Ok(false) => "unhealthy".to_string(),
+                                Err(e) => format!("error: {}", e),
+                            }
+                        }
+                    }
+                    None => "not_found".to_string(),
+                };
+
+                dependency_details.push(serde_json::json!({
+                    "node_name": node_name,
+                    "status": status
+                }));
+            }
+
+            let all_healthy = dependency_details.iter()
+                .all(|detail| detail["status"] == "healthy");
+
+            report.insert(hermes_name.clone(), serde_json::json!({
+                "hermes_name": hermes_name,
+                "server_host": hermes_config.server_host,
+                "service_name": hermes_config.service_name,
+                "all_dependencies_healthy": all_healthy,
+                "dependency_count": hermes_config.dependent_nodes.len(),
+                "dependencies": dependency_details
+            }));
+        }
+
+        report
     }
 }
 

@@ -317,25 +317,176 @@ impl SshManager {
         Ok(())
     }
 
+    // Check if dependent nodes are healthy before Hermes restart
+    pub async fn check_node_dependencies(&self, dependent_nodes: &[String]) -> Result<bool> {
+        if dependent_nodes.is_empty() {
+            return Ok(true); // No dependencies = always OK
+        }
+
+        info!("Checking health of {} dependent nodes", dependent_nodes.len());
+
+        for node_name in dependent_nodes {
+            // Get node config
+            let node_config = self.config.nodes.get(node_name)
+                .ok_or_else(|| anyhow::anyhow!("Dependent node {} not found in config", node_name))?;
+
+            if !node_config.enabled {
+                warn!("Dependent node {} is disabled, skipping", node_name);
+                continue; // Skip disabled nodes
+            }
+
+            // Make a quick RPC call to check if node is responding
+            let health_check = self.quick_node_health_check(node_name, node_config).await;
+
+            match health_check {
+                Ok(true) => {
+                    debug!("Dependent node {} is healthy", node_name);
+                }
+                Ok(false) => {
+                    warn!("Dependent node {} is unhealthy", node_name);
+                    return Ok(false);
+                }
+                Err(e) => {
+                    error!("Failed to check dependent node {}: {}", node_name, e);
+                    return Ok(false);
+                }
+            }
+        }
+
+        info!("All dependent nodes are healthy");
+        Ok(true)
+    }
+
+    // Quick health check for dependency validation
+    pub async fn quick_node_health_check(&self, node_name: &str, node_config: &NodeConfig) -> Result<bool> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5)) // Shorter timeout for dependency checks
+            .build()?;
+
+        let rpc_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "status",
+            "params": [],
+            "id": 1
+        });
+
+        match client.post(&node_config.rpc_url).json(&rpc_request).send().await {
+            Ok(response) if response.status().is_success() => {
+                debug!("Node {} RPC responded successfully", node_name);
+                Ok(true)
+            }
+            Ok(response) => {
+                warn!("Node {} RPC returned error status: {}", node_name, response.status());
+                Ok(false)
+            }
+            Err(e) => {
+                warn!("Node {} RPC failed: {}", node_name, e);
+                Ok(false)
+            }
+        }
+    }
+
+    // Check if Hermes has been running long enough to restart
+    pub async fn check_hermes_min_uptime(&self, hermes: &HermesConfig) -> Result<bool> {
+        let min_uptime_minutes = self.config.hermes_min_uptime_minutes;
+
+        if min_uptime_minutes == 0 {
+            return Ok(true); // No minimum uptime required
+        }
+
+        let server_name = &hermes.server_host;
+        let service_name = &hermes.service_name;
+
+        match self.get_service_uptime(server_name, service_name).await {
+            Ok(Some(uptime)) => {
+                let uptime_minutes = uptime.as_secs() / 60;
+
+                if uptime_minutes >= min_uptime_minutes {
+                    info!(
+                        "Hermes {} has been running for {} minutes (minimum: {})",
+                        service_name, uptime_minutes, min_uptime_minutes
+                    );
+                    Ok(true)
+                } else {
+                    warn!(
+                        "Hermes {} has only been running for {} minutes (minimum: {})",
+                        service_name, uptime_minutes, min_uptime_minutes
+                    );
+                    Ok(false)
+                }
+            }
+            Ok(None) => {
+                warn!("Could not determine uptime for Hermes {}", service_name);
+                Ok(true) // Allow restart if uptime unknown
+            }
+            Err(e) => {
+                error!("Failed to check uptime for Hermes {}: {}", service_name, e);
+                Ok(true) // Allow restart on error
+            }
+        }
+    }
+
+    // Verify Hermes actually started properly by checking logs
+    async fn verify_hermes_startup(&self, server_name: &str, service_name: &str) -> Result<bool> {
+        let log_cmd = format!(
+            "journalctl -u {} --since '1 minute ago' --no-pager | grep -E '(started|ready|listening)' | tail -5",
+            service_name
+        );
+
+        match self.execute_command(server_name, &log_cmd).await {
+            Ok(output) => {
+                if output.trim().is_empty() {
+                    warn!("No startup messages found in Hermes logs");
+                    Ok(false)
+                } else {
+                    debug!("Hermes startup logs: {}", output);
+                    // Look for positive indicators
+                    let positive_indicators = ["started", "ready", "listening", "connected"];
+                    let has_positive = positive_indicators.iter()
+                        .any(|indicator| output.to_lowercase().contains(indicator));
+
+                    Ok(has_positive)
+                }
+            }
+            Err(e) => {
+                warn!("Failed to check Hermes logs: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
     pub async fn restart_hermes(&self, hermes: &HermesConfig) -> Result<()> {
         let server_name = &hermes.server_host;
         let service_name = &hermes.service_name;
 
-        info!(
-            "Restarting Hermes {} on server {}",
-            service_name, server_name
-        );
+        info!("Starting Hermes restart: {} on server {}", service_name, server_name);
 
-        // Note: Dependency checking is now handled by the scheduler before calling this method
-        // This method focuses only on restarting the Hermes service
+        // STEP 1: Check dependent nodes are healthy
+        if !self.check_node_dependencies(&hermes.dependent_nodes).await? {
+            return Err(anyhow::anyhow!(
+                "Cannot restart Hermes {}: dependent nodes are not healthy",
+                service_name
+            ));
+        }
 
-        // Restart the hermes service
+        // STEP 2: Check minimum uptime
+        if !self.check_hermes_min_uptime(hermes).await? {
+            return Err(anyhow::anyhow!(
+                "Cannot restart Hermes {}: minimum uptime not reached",
+                service_name
+            ));
+        }
+
+        // STEP 3: Restart the hermes service
+        info!("Restarting Hermes service: {}", service_name);
         self.restart_service(server_name, service_name).await?;
 
-        // Verify Hermes is running properly
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        let status = self.check_service_status(server_name, service_name).await?;
+        // STEP 4: Wait longer for Hermes to start (Hermes needs more time than blockchain nodes)
+        info!("Waiting for Hermes {} to start...", service_name);
+        tokio::time::sleep(Duration::from_secs(15)).await;
 
+        // STEP 5: Verify Hermes is running
+        let status = self.check_service_status(server_name, service_name).await?;
         if !status.is_healthy() {
             return Err(anyhow::anyhow!(
                 "Hermes failed to start properly: {:?}",
@@ -343,10 +494,22 @@ impl SshManager {
             ));
         }
 
-        info!(
-            "Hermes {} restarted successfully on server {}",
-            service_name, server_name
-        );
+        // STEP 6: Additional verification - check Hermes logs for startup success
+        match self.verify_hermes_startup(server_name, service_name).await {
+            Ok(true) => {
+                info!("Hermes {} startup verification passed", service_name);
+            }
+            Ok(false) => {
+                warn!("Hermes {} started but verification failed - check logs", service_name);
+                // Don't fail the restart, just warn
+            }
+            Err(e) => {
+                warn!("Could not verify Hermes {} startup: {}", service_name, e);
+                // Don't fail the restart, just warn
+            }
+        }
+
+        info!("Hermes {} restarted successfully on server {}", service_name, server_name);
         Ok(())
     }
 
