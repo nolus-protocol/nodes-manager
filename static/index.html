@@ -688,7 +688,7 @@
     <header class="header">
         <div class="header-content">
             <div class="header-title">
-                <h1>Blockchain Infrastructure Management Console</h1>
+                <h1>Infra Management Console</h1>
             </div>
             <div class="header-status">
                 <div class="status-indicator healthy" id="system-status">
@@ -1131,6 +1131,47 @@
             }
         }
 
+        // NEW: Function to extract weekday from cron expression
+        function extractWeekdayFromCron(cronExpression) {
+            const parts = cronExpression.trim().split(/\s+/);
+            if (parts.length !== 6) return null;
+
+            const weekday = parts[5]; // Last part is weekday
+            if (weekday === '*') return null;
+
+            // Convert weekday to number (0=Sunday, 1=Monday, etc.)
+            const weekdayNum = parseInt(weekday);
+            return weekdayNum;
+        }
+
+        // NEW: Function to get sort order for weekdays (Monday=1, Sunday=7)
+        function getWeekdaySortOrder(weekdayNum) {
+            if (weekdayNum === null || isNaN(weekdayNum)) return 8; // Sort non-weekly at end
+
+            // Convert cron weekday (0=Sunday, 1=Monday) to sort order (Monday=1, Sunday=7)
+            if (weekdayNum === 0 || weekdayNum === 7) return 7; // Sunday last
+            return weekdayNum; // Monday=1, Tuesday=2, etc.
+        }
+
+        // NEW: Function to sort scheduled operations by weekday
+        function sortScheduledOperationsByWeekday(operations) {
+            return operations.sort((a, b) => {
+                const weekdayA = extractWeekdayFromCron(a.schedule);
+                const weekdayB = extractWeekdayFromCron(b.schedule);
+
+                const sortOrderA = getWeekdaySortOrder(weekdayA);
+                const sortOrderB = getWeekdaySortOrder(weekdayB);
+
+                // Primary sort: weekday order (Monday=1, Sunday=7)
+                if (sortOrderA !== sortOrderB) {
+                    return sortOrderA - sortOrderB;
+                }
+
+                // Secondary sort: by target name (alphabetical) if same weekday
+                return a.target_name.localeCompare(b.target_name);
+            });
+        }
+
         function displayScheduledOperations(data) {
             const container = document.getElementById('scheduled-container');
             const scheduled = data.scheduled || [];
@@ -1170,6 +1211,9 @@
             }
 
             if (scheduled.length > 0) {
+                // UPDATED: Sort scheduled operations by weekday before displaying
+                const sortedScheduled = sortScheduledOperationsByWeekday([...scheduled]);
+
                 html += '<h3 style="margin-bottom: 1rem; color: var(--text-primary);">Scheduled Operations</h3>';
                 html += `
                     <table class="data-table">
@@ -1184,7 +1228,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            ${scheduled.map(op => {
+                            ${sortedScheduled.map(op => {
                                 const scheduleInfo = parseCronExpression(op.schedule);
                                 return `
                                     <tr>
