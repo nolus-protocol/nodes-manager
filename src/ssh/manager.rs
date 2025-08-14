@@ -116,6 +116,302 @@ impl SshManager {
         }
     }
 
+    /// Execute long-running command with extended timeout
+    pub async fn execute_long_running_command(
+        &self,
+        server_name: &str,
+        command: &str,
+        timeout_minutes: u64,
+    ) -> Result<String> {
+        let server_config = self
+            .config
+            .servers
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
+
+        // Get server-specific semaphore
+        let semaphore = {
+            let semaphores = self.server_semaphores.read().await;
+            semaphores
+                .get(server_name)
+                .ok_or_else(|| anyhow::anyhow!("Semaphore for server {} not found", server_name))?
+                .clone()
+        };
+
+        let _permit = semaphore.acquire().await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to acquire semaphore for server {}: {}",
+                server_name,
+                e
+            )
+        })?;
+
+        info!(
+            "Executing long-running command on server {} with {}m timeout: {}",
+            server_name, timeout_minutes, command
+        );
+
+        // Get or create connection
+        let connection = self
+            .get_or_create_connection(server_name, server_config)
+            .await?;
+
+        // Execute command with extended timeout
+        let result = tokio::time::timeout(
+            Duration::from_secs(timeout_minutes * 60),
+            async {
+                let mut conn = connection.lock().await;
+                conn.execute_command(command).await
+            },
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) => {
+                info!(
+                    "Long-running command completed successfully on server {}: {} chars output",
+                    server_name,
+                    output.len()
+                );
+                Ok(output)
+            }
+            Ok(Err(e)) => {
+                error!("Long-running SSH command failed on server {}: {}", server_name, e);
+                Err(e)
+            }
+            Err(_) => {
+                error!(
+                    "Long-running SSH command timed out on server {} after {}m",
+                    server_name, timeout_minutes
+                );
+                // Remove failed connection
+                self.remove_connection(server_name).await;
+                Err(anyhow::anyhow!(
+                    "Long-running command timed out after {}m",
+                    timeout_minutes
+                ))
+            }
+        }
+    }
+
+    /// Execute pruning command with periodic health monitoring
+    pub async fn execute_monitored_pruning(
+        &self,
+        server_name: &str,
+        prune_command: &str,
+        deploy_path: &str,
+        check_interval_minutes: u64,
+        max_duration_minutes: u64,
+    ) -> Result<String> {
+        let server_config = self
+            .config
+            .servers
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
+
+        // Get server-specific semaphore
+        let semaphore = {
+            let semaphores = self.server_semaphores.read().await;
+            semaphores
+                .get(server_name)
+                .ok_or_else(|| anyhow::anyhow!("Semaphore for server {} not found", server_name))?
+                .clone()
+        };
+
+        let _permit = semaphore.acquire().await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to acquire semaphore for server {}: {}",
+                server_name,
+                e
+            )
+        })?;
+
+        info!(
+            "Starting monitored pruning on server {} with {}m max duration, checking every {}m",
+            server_name, max_duration_minutes, check_interval_minutes
+        );
+
+        // Create a unique temporary file for this pruning operation
+        let timestamp = chrono::Utc::now().timestamp();
+        let temp_log_file = format!("/tmp/pruning_{}_{}.log", deploy_path.replace("/", "_"), timestamp);
+        let temp_pid_file = format!("/tmp/pruning_{}_{}.pid", deploy_path.replace("/", "_"), timestamp);
+
+        // Start the pruning process in background and capture PID
+        let background_command = format!(
+            "nohup bash -c '({}) > {} 2>&1 & echo $! > {}; wait'",
+            prune_command, temp_log_file, temp_pid_file
+        );
+
+        info!("Starting background pruning process: {}", background_command);
+
+        // Start the background process
+        self.execute_command(server_name, &background_command).await?;
+
+        // Give the process a moment to start
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Read the PID
+        let get_pid_command = format!("cat {}", temp_pid_file);
+        let pid_result = self.execute_command(server_name, &get_pid_command).await;
+
+        let process_pid = match pid_result {
+            Ok(pid_str) => {
+                match pid_str.trim().parse::<u32>() {
+                    Ok(pid) => {
+                        info!("Pruning process started with PID: {}", pid);
+                        pid
+                    }
+                    Err(e) => {
+                        warn!("Could not parse PID: {}, falling back to process name monitoring", e);
+                        0 // Use 0 to indicate we'll monitor by process name instead
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Could not read PID file: {}, falling back to process name monitoring", e);
+                0 // Use 0 to indicate we'll monitor by process name instead
+            }
+        };
+
+        // Monitor the process periodically
+        let start_time = std::time::Instant::now();
+        let max_duration = Duration::from_secs(max_duration_minutes * 60);
+        let check_interval = Duration::from_secs(check_interval_minutes * 60);
+
+        let mut last_health_check = start_time;
+        let mut health_check_failures = 0;
+        const MAX_HEALTH_CHECK_FAILURES: u32 = 3;
+
+        loop {
+            // Check if we've exceeded maximum duration
+            if start_time.elapsed() >= max_duration {
+                // Clean up and return timeout error
+                self.cleanup_pruning_process(server_name, process_pid, &temp_log_file, &temp_pid_file).await?;
+                return Err(anyhow::anyhow!(
+                    "Pruning operation timed out after {} minutes",
+                    max_duration_minutes
+                ));
+            }
+
+            // Check if it's time for a health check
+            if last_health_check.elapsed() >= check_interval {
+                let is_running = if process_pid > 0 {
+                    self.check_process_by_pid(server_name, process_pid).await.unwrap_or(false)
+                } else {
+                    self.check_pruning_process_status(server_name, deploy_path).await.unwrap_or(false)
+                };
+
+                if !is_running {
+                    health_check_failures += 1;
+                    warn!(
+                        "Pruning process health check failed ({}/{}). Process not running for {}",
+                        health_check_failures, MAX_HEALTH_CHECK_FAILURES, deploy_path
+                    );
+
+                    if health_check_failures >= MAX_HEALTH_CHECK_FAILURES {
+                        // Process has died, get the log output and return error
+                        let log_output = self.get_pruning_log_output(server_name, &temp_log_file).await
+                            .unwrap_or_else(|_| "Could not retrieve log output".to_string());
+
+                        self.cleanup_pruning_process(server_name, process_pid, &temp_log_file, &temp_pid_file).await?;
+
+                        return Err(anyhow::anyhow!(
+                            "Pruning process died unexpectedly after {} minutes. Last output: {}",
+                            start_time.elapsed().as_secs() / 60,
+                            log_output.chars().take(500).collect::<String>() // Truncate to 500 chars
+                        ));
+                    }
+                } else {
+                    // Process is running, reset failure count
+                    health_check_failures = 0;
+                    let elapsed_minutes = start_time.elapsed().as_secs() / 60;
+                    info!(
+                        "Pruning process health check passed for {} (running for {}m)",
+                        deploy_path, elapsed_minutes
+                    );
+                }
+
+                last_health_check = std::time::Instant::now();
+            }
+
+            // Check if the background command has completed
+            let check_completion_command = if process_pid > 0 {
+                format!("kill -0 {} 2>/dev/null && echo 'running' || echo 'completed'", process_pid)
+            } else {
+                format!("pgrep -f 'cosmos-pruner.*{}' > /dev/null && echo 'running' || echo 'completed'", deploy_path)
+            };
+
+            match self.execute_command(server_name, &check_completion_command).await {
+                Ok(status) => {
+                    if status.trim() == "completed" {
+                        // Process completed, get the output
+                        let output = self.get_pruning_log_output(server_name, &temp_log_file).await?;
+                        self.cleanup_pruning_process(server_name, process_pid, &temp_log_file, &temp_pid_file).await?;
+
+                        info!("Pruning process completed successfully after {} minutes",
+                               start_time.elapsed().as_secs() / 60);
+                        return Ok(output);
+                    }
+                }
+                Err(e) => {
+                    warn!("Error checking process completion: {}", e);
+                }
+            }
+
+            // Wait before next check (use shorter interval for more responsive monitoring)
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    }
+
+    /// Check if a process is running by PID
+    async fn check_process_by_pid(&self, server_name: &str, pid: u32) -> Result<bool> {
+        let check_command = format!("kill -0 {} 2>/dev/null && echo 'running' || echo 'not_running'", pid);
+
+        match self.execute_command(server_name, &check_command).await {
+            Ok(output) => {
+                let is_running = output.trim() == "running";
+                debug!("Process PID {} status: {}", pid, if is_running { "running" } else { "not running" });
+                Ok(is_running)
+            }
+            Err(e) => {
+                warn!("Failed to check process PID {}: {}", pid, e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get the output from the pruning log file
+    async fn get_pruning_log_output(&self, server_name: &str, log_file: &str) -> Result<String> {
+        let read_log_command = format!("tail -n 50 {} 2>/dev/null || echo 'No log output available'", log_file);
+        self.execute_command(server_name, &read_log_command).await
+    }
+
+    /// Clean up temporary files and optionally kill the process
+    async fn cleanup_pruning_process(
+        &self,
+        server_name: &str,
+        pid: u32,
+        log_file: &str,
+        pid_file: &str
+    ) -> Result<()> {
+        // Kill the process if it's still running
+        if pid > 0 {
+            let kill_command = format!("kill {} 2>/dev/null || true", pid);
+            if let Err(e) = self.execute_command(server_name, &kill_command).await {
+                warn!("Failed to kill process {}: {}", pid, e);
+            }
+        }
+
+        // Clean up temporary files
+        let cleanup_command = format!("rm -f {} {} 2>/dev/null || true", log_file, pid_file);
+        if let Err(e) = self.execute_command(server_name, &cleanup_command).await {
+            warn!("Failed to cleanup temporary files: {}", e);
+        }
+
+        info!("Cleaned up pruning process PID {} and temporary files", pid);
+        Ok(())
+    }
+
     /// Truncate log files for a service
     pub async fn truncate_logs(&self, server_name: &str, log_path: &str, service_name: &str) -> Result<()> {
         info!("Truncating logs for service {} on server {} at path: {}", service_name, server_name, log_path);
@@ -311,7 +607,7 @@ impl SshManager {
         Ok(())
     }
 
-    /// Enhanced pruning with maintenance mode integration and log truncation
+    /// Enhanced pruning with maintenance mode integration, log truncation, and PERIODIC HEALTH MONITORING
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -329,14 +625,14 @@ impl SshManager {
         let node_name = self.find_node_config_key(node).await
             .ok_or_else(|| anyhow::anyhow!("Could not find node config key for pruning"))?;
 
-        info!("Starting pruning for node {} on server {}", node_name, server_name);
+        info!("Starting pruning for node {} on server {} with periodic health monitoring", node_name, server_name);
 
-        // STEP 1: Start maintenance mode with correct node name
+        // STEP 1: Start maintenance mode with EXTENDED estimate for long pruning operations (5 hours)
         self.maintenance_tracker
-            .start_maintenance(&node_name, "pruning", 30, server_name)
+            .start_maintenance(&node_name, "pruning", 300, server_name) // 300 minutes = 5 hours
             .await?;
 
-        // STEP 2: Execute pruning with proper error handling and log truncation
+        // STEP 2: Execute pruning with proper error handling, log truncation, and PERIODIC HEALTH MONITORING
         let pruning_result = async {
             // Stop the service
             self.stop_service(server_name, service_name).await?;
@@ -351,15 +647,26 @@ impl SshManager {
                 }
             }
 
-            // Run cosmos-pruner command using the exact path from configuration
+            // Run cosmos-pruner command using the monitored execution method
             let prune_command = format!(
                 "cosmos-pruner prune {} --blocks={} --versions={}",
                 deploy_path, keep_blocks, keep_versions
             );
 
-            info!("Executing cosmos-pruner command: {}", prune_command);
-            let output = self.execute_command(server_name, &prune_command).await?;
-            info!("Pruning output: {}", output);
+            info!("Executing cosmos-pruner with periodic health monitoring: {}", prune_command);
+
+            // Use the new monitored execution method:
+            // - Check process health every 15 minutes
+            // - Maximum 5-hour duration (300 minutes)
+            let output = self.execute_monitored_pruning(
+                server_name,
+                &prune_command,
+                deploy_path,
+                15, // Check every 15 minutes
+                300 // Maximum 5 hours
+            ).await?;
+
+            info!("Pruning completed successfully with monitoring. Output length: {} chars", output.len());
 
             // Start the service
             self.start_service(server_name, service_name).await?;
@@ -382,12 +689,51 @@ impl SshManager {
         // STEP 5: Return the actual pruning result
         match pruning_result {
             Ok(_) => {
-                info!("Pruning completed successfully for node {} on server {}", node_name, server_name);
+                info!("Pruning completed successfully for node {} on server {} with health monitoring", node_name, server_name);
                 Ok(())
             }
             Err(e) => {
                 error!("Pruning failed for node {} on server {}: {}", node_name, server_name, e);
                 Err(e)
+            }
+        }
+    }
+
+    /// Check if a pruning process is actually running on the server
+    pub async fn check_pruning_process_status(&self, server_name: &str, deploy_path: &str) -> Result<bool> {
+        let check_command = format!(
+            "pgrep -f 'cosmos-pruner.*{}' > /dev/null && echo 'running' || echo 'not_running'",
+            deploy_path
+        );
+
+        match self.execute_command(server_name, &check_command).await {
+            Ok(output) => {
+                let is_running = output.trim() == "running";
+                debug!("Pruning process status check for {}: {}", deploy_path, if is_running { "running" } else { "not running" });
+                Ok(is_running)
+            }
+            Err(e) => {
+                warn!("Failed to check pruning process status: {}", e);
+                Ok(false) // Assume not running if we can't check
+            }
+        }
+    }
+
+    /// Emergency cleanup - kill any stuck pruning processes
+    pub async fn kill_stuck_pruning_process(&self, server_name: &str, deploy_path: &str) -> Result<()> {
+        let kill_command = format!(
+            "pkill -f 'cosmos-pruner.*{}'",
+            deploy_path
+        );
+
+        match self.execute_command(server_name, &kill_command).await {
+            Ok(_) => {
+                info!("Killed stuck pruning process for path: {}", deploy_path);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to kill stuck pruning process: {}", e);
+                Ok(()) // Don't fail if we can't kill the process
             }
         }
     }

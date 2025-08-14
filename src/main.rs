@@ -127,6 +127,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     info!("Starting Blockchain Nodes Manager with Maintenance Tracking");
+    info!("Enhanced with support for long-running pruning operations (up to 5 hours)");
 
     // Initialize database
     let db = Arc::new(database::init_database().await?);
@@ -140,11 +141,11 @@ async fn main() -> Result<()> {
 
     // Initialize maintenance tracker
     let maintenance_tracker = Arc::new(maintenance_tracker::MaintenanceTracker::new());
-    info!("Maintenance tracker initialized");
+    info!("Maintenance tracker initialized with extended timeout support");
 
     // Initialize SSH manager with maintenance tracker
     let ssh_manager = Arc::new(ssh::SshManager::new(config.clone(), maintenance_tracker.clone()));
-    info!("SSH manager initialized with maintenance integration");
+    info!("SSH manager initialized with maintenance integration and 5-hour pruning timeout");
 
     // Initialize health monitor with maintenance tracker
     let health_monitor = Arc::new(health::HealthMonitor::new(
@@ -181,19 +182,27 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Start maintenance tracker cleanup task
+    // Start maintenance tracker cleanup task with EXTENDED cleanup times for long operations
     let maintenance_cleanup_task = {
         let tracker = maintenance_tracker.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1800)); // Every 30 minutes
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Every hour
 
             loop {
                 interval.tick().await;
 
-                // Cleanup maintenance windows that have been running too long (6 hours max)
-                let cleaned = tracker.cleanup_expired_maintenance(6).await;
+                // EXTENDED: Cleanup maintenance windows that have been running too long (8 hours max)
+                // This accommodates 5-hour pruning operations plus buffer time
+                let cleaned = tracker.cleanup_expired_maintenance(8).await;
                 if cleaned > 0 {
-                    error!("Emergency cleaned up {} expired maintenance windows", cleaned);
+                    error!("Emergency cleaned up {} expired maintenance windows (8h max)", cleaned);
+                }
+
+                // Additional cleanup: remove operations that are 3x longer than estimated
+                // This is a safety net for truly stuck operations
+                let overdue_cleaned = tracker.cleanup_overdue_maintenance(3.0).await;
+                if overdue_cleaned > 0 {
+                    error!("Cleaned up {} overdue maintenance windows (3x factor)", overdue_cleaned);
                 }
             }
         })
@@ -226,7 +235,9 @@ async fn main() -> Result<()> {
 
     info!("All services started successfully with maintenance tracking");
     info!("Web interface available at http://{}:{}", config.host, config.port);
-    info!("Maintenance tracking enabled - nodes will show 'Maintenance' status during pruning");
+    info!("Maintenance tracking enabled - nodes will show 'Maintenance' status during operations");
+    info!("Long-running operations supported: pruning operations can take up to 5 hours");
+    info!("Emergency cleanup configured: 8-hour maximum maintenance window with 3x overdue factor");
 
     // Wait for all tasks
     tokio::try_join!(health_task, scheduler_task, maintenance_cleanup_task, web_task)?;

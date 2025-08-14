@@ -217,7 +217,7 @@ pub async fn execute_batch_pruning(
         validate_node_name(node_name, &state.config)?;
     }
 
-    info!("Starting batch pruning for {} nodes", request.node_names.len());
+    info!("Starting batch pruning for {} nodes with periodic health monitoring", request.node_names.len());
 
     let result = state.scheduler.execute_batch_pruning(request.node_names).await?;
 
@@ -226,12 +226,13 @@ pub async fn execute_batch_pruning(
         "total_operations": result.total_operations,
         "successful": result.successful,
         "failed": result.failed,
-        "results": result.results
+        "results": result.results,
+        "monitoring_enabled": true
     });
 
     Ok(Json(ApiResponse::success_with_message(
         response,
-        format!("Batch pruning completed: {}/{} successful", result.successful, result.total_operations),
+        format!("Batch pruning completed: {}/{} successful (with health monitoring)", result.successful, result.total_operations),
     )))
 }
 
@@ -305,6 +306,212 @@ pub async fn get_maintenance_stats(
     Ok(Json(ApiResponse::success(stats)))
 }
 
+// NEW: Get detailed maintenance report
+pub async fn get_maintenance_report(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<crate::maintenance_tracker::MaintenanceReport>>> {
+    let report = state.maintenance_tracker.get_maintenance_report().await;
+
+    Ok(Json(ApiResponse::success_with_message(
+        report,
+        "Detailed maintenance report generated successfully".to_string(),
+    )))
+}
+
+// NEW: Get overdue maintenance operations
+pub async fn get_overdue_maintenance(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<Vec<crate::maintenance_tracker::MaintenanceWindow>>>> {
+    let overdue_maintenance = state.maintenance_tracker.get_overdue_maintenance().await;
+    let count = overdue_maintenance.len();
+
+    Ok(Json(ApiResponse::success_with_message(
+        overdue_maintenance,
+        format!("Found {} overdue maintenance operations", count),
+    )))
+}
+
+// NEW: Cleanup overdue maintenance operations
+pub async fn cleanup_overdue_maintenance(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
+    let overdue_factor = params.get("factor")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(3.0); // Default: cleanup if 3x longer than estimated
+
+    info!("Cleaning up maintenance operations that are {}x longer than estimated", overdue_factor);
+
+    let cleaned_count = state.maintenance_tracker.cleanup_overdue_maintenance(overdue_factor).await;
+
+    let response = json!({
+        "cleaned_count": cleaned_count,
+        "overdue_factor": overdue_factor,
+        "timestamp": Utc::now().to_rfc3339(),
+        "action": "cleanup_overdue"
+    });
+
+    Ok(Json(ApiResponse::success_with_message(
+        response,
+        format!("Cleaned up {} overdue maintenance operations", cleaned_count),
+    )))
+}
+
+// ENHANCED: Check for stuck operations with detailed process monitoring
+pub async fn check_stuck_operations(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
+    info!("Checking for stuck operations with enhanced process monitoring");
+
+    let active_maintenance = state.maintenance_tracker.get_all_in_maintenance().await;
+    let total_active = active_maintenance.len(); // Get count before consuming
+    let mut stuck_operations = Vec::new();
+    let mut monitoring_results = Vec::new();
+
+    for maintenance in active_maintenance {
+        if maintenance.operation_type == "pruning" {
+            // Enhanced monitoring for pruning operations
+            if let Some(node_config) = state.config.nodes.get(&maintenance.node_name) {
+                if let Some(deploy_path) = &node_config.pruning_deploy_path {
+                    let duration = Utc::now().signed_duration_since(maintenance.started_at);
+
+                    // Check if the actual pruning process is still running
+                    match state.ssh_manager.check_pruning_process_status(&maintenance.server_host, deploy_path).await {
+                        Ok(is_running) => {
+                            let monitoring_info = json!({
+                                "node_name": maintenance.node_name,
+                                "operation_type": maintenance.operation_type,
+                                "server_host": maintenance.server_host,
+                                "started_at": maintenance.started_at.to_rfc3339(),
+                                "duration_minutes": duration.num_minutes(),
+                                "estimated_duration_minutes": maintenance.estimated_duration_minutes,
+                                "process_running": is_running,
+                                "is_overdue": duration.num_minutes() > maintenance.estimated_duration_minutes as i64,
+                                "deploy_path": deploy_path
+                            });
+
+                            monitoring_results.push(monitoring_info.clone());
+
+                            if !is_running {
+                                stuck_operations.push(json!({
+                                    "node_name": maintenance.node_name,
+                                    "operation_type": maintenance.operation_type,
+                                    "server_host": maintenance.server_host,
+                                    "started_at": maintenance.started_at.to_rfc3339(),
+                                    "duration_minutes": duration.num_minutes(),
+                                    "estimated_duration_minutes": maintenance.estimated_duration_minutes,
+                                    "status": "stuck_no_process",
+                                    "deploy_path": deploy_path,
+                                    "monitoring_details": monitoring_info
+                                }));
+                            }
+                        }
+                        Err(e) => {
+                            info!("Could not check process status for {}: {}", maintenance.node_name, e);
+                            monitoring_results.push(json!({
+                                "node_name": maintenance.node_name,
+                                "operation_type": maintenance.operation_type,
+                                "server_host": maintenance.server_host,
+                                "started_at": maintenance.started_at.to_rfc3339(),
+                                "duration_minutes": duration.num_minutes(),
+                                "estimated_duration_minutes": maintenance.estimated_duration_minutes,
+                                "process_running": "unknown",
+                                "check_error": e.to_string(),
+                                "deploy_path": deploy_path
+                            }));
+                        }
+                    }
+                }
+            }
+        } else {
+            // For non-pruning operations, just check if they're overdue
+            let duration = Utc::now().signed_duration_since(maintenance.started_at);
+            let is_overdue = duration.num_minutes() > maintenance.estimated_duration_minutes as i64;
+
+            monitoring_results.push(json!({
+                "node_name": maintenance.node_name,
+                "operation_type": maintenance.operation_type,
+                "server_host": maintenance.server_host,
+                "started_at": maintenance.started_at.to_rfc3339(),
+                "duration_minutes": duration.num_minutes(),
+                "estimated_duration_minutes": maintenance.estimated_duration_minutes,
+                "process_running": "not_applicable",
+                "is_overdue": is_overdue
+            }));
+
+            if is_overdue {
+                stuck_operations.push(json!({
+                    "node_name": maintenance.node_name,
+                    "operation_type": maintenance.operation_type,
+                    "server_host": maintenance.server_host,
+                    "started_at": maintenance.started_at.to_rfc3339(),
+                    "duration_minutes": duration.num_minutes(),
+                    "estimated_duration_minutes": maintenance.estimated_duration_minutes,
+                    "status": "overdue_operation"
+                }));
+            }
+        }
+    }
+
+    let response = json!({
+        "total_active_maintenance": total_active,
+        "stuck_operations": stuck_operations,
+        "stuck_count": stuck_operations.len(),
+        "monitoring_results": monitoring_results,
+        "monitoring_count": monitoring_results.len(),
+        "checked_at": Utc::now().to_rfc3339(),
+        "monitoring_features": {
+            "process_health_checks": true,
+            "periodic_monitoring": true,
+            "enhanced_error_detection": true
+        }
+    });
+
+    Ok(Json(ApiResponse::success_with_message(
+        response,
+        format!("Found {} potentially stuck operations out of {} active (enhanced monitoring enabled)", stuck_operations.len(), total_active),
+    )))
+}
+
+// NEW: Emergency kill stuck processes
+pub async fn emergency_kill_stuck_processes(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
+    info!("Emergency killing stuck pruning processes");
+
+    let active_maintenance = state.maintenance_tracker.get_all_in_maintenance().await;
+    let mut killed_processes = Vec::new();
+
+    for maintenance in active_maintenance {
+        if maintenance.operation_type == "pruning" {
+            if let Some(node_config) = state.config.nodes.get(&maintenance.node_name) {
+                if let Some(deploy_path) = &node_config.pruning_deploy_path {
+                    match state.ssh_manager.kill_stuck_pruning_process(&maintenance.server_host, deploy_path).await {
+                        Ok(_) => {
+                            killed_processes.push(maintenance.node_name.clone());
+                        }
+                        Err(e) => {
+                            info!("Could not kill process for {}: {}", maintenance.node_name, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let response = json!({
+        "killed_processes": killed_processes,
+        "killed_count": killed_processes.len(),
+        "timestamp": Utc::now().to_rfc3339(),
+        "action": "emergency_kill_processes"
+    });
+
+    Ok(Json(ApiResponse::success_with_message(
+        response,
+        format!("Emergency killed {} stuck processes", killed_processes.len()),
+    )))
+}
+
 pub async fn emergency_clear_maintenance(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiResponse<serde_json::Value>>> {
@@ -324,7 +531,7 @@ pub async fn emergency_clear_maintenance(
     )))
 }
 
-// NEW: Clear specific maintenance handler
+// Clear specific maintenance handler
 pub async fn clear_specific_maintenance(
     State(state): State<AppState>,
     Path(node_name): Path<String>,
@@ -690,7 +897,7 @@ pub async fn api_documentation() -> Json<serde_json::Value> {
     Json(json!({
         "name": "Blockchain Nodes Manager API",
         "version": env!("CARGO_PKG_VERSION"),
-        "description": "REST API for managing blockchain nodes and Hermes relayers with maintenance tracking",
+        "description": "REST API for managing blockchain nodes and Hermes relayers with maintenance tracking and process monitoring",
         "endpoints": {
             "health_monitoring": [
                 "GET /api/nodes/health",
@@ -709,6 +916,11 @@ pub async fn api_documentation() -> Json<serde_json::Value> {
                 "POST /api/maintenance/restart-multiple",
                 "GET /api/maintenance/active",
                 "GET /api/maintenance/stats",
+                "GET /api/maintenance/report",
+                "GET /api/maintenance/overdue",
+                "POST /api/maintenance/cleanup-overdue",
+                "GET /api/maintenance/stuck",
+                "POST /api/maintenance/kill-stuck",
                 "POST /api/maintenance/emergency-clear",
                 "POST /api/maintenance/clear/{node_name}"
             ],
@@ -732,6 +944,12 @@ pub async fn api_documentation() -> Json<serde_json::Value> {
                 "GET /api/system/operations",
                 "GET /api/system/health"
             ]
+        },
+        "features": {
+            "periodic_health_monitoring": "Monitors pruning processes every 15 minutes",
+            "process_failure_detection": "Detects silent process failures immediately",
+            "enhanced_error_reporting": "Captures and returns detailed error logs",
+            "background_process_management": "Manages long-running operations safely"
         }
     }))
 }
@@ -748,7 +966,11 @@ pub async fn get_version_info() -> Json<serde_json::Value> {
             "maintenance_tracking",
             "scheduled_operations",
             "ssh_management",
-            "hermes_integration"
+            "hermes_integration",
+            "stuck_operation_detection",
+            "emergency_cleanup",
+            "periodic_process_monitoring",
+            "enhanced_error_detection"
         ]
     }))
 }

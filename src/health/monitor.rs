@@ -141,10 +141,11 @@ impl HealthMonitor {
             loop {
                 interval.tick().await;
 
-                // Cleanup maintenance windows that have been running too long (4 hours max)
-                let cleaned = maintenance_tracker.cleanup_expired_maintenance(4).await;
+                // EXTENDED: Cleanup maintenance windows that have been running too long (8 hours max)
+                // This accommodates 5-hour pruning operations plus buffer time
+                let cleaned = maintenance_tracker.cleanup_expired_maintenance(8).await;
                 if cleaned > 0 {
-                    warn!("Cleaned up {} expired maintenance windows", cleaned);
+                    warn!("Cleaned up {} expired maintenance windows (8h max)", cleaned);
                 }
             }
         });

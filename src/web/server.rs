@@ -51,6 +51,7 @@ pub async fn start_web_server(
     info!("Web server starting on http://{}", addr);
     info!("API documentation available at http://{}/api/docs", addr);
     info!("Maintenance tracking enabled via /api/maintenance/* endpoints");
+    info!("Stuck operation detection available via /api/maintenance/stuck");
 
     axum::serve(listener, app).await?;
 
@@ -78,11 +79,16 @@ async fn create_app(app_state: AppState) -> Router {
         .route("/maintenance/status/:operation_id", get(handlers::get_operation_status))
         .route("/maintenance/summary", get(handlers::get_operations_summary))
 
-        // Maintenance tracking endpoints
+        // Enhanced maintenance tracking endpoints
         .route("/maintenance/active", get(handlers::get_active_maintenance))
         .route("/maintenance/stats", get(handlers::get_maintenance_stats))
+        .route("/maintenance/report", get(handlers::get_maintenance_report)) // NEW
+        .route("/maintenance/overdue", get(handlers::get_overdue_maintenance)) // NEW
+        .route("/maintenance/cleanup-overdue", post(handlers::cleanup_overdue_maintenance)) // NEW
+        .route("/maintenance/stuck", get(handlers::check_stuck_operations)) // NEW
+        .route("/maintenance/kill-stuck", post(handlers::emergency_kill_stuck_processes)) // NEW
         .route("/maintenance/emergency-clear", post(handlers::emergency_clear_maintenance))
-        .route("/maintenance/clear/:node_name", post(handlers::clear_specific_maintenance)) // NEW ROUTE
+        .route("/maintenance/clear/:node_name", post(handlers::clear_specific_maintenance))
 
         // Hermes management endpoints
         .route("/hermes/instances", get(handlers::get_all_hermes_instances))
@@ -176,6 +182,7 @@ pub async fn start_simple_server(
         .route("/api/nodes/health", get(handlers::get_all_nodes_health))
         .route("/api/system/status", get(handlers::get_system_status))
         .route("/api/maintenance/active", get(handlers::get_active_maintenance))
+        .route("/api/maintenance/stuck", get(handlers::check_stuck_operations))
         .with_state(app_state)
         .layer(TraceLayer::new_for_http());
 
@@ -258,7 +265,9 @@ pub async fn get_server_metrics() -> serde_json::Value {
             "static_files",
             "json_api",
             "health_checks",
-            "maintenance_tracking"
+            "maintenance_tracking",
+            "stuck_operation_detection",
+            "emergency_cleanup"
         ]
     })
 }
