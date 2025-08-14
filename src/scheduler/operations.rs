@@ -282,17 +282,6 @@ impl MaintenanceScheduler {
         false
     }
 
-    // NEW: Update next run time after operation execution
-    async fn update_operation_next_run(&self, operation_id: &str) -> Result<()> {
-        let mut scheduled_ops = self.scheduled_operations.write().await;
-        if let Some(operation) = scheduled_ops.get_mut(operation_id) {
-            let now = Utc::now();
-            operation.next_run = self.calculate_next_run(&operation.schedule, &now);
-            info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
-        }
-        Ok(())
-    }
-
     async fn execute_scheduled_operation(
         &self,
         operation_id: &str,
@@ -369,12 +358,12 @@ impl MaintenanceScheduler {
             if let Some(operation) = scheduled_ops.get_mut(operation_id) {
                 operation.last_run = Some(end_time);
                 operation.update_result(operation_result.clone());
-            }
-        }
 
-        // CALCULATE NEXT RUN TIME after execution
-        if let Err(e) = self.update_operation_next_run(operation_id).await {
-            warn!("Failed to update next run time for operation {}: {}", operation_id, e);
+                // FIXED: Calculate next run time within the same lock scope to avoid deadlock
+                let now = Utc::now();
+                operation.next_run = self.calculate_next_run(&operation.schedule, &now);
+                info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
+            }
         }
 
         // Update maintenance operation in database
@@ -495,7 +484,7 @@ impl MaintenanceScheduler {
         Ok(operation_id)
     }
 
-    // NEW METHOD: Update scheduled operation when manual operation completes
+    // FIXED: Update scheduled operation when manual operation completes - removed deadlock
     pub async fn update_scheduled_operation_result(
         &self,
         target_name: &str,
@@ -528,10 +517,10 @@ impl MaintenanceScheduler {
                     if success { "success" } else { "failure" }
                 );
 
-                // Update next run time after manual execution
-                if let Err(e) = self.update_operation_next_run(operation_id).await {
-                    warn!("Failed to update next run time for operation {}: {}", operation_id, e);
-                }
+                // FIXED: Update next run time within the same lock scope to avoid deadlock
+                let now = Utc::now();
+                operation.next_run = self.calculate_next_run(&operation.schedule, &now);
+                info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
 
                 break;
             }
