@@ -1,3 +1,4 @@
+// File: static/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -717,6 +718,10 @@
         let hermesConfigs = {};
         let scheduledOperations = {};
 
+        // FIXED: Store data globally to calculate metrics correctly
+        let currentNodesData = null;
+        let currentHermesData = null;
+
         document.addEventListener('DOMContentLoaded', function() {
             loadAllData();
             startAutoRefresh();
@@ -728,13 +733,21 @@
 
         async function loadAllData() {
             try {
+                // FIXED: Load configs and scheduled operations first, then UI data
                 await Promise.all([
                     loadNodeConfigs(),
                     loadHermesConfigs(),
-                    loadScheduledOperations(),
+                    loadScheduledOperations()
+                ]);
+
+                // Then load UI data that depends on the configs
+                await Promise.all([
                     loadNodes(),
                     loadHermesInstances()
                 ]);
+
+                // FIXED: Calculate metrics after both datasets are loaded
+                updateAllMetrics();
                 updateLastUpdated();
             } catch (error) {
                 console.error('Error loading data:', error);
@@ -791,12 +804,13 @@
                 const data = await response.json();
 
                 if (data.success) {
+                    currentNodesData = data.data; // FIXED: Store data globally
                     displayNodes(data.data);
-                    updateHealthMetrics(data.data, null);
                 } else {
                     throw new Error('Failed to load node data');
                 }
             } catch (error) {
+                currentNodesData = null; // FIXED: Clear data on error
                 document.getElementById('nodes-container').innerHTML =
                     '<div class="alert alert-error">Failed to load blockchain nodes: ' + error.message + '</div>';
             }
@@ -808,15 +822,66 @@
                 const data = await response.json();
 
                 if (data.success) {
+                    currentHermesData = data.data; // FIXED: Store data globally
                     displayHermesInstances(data.data);
-                    updateHealthMetrics(null, data.data);
                 } else {
                     throw new Error('Failed to load Hermes data');
                 }
             } catch (error) {
+                currentHermesData = null; // FIXED: Clear data on error
                 document.getElementById('hermes-container').innerHTML =
                     '<div class="alert alert-error">Failed to load Hermes relayers: ' + error.message + '</div>';
             }
+        }
+
+        // FIXED: New function to calculate all metrics with proper data
+        function updateAllMetrics() {
+            const nodes = currentNodesData || [];
+            const hermesInstances = currentHermesData || [];
+
+            const totalNodes = nodes.length;
+            const totalHermes = hermesInstances.length;
+            const totalComponents = totalNodes + totalHermes;
+
+            const healthyNodes = nodes.filter(n => n.status === 'Healthy').length;
+            const healthyHermes = hermesInstances.filter(h => {
+                const status = h.status || '';
+                return status.toLowerCase().includes('active');
+            }).length;
+            const healthyComponents = healthyNodes + healthyHermes;
+
+            const maintenanceNodes = nodes.filter(n => n.status === 'Maintenance').length;
+            const healthPercentage = totalComponents > 0 ? Math.round((healthyComponents / totalComponents) * 100) : 0;
+
+            // Update DOM elements
+            document.getElementById('total-components').textContent = totalComponents;
+            document.getElementById('components-breakdown').textContent = `${totalNodes} Nodes, ${totalHermes} Relayers`;
+            document.getElementById('healthy-components').textContent = healthyComponents;
+            document.getElementById('health-percentage').textContent = `${healthPercentage}% operational`;
+            document.getElementById('health-progress').style.width = `${healthPercentage}%`;
+
+            // Update system status indicator
+            const statusElement = document.getElementById('system-status');
+            const statusText = statusElement.querySelector('span');
+
+            if (maintenanceNodes > 0) {
+                statusElement.className = 'status-indicator maintenance';
+                statusText.textContent = `${maintenanceNodes} Component${maintenanceNodes > 1 ? 's' : ''} in Maintenance`;
+            } else if (healthPercentage === 100) {
+                statusElement.className = 'status-indicator healthy';
+                statusText.textContent = 'All Systems Operational';
+            } else if (healthPercentage >= 80) {
+                statusElement.className = 'status-indicator warning';
+                statusText.textContent = 'Some Issues Detected';
+            } else {
+                statusElement.className = 'status-indicator error';
+                statusText.textContent = 'Critical Issues';
+            }
+
+            // Update server metrics (placeholder values for now)
+            document.getElementById('active-servers').textContent = Object.keys(nodeConfigs || {}).length > 0 ?
+                new Set(Object.values(nodeConfigs).map(n => n.server_host)).size : '-';
+            document.getElementById('server-connections').textContent = 'Active connections';
         }
 
         function displayNodes(nodes) {
@@ -934,7 +999,6 @@
                         <tr>
                             <th>Relayer Name</th>
                             <th>Status</th>
-                            <th>Details</th>
                             <th>Schedule</th>
                             <th>Next Run</th>
                             <th>Actions</th>
@@ -953,7 +1017,12 @@
                                         <div class="server-name" style="margin-top: 0.25rem;">Server: ${hermes.server_host}</div>
                                         ${hermes.dependent_nodes && hermes.dependent_nodes.length > 0 ? `
                                             <div class="hermes-dependent-nodes">
-                                                Depends on: ${hermes.dependent_nodes.map(node => formatNodeName(node)).join(', ')}
+                                                Depends on: ${hermes.dependent_nodes.map(node => formatDependencyName(node)).join(', ')}
+                                            </div>
+                                        ` : ''}
+                                        ${hermes.uptime_formatted ? `
+                                            <div style="font-size: 0.75rem; margin-top: 0.25rem; color: var(--text-secondary);">
+                                                Uptime: ${hermes.uptime_formatted}
                                             </div>
                                         ` : ''}
                                     </td>
@@ -962,14 +1031,6 @@
                                             <div class="status-dot-small"></div>
                                             ${formatHermesStatus(hermes.status)}
                                         </div>
-                                    </td>
-                                    <td onclick="event.stopPropagation();">
-                                        <div class="uptime-info">${hermes.service_name}</div>
-                                        ${hermes.uptime_formatted ? `
-                                            <div style="font-size: 0.75rem; margin-top: 0.25rem;">
-                                                Uptime: ${hermes.uptime_formatted}
-                                            </div>
-                                        ` : ''}
                                     </td>
                                     <td onclick="event.stopPropagation();">
                                         ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
@@ -1080,52 +1141,6 @@
         function calculateMaintenanceProgress(elapsed, estimated) {
             if (!elapsed || !estimated || estimated === 0) return 0;
             return Math.min(Math.round((elapsed / estimated) * 100), 100);
-        }
-
-        function updateHealthMetrics(nodes, hermesInstances) {
-            // Only update metrics if we have both datasets
-            if (!nodes && !hermesInstances) return;
-
-            // Use stored values if one dataset is null
-            const totalNodes = nodes ? nodes.length : (document.getElementById('total-components').textContent.includes('Nodes') ?
-                parseInt(document.getElementById('components-breakdown').textContent.split(' ')[0]) : 0);
-            const totalHermes = hermesInstances ? hermesInstances.length : (document.getElementById('total-components').textContent.includes('Relayers') ?
-                parseInt(document.getElementById('components-breakdown').textContent.split(' ')[2]) : 0);
-            const totalComponents = totalNodes + totalHermes;
-
-            const healthyNodes = nodes ? nodes.filter(n => n.status === 'Healthy').length : 0;
-            const healthyHermes = hermesInstances ? hermesInstances.filter(h => {
-                const status = h.status || '';
-                return status.toLowerCase().includes('active');
-            }).length : 0;
-            const healthyComponents = healthyNodes + healthyHermes;
-
-            const maintenanceNodes = nodes ? nodes.filter(n => n.status === 'Maintenance').length : 0;
-            const healthPercentage = totalComponents > 0 ? Math.round((healthyComponents / totalComponents) * 100) : 0;
-
-            document.getElementById('total-components').textContent = totalComponents;
-            document.getElementById('components-breakdown').textContent = `${totalNodes} Nodes, ${totalHermes} Relayers`;
-            document.getElementById('healthy-components').textContent = healthyComponents;
-            document.getElementById('health-percentage').textContent = `${healthPercentage}% operational`;
-            document.getElementById('health-progress').style.width = `${healthPercentage}%`;
-
-            // Update system status indicator
-            const statusElement = document.getElementById('system-status');
-            const statusText = statusElement.querySelector('span');
-
-            if (maintenanceNodes > 0) {
-                statusElement.className = 'status-indicator maintenance';
-                statusText.textContent = `${maintenanceNodes} Component${maintenanceNodes > 1 ? 's' : ''} in Maintenance`;
-            } else if (healthPercentage === 100) {
-                statusElement.className = 'status-indicator healthy';
-                statusText.textContent = 'All Systems Operational';
-            } else if (healthPercentage >= 80) {
-                statusElement.className = 'status-indicator warning';
-                statusText.textContent = 'Some Issues Detected';
-            } else {
-                statusElement.className = 'status-indicator error';
-                statusText.textContent = 'Critical Issues';
-            }
         }
 
         function updateScheduleMetrics(scheduleData) {
@@ -1304,6 +1319,30 @@
             } else {
                 return `In ${minutes} minute${minutes !== 1 ? 's' : ''}`;
             }
+        }
+
+        function formatDependencyName(nodeName) {
+            if (!nodeName) return nodeName;
+
+            // Extract just the network name from formats like "discovery-osmosis-1"
+            const parts = nodeName.split('-');
+            if (parts.length >= 2) {
+                const networkName = parts[1]; // Get the network part
+
+                const networkMap = {
+                    'osmosis': 'Osmosis',
+                    'neutron': 'Neutron',
+                    'nolus': 'Nolus',
+                    'vitosha': 'Vitosha',
+                    'rila': 'Rila',
+                    'pion': 'Pion',
+                    'pirin': 'Pirin'
+                };
+
+                return networkMap[networkName.toLowerCase()] || networkName.charAt(0).toUpperCase() + networkName.slice(1).toLowerCase();
+            }
+
+            return nodeName;
         }
 
         function formatNodeName(technicalName) {
