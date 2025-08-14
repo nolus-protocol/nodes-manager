@@ -310,34 +310,6 @@
             background-color: #f7fafc;
         }
 
-        .infrastructure-table tr.hermes-row {
-            border-left: 3px solid var(--hermes-color);
-        }
-
-        .infrastructure-table tr.node-row {
-            border-left: 3px solid var(--accent-color);
-        }
-
-        .component-type-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
-            padding: 0.25rem 0.75rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-
-        .component-type-node {
-            background-color: rgba(49, 130, 206, 0.1);
-            color: var(--accent-color);
-        }
-
-        .component-type-hermes {
-            background-color: rgba(139, 92, 246, 0.1);
-            color: var(--hermes-color);
-        }
-
         .node-status-badge {
             display: inline-flex;
             align-items: center;
@@ -480,22 +452,6 @@
 
         .next-run-countdown {
             color: var(--text-muted);
-        }
-
-        .last-result-success {
-            color: var(--success-color);
-            font-weight: 500;
-        }
-
-        .last-result-failed {
-            color: var(--error-color);
-            font-weight: 500;
-        }
-
-        .last-result-time {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            margin-top: 0.25rem;
         }
 
         .action-buttons {
@@ -708,9 +664,10 @@
             </div>
         </div>
 
+        <!-- Blockchain Nodes Table -->
         <div class="panel">
             <div class="panel-header">
-                <h2 class="panel-title">Infrastructure Overview</h2>
+                <h2 class="panel-title">Blockchain Nodes</h2>
                 <div class="panel-actions">
                     <button class="btn" onclick="forceHealthCheck()">
                         <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
@@ -721,10 +678,33 @@
                 </div>
             </div>
             <div class="panel-content">
-                <div id="infrastructure-container">
+                <div id="nodes-container">
                     <div class="loading">
                         <div class="spinner"></div>
-                        Loading infrastructure status...
+                        Loading blockchain nodes...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hermes Relayers Table -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Hermes Relayers</h2>
+                <div class="panel-actions">
+                    <button class="btn" onclick="refreshHermesStatus()">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                        </svg>
+                        Refresh All
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <div id="hermes-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading Hermes relayers...
                     </div>
                 </div>
             </div>
@@ -752,7 +732,8 @@
                     loadNodeConfigs(),
                     loadHermesConfigs(),
                     loadScheduledOperations(),
-                    loadInfrastructureData()
+                    loadNodes(),
+                    loadHermesInstances()
                 ]);
                 updateLastUpdated();
             } catch (error) {
@@ -804,91 +785,125 @@
             }
         }
 
-        async function loadInfrastructureData() {
+        async function loadNodes() {
             try {
-                // Load both nodes and hermes data in parallel
-                const [nodesResponse, hermesResponse] = await Promise.all([
-                    fetch('/api/nodes/health'),
-                    fetch('/api/hermes/instances')
-                ]);
+                const response = await fetch('/api/nodes/health');
+                const data = await response.json();
 
-                const nodesData = await nodesResponse.json();
-                const hermesData = await hermesResponse.json();
-
-                if (nodesData.success && hermesData.success) {
-                    displayInfrastructure(nodesData.data, hermesData.data);
-                    updateHealthMetrics(nodesData.data, hermesData.data);
+                if (data.success) {
+                    displayNodes(data.data);
+                    updateHealthMetrics(data.data, null);
                 } else {
-                    throw new Error('Failed to load infrastructure data');
+                    throw new Error('Failed to load node data');
                 }
             } catch (error) {
-                document.getElementById('infrastructure-container').innerHTML =
-                    '<div class="alert alert-error">Failed to load infrastructure status: ' + error.message + '</div>';
+                document.getElementById('nodes-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load blockchain nodes: ' + error.message + '</div>';
             }
         }
 
-        function displayInfrastructure(nodes, hermesInstances) {
-            const container = document.getElementById('infrastructure-container');
+        async function loadHermesInstances() {
+            try {
+                const response = await fetch('/api/hermes/instances');
+                const data = await response.json();
 
-            if ((!nodes || nodes.length === 0) && (!hermesInstances || hermesInstances.length === 0)) {
-                container.innerHTML = '<div class="loading">No infrastructure components configured</div>';
+                if (data.success) {
+                    displayHermesInstances(data.data);
+                    updateHealthMetrics(null, data.data);
+                } else {
+                    throw new Error('Failed to load Hermes data');
+                }
+            } catch (error) {
+                document.getElementById('hermes-container').innerHTML =
+                    '<div class="alert alert-error">Failed to load Hermes relayers: ' + error.message + '</div>';
+            }
+        }
+
+        function displayNodes(nodes) {
+            const container = document.getElementById('nodes-container');
+
+            if (!nodes || nodes.length === 0) {
+                container.innerHTML = '<div class="loading">No blockchain nodes configured</div>';
                 return;
             }
 
-            // Combine and sort all infrastructure components
-            let allComponents = [];
-
-            // Add nodes
-            if (nodes && nodes.length > 0) {
-                const nodeComponents = nodes.map(node => ({
-                    ...node,
-                    type: 'node',
-                    name: node.node_name,
-                    serverHost: getServerFromNodeName(node.node_name)
-                }));
-                allComponents = allComponents.concat(nodeComponents);
-            }
-
-            // Add hermes instances
-            if (hermesInstances && hermesInstances.length > 0) {
-                const hermesComponents = hermesInstances.map(hermes => ({
-                    ...hermes,
-                    type: 'hermes',
-                    name: hermes.name,
-                    serverHost: hermes.server_host
-                }));
-                allComponents = allComponents.concat(hermesComponents);
-            }
-
-            // Sort by server, then by type (nodes first), then by name
-            allComponents.sort((a, b) => {
-                if (a.serverHost !== b.serverHost) {
-                    return a.serverHost.localeCompare(b.serverHost);
+            // Sort nodes by server and then by name
+            const sortedNodes = [...nodes].sort((a, b) => {
+                const serverA = getServerFromNodeName(a.node_name);
+                const serverB = getServerFromNodeName(b.node_name);
+                if (serverA !== serverB) {
+                    return serverA.localeCompare(serverB);
                 }
-                if (a.type !== b.type) {
-                    return a.type === 'node' ? -1 : 1; // nodes first
-                }
-                return a.name.localeCompare(b.name);
+                return a.node_name.localeCompare(b.node_name);
             });
 
             const tableHtml = `
                 <table class="infrastructure-table">
                     <thead>
                         <tr>
-                            <th>Component</th>
+                            <th>Node Name</th>
                             <th>Status</th>
                             <th>Details</th>
                             <th>Schedule</th>
                             <th>Next Run</th>
-                            <th>Last Result</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${allComponents.map(component => {
-                            return component.type === 'node' ?
-                                renderNodeRow(component) :
-                                renderHermesRow(component);
+                        ${sortedNodes.map(node => {
+                            const nodeConfig = nodeConfigs[node.node_name];
+                            const scheduledOp = scheduledOperations[node.node_name];
+                            const isPruningEnabled = nodeConfig && nodeConfig.pruning_enabled;
+
+                            return `
+                                <tr onclick="showNodeDetails('${node.node_name}')" style="cursor: pointer;">
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="component-name-primary">${formatNodeName(node.node_name)}</div>
+                                        <div class="component-name-technical">${node.node_name}</div>
+                                        <div class="server-name" style="margin-top: 0.25rem;">Server: ${getServerFromNodeName(node.node_name)}</div>
+                                        ${node.error_message && node.status !== 'Maintenance' ?
+                                            `<div class="error-message">${node.error_message}</div>` : ''}
+                                        ${node.maintenance_info ? renderMaintenanceDetails(node.maintenance_info) : ''}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="node-status-badge status-${node.status.toLowerCase()}">
+                                            <div class="status-dot-small"></div>
+                                            ${node.status}
+                                        </div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="block-height">${node.latest_block_height || 'Unknown'}</div>
+                                        <div style="font-size: 0.75rem; margin-top: 0.25rem;">
+                                            ${node.catching_up !== null ?
+                                                (node.catching_up ?
+                                                    '<span style="color: var(--warning-color); font-weight: 500;">Catching Up</span>' :
+                                                    '<span style="color: var(--success-color); font-weight: 500;">Synced</span>') :
+                                                '<span style="color: var(--text-muted);">Unknown</span>'
+                                            }
+                                        </div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="action-buttons">
+                                            ${isPruningEnabled ? `
+                                                <button class="btn btn-small btn-warning"
+                                                        onclick="executeManualPruning('${node.node_name}')"
+                                                        title="Run pruning now">
+                                                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                                                    </svg>
+                                                    Prune
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
                         }).join('')}
                     </tbody>
                 </table>
@@ -897,152 +912,91 @@
             container.innerHTML = tableHtml;
         }
 
-        function renderNodeRow(node) {
-            const nodeConfig = nodeConfigs[node.name];
-            const scheduledOp = scheduledOperations[node.name];
-            const isPruningEnabled = nodeConfig && nodeConfig.pruning_enabled;
+        function displayHermesInstances(hermesInstances) {
+            const container = document.getElementById('hermes-container');
 
-            return `
-                <tr class="node-row" onclick="showNodeDetails('${node.name}')" style="cursor: pointer;">
-                    <td onclick="event.stopPropagation();">
-                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                            <span class="component-type-badge component-type-node">
-                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4z"/>
-                                </svg>
-                                Node
-                            </span>
-                        </div>
-                        <div class="component-name-primary">${formatNodeName(node.name)}</div>
-                        <div class="component-name-technical">${node.name}</div>
-                        <div class="server-name" style="margin-top: 0.25rem;">Server: ${node.serverHost}</div>
-                        ${node.error_message && node.status !== 'Maintenance' ?
-                            `<div class="error-message">${node.error_message}</div>` : ''}
-                        ${node.maintenance_info ? renderMaintenanceDetails(node.maintenance_info) : ''}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="node-status-badge status-${node.status.toLowerCase()}">
-                            <div class="status-dot-small"></div>
-                            ${node.status}
-                        </div>
-                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">
-                            ${formatTime(node.last_check)}
-                        </div>
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="block-height">Block: ${node.latest_block_height || 'Unknown'}</div>
-                        <div style="font-size: 0.75rem; margin-top: 0.25rem;">
-                            ${node.catching_up !== null ?
-                                (node.catching_up ?
-                                    '<span style="color: var(--warning-color); font-weight: 500;">Catching Up</span>' :
-                                    '<span style="color: var(--success-color); font-weight: 500;">Synced</span>') :
-                                '<span style="color: var(--text-muted);">Unknown</span>'
-                            }
-                        </div>
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderLastResult(scheduledOp) : '<div class="no-schedule">-</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="action-buttons">
-                            <button class="btn btn-small" onclick="forceNodeHealthCheck('${node.name}')" title="Check node health">
-                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
-                                </svg>
-                                Check
-                            </button>
-                            ${isPruningEnabled ? `
-                                <button class="btn btn-small btn-warning"
-                                        onclick="executeManualPruning('${node.name}')"
-                                        title="Run pruning now">
-                                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
-                                    </svg>
-                                    Prune
-                                </button>
-                            ` : ''}
-                        </div>
-                    </td>
-                </tr>
+            if (!hermesInstances || hermesInstances.length === 0) {
+                container.innerHTML = '<div class="loading">No Hermes relayers configured</div>';
+                return;
+            }
+
+            // Sort Hermes instances by server and then by name
+            const sortedHermes = [...hermesInstances].sort((a, b) => {
+                if (a.server_host !== b.server_host) {
+                    return a.server_host.localeCompare(b.server_host);
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            const tableHtml = `
+                <table class="infrastructure-table">
+                    <thead>
+                        <tr>
+                            <th>Relayer Name</th>
+                            <th>Status</th>
+                            <th>Details</th>
+                            <th>Schedule</th>
+                            <th>Next Run</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sortedHermes.map(hermes => {
+                            const scheduledOp = scheduledOperations[hermes.name];
+                            const statusClass = hermes.status ? getHermesStatusClass(hermes.status) : 'status-unknown';
+
+                            return `
+                                <tr onclick="showHermesDetails('${hermes.name}')" style="cursor: pointer;">
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="component-name-primary">${formatHermesName(hermes.name)}</div>
+                                        <div class="component-name-technical">${hermes.name}</div>
+                                        <div class="server-name" style="margin-top: 0.25rem;">Server: ${hermes.server_host}</div>
+                                        ${hermes.dependent_nodes && hermes.dependent_nodes.length > 0 ? `
+                                            <div class="hermes-dependent-nodes">
+                                                Depends on: ${hermes.dependent_nodes.map(node => formatNodeName(node)).join(', ')}
+                                            </div>
+                                        ` : ''}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="node-status-badge ${statusClass}">
+                                            <div class="status-dot-small"></div>
+                                            ${formatHermesStatus(hermes.status)}
+                                        </div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="uptime-info">${hermes.service_name}</div>
+                                        ${hermes.uptime_formatted ? `
+                                            <div style="font-size: 0.75rem; margin-top: 0.25rem;">
+                                                Uptime: ${hermes.uptime_formatted}
+                                            </div>
+                                        ` : ''}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="action-buttons">
+                                            <button class="btn btn-small btn-hermes"
+                                                    onclick="executeManualHermesRestart('${hermes.name}')"
+                                                    title="Restart Hermes now">
+                                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                                                </svg>
+                                                Restart
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
             `;
-        }
 
-        function renderHermesRow(hermes) {
-            const scheduledOp = scheduledOperations[hermes.name];
-            const statusClass = hermes.status ? getHermesStatusClass(hermes.status) : 'status-unknown';
-
-            return `
-                <tr class="hermes-row" onclick="showHermesDetails('${hermes.name}')" style="cursor: pointer;">
-                    <td onclick="event.stopPropagation();">
-                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                            <span class="component-type-badge component-type-hermes">
-                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 11a6 6 0 016 6H2a6 6 0 016-6z"/>
-                                </svg>
-                                Hermes
-                            </span>
-                        </div>
-                        <div class="component-name-primary">${formatHermesName(hermes.name)}</div>
-                        <div class="component-name-technical">${hermes.name}</div>
-                        <div class="server-name" style="margin-top: 0.25rem;">Server: ${hermes.server_host}</div>
-                        ${hermes.dependent_nodes && hermes.dependent_nodes.length > 0 ? `
-                            <div class="hermes-dependent-nodes">
-                                Depends on: ${hermes.dependent_nodes.map(node => formatNodeName(node)).join(', ')}
-                            </div>
-                        ` : ''}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="node-status-badge ${statusClass}">
-                            <div class="status-dot-small"></div>
-                            ${formatHermesStatus(hermes.status)}
-                        </div>
-                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">
-                            Service: ${hermes.service_name}
-                        </div>
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="uptime-info">Service: ${hermes.service_name}</div>
-                        ${hermes.uptime_formatted ? `
-                            <div style="font-size: 0.75rem; margin-top: 0.25rem;">
-                                Uptime: ${hermes.uptime_formatted}
-                            </div>
-                        ` : ''}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        ${scheduledOp ? renderLastResult(scheduledOp) : '<div class="no-schedule">-</div>'}
-                    </td>
-                    <td onclick="event.stopPropagation();">
-                        <div class="action-buttons">
-                            <button class="btn btn-small" onclick="checkHermesStatus('${hermes.name}')" title="Check Hermes status">
-                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
-                                </svg>
-                                Check
-                            </button>
-                            <button class="btn btn-small btn-hermes"
-                                    onclick="executeManualHermesRestart('${hermes.name}')"
-                                    title="Restart Hermes now">
-                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
-                                </svg>
-                                Restart
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
+            container.innerHTML = tableHtml;
         }
 
         function getHermesStatusClass(status) {
@@ -1097,26 +1051,6 @@
             `;
         }
 
-        function renderLastResult(scheduledOp) {
-            if (!scheduledOp.last_result) {
-                return '<div class="no-schedule">Not run yet</div>';
-            }
-
-            const resultClass = scheduledOp.last_result.success ? 'last-result-success' : 'last-result-failed';
-            const resultIcon = scheduledOp.last_result.success ? '✓' : '✗';
-            const resultText = scheduledOp.last_result.success ? 'Success' : 'Failed';
-
-            return `
-                <div>
-                    <div class="${resultClass}">${resultIcon} ${resultText}</div>
-                    ${scheduledOp.last_result.executed_at ?
-                        `<div class="last-result-time">${formatTime(scheduledOp.last_result.executed_at)}</div>` :
-                        ''
-                    }
-                </div>
-            `;
-        }
-
         function renderMaintenanceDetails(maintenance) {
             const progress = calculateMaintenanceProgress(maintenance.elapsed_minutes, maintenance.estimated_duration_minutes);
 
@@ -1149,8 +1083,14 @@
         }
 
         function updateHealthMetrics(nodes, hermesInstances) {
-            const totalNodes = nodes ? nodes.length : 0;
-            const totalHermes = hermesInstances ? hermesInstances.length : 0;
+            // Only update metrics if we have both datasets
+            if (!nodes && !hermesInstances) return;
+
+            // Use stored values if one dataset is null
+            const totalNodes = nodes ? nodes.length : (document.getElementById('total-components').textContent.includes('Nodes') ?
+                parseInt(document.getElementById('components-breakdown').textContent.split(' ')[0]) : 0);
+            const totalHermes = hermesInstances ? hermesInstances.length : (document.getElementById('total-components').textContent.includes('Relayers') ?
+                parseInt(document.getElementById('components-breakdown').textContent.split(' ')[2]) : 0);
             const totalComponents = totalNodes + totalHermes;
 
             const healthyNodes = nodes ? nodes.filter(n => n.status === 'Healthy').length : 0;
@@ -1213,42 +1153,6 @@
                 nextOpElement.textContent = `Next: ${getTimeUntil(nextOperation.next_run)}`;
             } else {
                 nextOpElement.textContent = 'No operations scheduled';
-            }
-        }
-
-        async function forceNodeHealthCheck(nodeName) {
-            try {
-                showAlert(`🔍 Checking health for ${formatNodeName(nodeName)}...`, 'success');
-
-                const response = await fetch(`/api/nodes/${nodeName}/check`, { method: 'POST' });
-                const data = await response.json();
-
-                if (data.success) {
-                    showAlert(`✅ Health check completed for ${formatNodeName(nodeName)}`, 'success');
-                    loadInfrastructureData();
-                } else {
-                    throw new Error(data.message || 'Health check failed');
-                }
-            } catch (error) {
-                showAlert('❌ Health check failed: ' + error.message, 'error');
-            }
-        }
-
-        async function checkHermesStatus(hermesName) {
-            try {
-                showAlert(`🔍 Checking status for ${formatHermesName(hermesName)}...`, 'success');
-
-                const response = await fetch(`/api/hermes/${hermesName}/status`);
-                const data = await response.json();
-
-                if (data.success) {
-                    showAlert(`✅ Status check completed for ${formatHermesName(hermesName)}`, 'success');
-                    loadInfrastructureData();
-                } else {
-                    throw new Error(data.message || 'Status check failed');
-                }
-            } catch (error) {
-                showAlert('❌ Status check failed: ' + error.message, 'error');
             }
         }
 
@@ -1335,9 +1239,19 @@
                 }
 
                 showAlert(`✅ Health check completed: ${completedChecks}/${nodeNames.length} nodes checked successfully`, 'success');
-                loadInfrastructureData();
+                loadNodes();
             } catch (error) {
                 showAlert('❌ Health check operation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function refreshHermesStatus() {
+            try {
+                showAlert('🔍 Refreshing Hermes status...', 'success');
+                await loadHermesInstances();
+                showAlert('✅ Hermes status refreshed', 'success');
+            } catch (error) {
+                showAlert('❌ Hermes refresh failed: ' + error.message, 'error');
             }
         }
 
@@ -1364,7 +1278,6 @@
                 return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             }
 
-            if (diff < 60000) return 'Just now';
             if (diff < 3600000) return Math.floor(diff / 60000) + ' minutes ago';
             if (diff < 86400000) return Math.floor(diff / 3600000) + ' hours ago';
 
