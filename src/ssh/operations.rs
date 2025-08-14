@@ -113,7 +113,9 @@ impl SshManager {
         // Process nodes sequentially on the same server to avoid conflicts
         for node in nodes {
             let start_time = Utc::now();
-            let node_id = format!("{}-{}", server_name, node.network);
+            // FIXED: Use the actual config key instead of generating format
+            let node_id = self.find_node_config_key(&node).await
+                .unwrap_or_else(|| format!("{}-{}", server_name, node.network));
 
             match self.run_pruning(&node).await {
                 Ok(_) => {
@@ -231,7 +233,9 @@ impl SshManager {
         // Dependency checking is now handled inside restart_hermes method
         for hermes in hermes_instances {
             let start_time = Utc::now();
-            let hermes_id = format!("{}-{}", server_name, hermes.service_name);
+            // FIXED: Use the actual config key instead of generating format
+            let hermes_id = self.find_hermes_config_key(&hermes).await
+                .unwrap_or_else(|| format!("{}-{}", server_name, hermes.service_name));
 
             // Use the updated restart_hermes method (with dependency checking)
             match self.restart_hermes(&hermes).await {
@@ -261,6 +265,17 @@ impl SshManager {
         }
 
         results
+    }
+
+    // NEW: Helper method to find config key for a HermesConfig
+    pub async fn find_hermes_config_key(&self, target_hermes: &HermesConfig) -> Option<String> {
+        for (config_key, hermes_config) in &self.config.hermes {
+            if hermes_config.server_host == target_hermes.server_host
+                && hermes_config.service_name == target_hermes.service_name {
+                return Some(config_key.clone());
+            }
+        }
+        None
     }
 
     pub async fn validate_all_servers_connectivity(&self) -> HashMap<String, Result<String, String>> {

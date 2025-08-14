@@ -296,18 +296,16 @@ impl SshManager {
         let keep_blocks = node.pruning_keep_blocks.unwrap_or(1000);
         let keep_versions = node.pruning_keep_versions.unwrap_or(1000);
 
-        // Create node identifier
-        let node_name = format!("{}-{}", server_name, node.network);
+        // FIXED: Find the actual node config key instead of generating format
+        let node_name = self.find_node_config_key(node).await
+            .ok_or_else(|| anyhow::anyhow!("Could not find node config key for pruning"))?;
 
         info!("Starting pruning for node {} on server {}", node_name, server_name);
 
-        // STEP 1: Start maintenance mode
+        // STEP 1: Start maintenance mode with correct node name
         self.maintenance_tracker
             .start_maintenance(&node_name, "pruning", 30, server_name)
             .await?;
-
-        // STEP 2: No start notification sent to avoid information overload
-        // The maintenance tracker will handle showing maintenance status in the UI
 
         // STEP 2: Execute pruning with proper error handling
         let pruning_result = async {
@@ -353,6 +351,18 @@ impl SshManager {
                 Err(e)
             }
         }
+    }
+
+    // NEW: Helper method to find config key for a NodeConfig
+    pub async fn find_node_config_key(&self, target_node: &NodeConfig) -> Option<String> {
+        for (config_key, node_config) in &self.config.nodes {
+            if node_config.rpc_url == target_node.rpc_url
+                && node_config.network == target_node.network
+                && node_config.server_host == target_node.server_host {
+                return Some(config_key.clone());
+            }
+        }
+        None
     }
 
     /// Send maintenance notification webhook
