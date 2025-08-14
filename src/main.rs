@@ -51,6 +51,8 @@ pub struct NodeConfig {
     pub pruning_keep_versions: Option<u64>,
     pub pruning_deploy_path: Option<String>,
     pub pruning_service_name: Option<String>,
+    pub log_path: Option<String>,
+    pub truncate_logs_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +62,7 @@ pub struct HermesConfig {
     pub log_path: String,
     pub restart_schedule: String,
     pub dependent_nodes: Vec<String>,
+    pub truncate_logs_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

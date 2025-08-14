@@ -116,6 +116,35 @@ impl SshManager {
         }
     }
 
+    /// Truncate log files for a service
+    pub async fn truncate_logs(&self, server_name: &str, log_path: &str, service_name: &str) -> Result<()> {
+        info!("Truncating logs for service {} on server {} at path: {}", service_name, server_name, log_path);
+
+        // Create a comprehensive log cleanup command
+        let cleanup_command = format!(
+            "if [ -d '{}' ]; then find '{}' -type f -name '*.log*' -delete 2>/dev/null || true; fi && \
+             if [ -f '{}' ]; then rm -f '{}' 2>/dev/null || true; fi && \
+             journalctl --vacuum-time=1s --user-unit={} 2>/dev/null || true && \
+             journalctl --vacuum-time=1s --system --unit={} 2>/dev/null || true",
+            log_path, log_path, log_path, log_path, service_name, service_name
+        );
+
+        match self.execute_command(server_name, &cleanup_command).await {
+            Ok(output) => {
+                info!("Log truncation completed for service {} on server {}", service_name, server_name);
+                if !output.trim().is_empty() {
+                    debug!("Log truncation output: {}", output);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Log truncation failed for service {} on server {}: {}", service_name, server_name, e);
+                // Don't fail the entire operation if log truncation fails
+                Ok(())
+            }
+        }
+    }
+
     pub async fn check_service_status(
         &self,
         server_name: &str,
@@ -282,7 +311,7 @@ impl SshManager {
         Ok(())
     }
 
-    /// Enhanced pruning with maintenance mode integration
+    /// Enhanced pruning with maintenance mode integration and log truncation
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -307,10 +336,20 @@ impl SshManager {
             .start_maintenance(&node_name, "pruning", 30, server_name)
             .await?;
 
-        // STEP 2: Execute pruning with proper error handling
+        // STEP 2: Execute pruning with proper error handling and log truncation
         let pruning_result = async {
             // Stop the service
             self.stop_service(server_name, service_name).await?;
+
+            // Truncate logs if enabled and configured
+            if node.truncate_logs_enabled.unwrap_or(false) {
+                if let Some(log_path) = &node.log_path {
+                    info!("Truncating logs for node {} before pruning", node_name);
+                    self.truncate_logs(server_name, log_path, service_name).await?;
+                } else {
+                    warn!("Log truncation enabled for node {} but no log_path configured", node_name);
+                }
+            }
 
             // Run cosmos-pruner command using the exact path from configuration
             let prune_command = format!(
@@ -550,6 +589,7 @@ impl SshManager {
         }
     }
 
+    /// Enhanced Hermes restart with log truncation
     pub async fn restart_hermes(&self, hermes: &HermesConfig) -> Result<()> {
         let server_name = &hermes.server_host;
         let service_name = &hermes.service_name;
@@ -572,15 +612,25 @@ impl SshManager {
             ));
         }
 
-        // STEP 3: Restart the hermes service
-        info!("Restarting Hermes service: {}", service_name);
-        self.restart_service(server_name, service_name).await?;
+        // STEP 3: Stop the hermes service
+        info!("Stopping Hermes service: {}", service_name);
+        self.stop_service(server_name, service_name).await?;
 
-        // STEP 4: Wait longer for Hermes to start (Hermes needs more time than blockchain nodes)
+        // STEP 4: Truncate logs if enabled
+        if hermes.truncate_logs_enabled.unwrap_or(false) {
+            info!("Truncating logs for Hermes {} before restart", service_name);
+            self.truncate_logs(server_name, &hermes.log_path, service_name).await?;
+        }
+
+        // STEP 5: Start the hermes service
+        info!("Starting Hermes service: {}", service_name);
+        self.start_service(server_name, service_name).await?;
+
+        // STEP 6: Wait longer for Hermes to start (Hermes needs more time than blockchain nodes)
         info!("Waiting for Hermes {} to start...", service_name);
         tokio::time::sleep(Duration::from_secs(15)).await;
 
-        // STEP 5: Verify Hermes is running
+        // STEP 7: Verify Hermes is running
         let status = self.check_service_status(server_name, service_name).await?;
         if !status.is_healthy() {
             return Err(anyhow::anyhow!(
@@ -589,7 +639,7 @@ impl SshManager {
             ));
         }
 
-        // STEP 6: Additional verification - check Hermes logs for startup success
+        // STEP 8: Additional verification - check Hermes logs for startup success
         match self.verify_hermes_startup(server_name, service_name).await {
             Ok(true) => {
                 info!("Hermes {} startup verification passed", service_name);

@@ -39,6 +39,8 @@ pub struct NodeConfigFile {
     pub pruning_keep_versions: Option<u64>,
     pub pruning_deploy_path: Option<String>,
     pub pruning_service_name: Option<String>,
+    pub log_path: Option<String>,
+    pub truncate_logs_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,7 @@ pub struct HermesConfigFile {
     pub log_path: String,
     pub restart_schedule: String,
     pub dependent_nodes: Vec<String>,
+    pub truncate_logs_enabled: Option<bool>,
 }
 
 impl From<NodeConfigFile> for NodeConfig {
@@ -63,6 +66,8 @@ impl From<NodeConfigFile> for NodeConfig {
             pruning_keep_versions: file_config.pruning_keep_versions,
             pruning_deploy_path: file_config.pruning_deploy_path,
             pruning_service_name: file_config.pruning_service_name,
+            log_path: file_config.log_path,
+            truncate_logs_enabled: file_config.truncate_logs_enabled,
         }
     }
 }
@@ -75,6 +80,7 @@ impl From<HermesConfigFile> for HermesConfig {
             log_path: file_config.log_path,
             restart_schedule: file_config.restart_schedule,
             dependent_nodes: file_config.dependent_nodes,
+            truncate_logs_enabled: file_config.truncate_logs_enabled,
         }
     }
 }
@@ -87,6 +93,14 @@ pub fn validate_config(config: &Config) -> Result<()> {
                 "Node '{}' references unknown server '{}'",
                 node_name,
                 node.server_host
+            ));
+        }
+
+        // Validate log truncation configuration
+        if node.truncate_logs_enabled.unwrap_or(false) && node.log_path.is_none() {
+            return Err(anyhow::anyhow!(
+                "Node '{}' has truncate_logs_enabled=true but no log_path specified",
+                node_name
             ));
         }
     }
@@ -110,6 +124,14 @@ pub fn validate_config(config: &Config) -> Result<()> {
                     dep_node
                 ));
             }
+        }
+
+        // Validate log truncation configuration for hermes
+        if hermes.truncate_logs_enabled.unwrap_or(false) && hermes.log_path.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Hermes '{}' has truncate_logs_enabled=true but log_path is empty",
+                hermes_name
+            ));
         }
     }
 

@@ -272,6 +272,40 @@
             border-color: var(--text-muted);
         }
 
+        .btn:disabled {
+            background: #f7fafc;
+            color: var(--text-muted);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .btn:disabled:hover {
+            background: #f7fafc;
+            border-color: var(--border-color);
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            border-color: var(--accent-color);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #2c5aa0;
+            border-color: #2c5aa0;
+        }
+
+        .btn-success {
+            background: var(--success-color);
+            border-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #2f855a;
+            border-color: #2f855a;
+        }
+
         .btn-danger {
             background: rgba(229, 62, 62, 0.1);
             border-color: rgba(229, 62, 62, 0.2);
@@ -290,6 +324,11 @@
 
         .btn-warning:hover {
             background: rgba(214, 158, 46, 0.15);
+        }
+
+        .btn-small {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
         }
 
         .panel-content {
@@ -546,70 +585,6 @@
             100% { transform: rotate(360deg); }
         }
 
-        .system-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .system-metric {
-            text-align: center;
-        }
-
-        .system-metric-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            margin-bottom: 0.25rem;
-        }
-
-        .system-metric-label {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .logs-container {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid var(--border-color);
-            border-radius: 0.375rem;
-        }
-
-        .log-entry {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--border-color);
-            font-family: 'Monaco', 'Consolas', monospace;
-            font-size: 0.75rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .log-entry:last-child {
-            border-bottom: none;
-        }
-
-        .log-timestamp {
-            color: var(--text-muted);
-            font-weight: 500;
-            min-width: 130px;
-        }
-
-        .log-level {
-            padding: 0.125rem 0.5rem;
-            border-radius: 0.25rem;
-            font-weight: 600;
-            min-width: 80px;
-            text-align: center;
-        }
-
-        .log-info { background: rgba(49, 130, 206, 0.1); color: var(--accent-color); }
-        .log-success { background: rgba(56, 161, 105, 0.1); color: var(--success-color); }
-        .log-warning { background: rgba(214, 158, 46, 0.1); color: var(--warning-color); }
-        .log-error { background: rgba(229, 62, 62, 0.1); color: var(--error-color); }
-
         .operation-type-badge {
             display: inline-flex;
             align-items: center;
@@ -646,6 +621,12 @@
             transition: width 0.3s ease-in-out;
         }
 
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
         @media (max-width: 1024px) {
             .metrics-grid {
                 grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -680,6 +661,16 @@
 
             .maintenance-operations {
                 flex-direction: column;
+            }
+
+            .action-buttons {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .btn-small {
+                font-size: 0.625rem;
+                padding: 0.25rem 0.5rem;
             }
         }
     </style>
@@ -781,8 +772,6 @@
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('scheduled')">Scheduled Operations</button>
                 <button class="tab" onclick="switchTab('maintenance')">Active Maintenance</button>
-                <button class="tab" onclick="switchTab('logs')">Maintenance Logs</button>
-                <button class="tab" onclick="switchTab('system')">System Information</button>
             </div>
 
             <div id="scheduled-content" class="tab-content active">
@@ -802,30 +791,13 @@
                     </div>
                 </div>
             </div>
-
-            <div id="logs-content" class="tab-content">
-                <div id="logs-container">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading maintenance logs...
-                    </div>
-                </div>
-            </div>
-
-            <div id="system-content" class="tab-content">
-                <div id="system-container">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading system information...
-                    </div>
-                </div>
-            </div>
         </div>
     </main>
 
     <script>
         let refreshInterval;
         let currentTab = 'scheduled';
+        let nodeConfigs = {}; // Store node configurations for action button logic
 
         document.addEventListener('DOMContentLoaded', function() {
             loadAllData();
@@ -839,16 +811,27 @@
         async function loadAllData() {
             try {
                 await Promise.all([
+                    loadNodeConfigs(),
                     loadNodes(),
                     loadScheduledOperations(),
-                    loadActiveMaintenance(),
-                    loadMaintenanceLogs(),
-                    loadSystemStatus()
+                    loadActiveMaintenance()
                 ]);
                 updateLastUpdated();
             } catch (error) {
                 console.error('Error loading data:', error);
                 showAlert('Failed to load data: ' + error.message, 'error');
+            }
+        }
+
+        async function loadNodeConfigs() {
+            try {
+                const response = await fetch('/api/config/nodes');
+                const data = await response.json();
+                if (data.success) {
+                    nodeConfigs = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load node configs:', error);
             }
         }
 
@@ -1224,12 +1207,20 @@
                                 <th>Schedule</th>
                                 <th>Next Run</th>
                                 <th>Last Result</th>
-                                <th>Status</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${sortedScheduled.map(op => {
                                 const scheduleInfo = parseCronExpression(op.schedule);
+                                const operationType = formatOperationType(op.operation_type);
+                                const isPruning = op.operation_type === 'NodePruning';
+                                const isHermes = op.operation_type === 'HermesRestart';
+
+                                // Check if pruning is enabled for this node (only for pruning operations)
+                                const nodeConfig = nodeConfigs[op.target_name];
+                                const isPruningEnabled = isPruning ? (nodeConfig && nodeConfig.pruning_enabled) : true;
+
                                 return `
                                     <tr>
                                         <td>
@@ -1237,7 +1228,7 @@
                                             <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${op.target_name}</div>
                                         </td>
                                         <td>
-                                            <span class="operation-type-badge">${formatOperationType(op.operation_type)}</span>
+                                            <span class="operation-type-badge ${isPruning ? 'pruning' : isHermes ? 'hermes' : ''}">${operationType}</span>
                                         </td>
                                         <td>
                                             <div style="margin-bottom: 0.25rem;">
@@ -1264,10 +1255,28 @@
                                             }
                                         </td>
                                         <td>
-                                            <span class="node-status-badge ${op.enabled ? 'status-healthy' : 'status-unknown'}">
-                                                <div class="status-dot-small"></div>
-                                                ${op.enabled ? 'Active' : 'Disabled'}
-                                            </span>
+                                            <div class="action-buttons">
+                                                ${isPruning ? `
+                                                    <button class="btn btn-small btn-warning"
+                                                            onclick="executeManualPruning('${op.target_name}')"
+                                                            ${!isPruningEnabled ? 'disabled title="Pruning not enabled for this node"' : 'title="Run pruning now"'}>
+                                                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                                                        </svg>
+                                                        Prune
+                                                    </button>
+                                                ` : ''}
+                                                ${isHermes ? `
+                                                    <button class="btn btn-small btn-primary"
+                                                            onclick="executeManualHermesRestart('${op.target_name}')"
+                                                            title="Restart Hermes now">
+                                                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                                                        </svg>
+                                                        Restart
+                                                    </button>
+                                                ` : ''}
+                                            </div>
                                         </td>
                                     </tr>
                                 `;
@@ -1287,161 +1296,13 @@
             const scheduled = data.scheduled ? data.scheduled.length : 0;
         }
 
-        async function loadMaintenanceLogs() {
-            if (currentTab !== 'logs') return;
-
-            try {
-                const response = await fetch('/api/maintenance/logs?limit=50');
-                const data = await response.json();
-
-                if (data.success) {
-                    displayMaintenanceLogs(data.data);
-                } else {
-                    throw new Error('Failed to load maintenance logs');
-                }
-            } catch (error) {
-                document.getElementById('logs-container').innerHTML =
-                    '<div class="alert alert-error">Failed to load logs: ' + error.message + '</div>';
-            }
-        }
-
-        function displayMaintenanceLogs(logs) {
-            const container = document.getElementById('logs-container');
-
-            if (!logs || logs.length === 0) {
-                container.innerHTML = '<div class="loading">No maintenance logs available</div>';
-                return;
-            }
-
-            const logsHtml = logs.map(log => {
-                const level = log.status === 'completed' ? 'success' :
-                             log.status === 'failed' ? 'error' :
-                             log.status === 'running' ? 'warning' : 'info';
-
-                return `
-                    <div class="log-entry">
-                        <div class="log-timestamp">${formatTime(log.started_at)}</div>
-                        <div class="log-level log-${level}">${log.status.toUpperCase()}</div>
-                        <div style="flex: 1;">
-                            <strong>${log.operation_type}</strong> - ${formatNodeName(log.target_name)}
-                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.125rem;">${log.target_name}</div>
-                            ${log.error_message ? `<br><span style="color: var(--error-color); font-size: 0.7rem;">${log.error_message}</span>` : ''}
-                        </div>
-                        ${log.completed_at && log.started_at ?
-                            `<div style="color: var(--text-muted); font-size: 0.7rem;">${calculateDuration(log.started_at, log.completed_at)}</div>` :
-                            ''
-                        }
-                    </div>
-                `;
-            }).join('');
-
-            container.innerHTML = `<div class="logs-container">${logsHtml}</div>`;
-        }
-
-        async function loadSystemStatus() {
-            if (currentTab !== 'system') return;
-
-            try {
-                const [statusResponse, connectivityResponse] = await Promise.all([
-                    fetch('/api/system/status'),
-                    fetch('/api/system/ssh-connections')
-                ]);
-
-                const statusData = await statusResponse.json();
-                const connectivityData = await connectivityResponse.json();
-
-                if (statusData.success && connectivityData.success) {
-                    displaySystemStatus(statusData.data, connectivityData.data);
-                    updateServerMetrics(statusData.data, connectivityData.data);
-                } else {
-                    throw new Error('Failed to load system status');
-                }
-            } catch (error) {
-                document.getElementById('system-container').innerHTML =
-                    '<div class="alert alert-error">Failed to load system status: ' + error.message + '</div>';
-            }
-        }
-
-        function displaySystemStatus(status, connectivity) {
-            const container = document.getElementById('system-container');
-
-            const html = `
-                <div class="system-grid">
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.server_count}</div>
-                        <div class="system-metric-label">Total Servers</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${connectivity.active_connections}</div>
-                        <div class="system-metric-label">SSH Connections</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.node_count}</div>
-                        <div class="system-metric-label">Managed Nodes</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.hermes_count}</div>
-                        <div class="system-metric-label">Hermes Instances</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.healthy_nodes}</div>
-                        <div class="system-metric-label">Healthy Nodes</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.maintenance_nodes || 0}</div>
-                        <div class="system-metric-label">Maintenance Nodes</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.active_maintenance_operations || 0}</div>
-                        <div class="system-metric-label">Active Operations</div>
-                    </div>
-                    <div class="system-metric">
-                        <div class="system-metric-value">${status.running_operations}</div>
-                        <div class="system-metric-label">Running Tasks</div>
-                    </div>
-                </div>
-
-                <h3 style="margin: 2rem 0 1rem 0; color: var(--text-primary);">Server Connection Status</h3>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Server</th>
-                            <th>Connection Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${Object.entries(connectivity.connection_status).map(([server, connected]) => `
-                            <tr>
-                                <td>${server}</td>
-                                <td>
-                                    <span class="node-status-badge ${connected ? 'status-healthy' : 'status-unhealthy'}">
-                                        <div class="status-dot-small"></div>
-                                        ${connected ? 'Connected' : 'Disconnected'}
-                                    </span>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-
-            container.innerHTML = html;
-        }
-
-        function updateServerMetrics(status, connectivity) {
-            document.getElementById('active-servers').textContent = status.server_count;
-            document.getElementById('server-connections').textContent = `${connectivity.active_connections} SSH connections`;
-        }
-
         function switchTab(tabName) {
             currentTab = tabName;
 
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
-            const tabIndex = tabName === 'scheduled' ? 0 :
-                           tabName === 'maintenance' ? 1 :
-                           tabName === 'logs' ? 2 : 3;
+            const tabIndex = tabName === 'scheduled' ? 0 : 1;
             document.querySelectorAll('.tab')[tabIndex].classList.add('active');
             document.getElementById(`${tabName}-content`).classList.add('active');
 
@@ -1449,10 +1310,73 @@
                 loadScheduledOperations();
             } else if (tabName === 'maintenance') {
                 loadActiveMaintenance();
-            } else if (tabName === 'logs') {
-                loadMaintenanceLogs();
-            } else if (tabName === 'system') {
-                loadSystemStatus();
+            }
+        }
+
+        // NEW: Manual execution functions
+        async function executeManualPruning(targetName) {
+            const nodeDisplayName = formatNodeName(targetName);
+
+            if (!confirm(`⚠️ Manual Pruning Confirmation\n\nExecute pruning for ${nodeDisplayName}?\n\n• This will stop the node service\n• Data will be pruned according to configuration\n• Service will be restarted after completion\n• This may take 15-30 minutes\n\nProceed with manual pruning?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`🔄 Starting manual pruning for ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch('/api/maintenance/run-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        operation_type: 'pruning',
+                        target_name: targetName,
+                        schedule: 'manual'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`✅ Manual pruning initiated for ${nodeDisplayName}`, 'success');
+                    loadAllData(); // Refresh all data to show maintenance status
+                } else {
+                    throw new Error(data.message || 'Failed to start manual pruning');
+                }
+            } catch (error) {
+                showAlert('❌ Manual pruning failed: ' + error.message, 'error');
+            }
+        }
+
+        async function executeManualHermesRestart(targetName) {
+            const hermesDisplayName = formatNodeName(targetName);
+
+            if (!confirm(`🔄 Manual Hermes Restart Confirmation\n\nRestart Hermes instance: ${hermesDisplayName}?\n\n• Hermes service will be stopped\n• Dependencies will be checked\n• Service will be restarted\n• This may take 2-5 minutes\n\nProceed with manual restart?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`🔄 Starting manual Hermes restart for ${hermesDisplayName}...`, 'warning');
+
+                const response = await fetch('/api/maintenance/run-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        operation_type: 'hermes_restart',
+                        target_name: targetName,
+                        schedule: 'manual'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`✅ Manual Hermes restart completed for ${hermesDisplayName}`, 'success');
+                    loadAllData(); // Refresh all data
+                } else {
+                    throw new Error(data.message || 'Failed to restart Hermes');
+                }
+            } catch (error) {
+                showAlert('❌ Manual Hermes restart failed: ' + error.message, 'error');
             }
         }
 

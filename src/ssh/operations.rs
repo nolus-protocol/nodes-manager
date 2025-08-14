@@ -105,7 +105,7 @@ impl SshManager {
         let mut results = Vec::new();
 
         info!(
-            "Pruning {} nodes sequentially on server {}",
+            "Pruning {} nodes sequentially on server {} (with log truncation support)",
             nodes.len(),
             server_name
         );
@@ -154,7 +154,7 @@ impl SshManager {
         let start_time = Utc::now();
 
         info!(
-            "Starting batch Hermes restart operation {} for {} instances",
+            "Starting batch Hermes restart operation {} for {} instances (with log truncation support)",
             operation_id,
             instances.len()
         );
@@ -215,7 +215,7 @@ impl SshManager {
         result
     }
 
-    // Restart Hermes instances on a server with dependency checking
+    // Restart Hermes instances on a server with dependency checking and log truncation
     async fn restart_hermes_on_server_with_deps(
         &self,
         server_name: String,
@@ -224,20 +224,20 @@ impl SshManager {
         let mut results = Vec::new();
 
         info!(
-            "Restarting {} Hermes instances on server {} with dependency checking",
+            "Restarting {} Hermes instances on server {} with dependency checking and log truncation",
             hermes_instances.len(),
             server_name
         );
 
         // Process Hermes instances sequentially on the same server
-        // Dependency checking is now handled inside restart_hermes method
+        // Dependency checking and log truncation are now handled inside restart_hermes method
         for hermes in hermes_instances {
             let start_time = Utc::now();
             // FIXED: Use the actual config key instead of generating format
             let hermes_id = self.find_hermes_config_key(&hermes).await
                 .unwrap_or_else(|| format!("{}-{}", server_name, hermes.service_name));
 
-            // Use the updated restart_hermes method (with dependency checking)
+            // Use the updated restart_hermes method (with dependency checking and log truncation)
             match self.restart_hermes(&hermes).await {
                 Ok(_) => {
                     let duration = Utc::now().signed_duration_since(start_time);
