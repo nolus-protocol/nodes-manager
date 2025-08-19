@@ -228,7 +228,7 @@ impl SshManager {
         }
     }
 
-    /// Run pruning with command wrapping to ensure completion
+    /// Run pruning with stream redirection to prevent hanging
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -269,12 +269,12 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: Run cosmos-pruner
+            // SSH Command 3: Run cosmos-pruner with stream redirection to prevent hanging
             info!("Step 3: Executing pruning command");
             let start_time = std::time::Instant::now();
 
             let prune_command = format!(
-                "cosmos-pruner prune {} --blocks={} --versions={}",
+                "cosmos-pruner prune {} --blocks={} --versions={} </dev/null >/dev/null 2>&1",
                 deploy_path, keep_blocks, keep_versions
             );
 
