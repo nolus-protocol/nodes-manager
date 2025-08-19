@@ -223,13 +223,15 @@ impl ConfigManager {
             );
         }
 
-        // Validate reasonable concurrency limits
-        if server.max_concurrent_ssh == 0 || server.max_concurrent_ssh > 20 {
-            return Err(anyhow::anyhow!(
-                "Invalid max_concurrent_ssh for server {}: {}",
-                server_name,
-                server.max_concurrent_ssh
-            ));
+        // Validate reasonable concurrency limits (if specified)
+        if let Some(max_concurrent) = server.max_concurrent_ssh {
+            if max_concurrent == 0 || max_concurrent > 20 {
+                return Err(anyhow::anyhow!(
+                    "Invalid max_concurrent_ssh for server {}: {}",
+                    server_name,
+                    max_concurrent
+                ));
+            }
         }
 
         Ok(())

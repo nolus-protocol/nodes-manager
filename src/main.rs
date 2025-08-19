@@ -35,7 +35,7 @@ pub struct ServerConfig {
     pub host: String,
     pub ssh_key_path: String,
     pub ssh_username: String,
-    pub max_concurrent_ssh: usize,
+    pub max_concurrent_ssh: Option<usize>,
     pub ssh_timeout_seconds: u64,
 }
 
