@@ -1,7 +1,7 @@
 // File: src/scheduler/operations.rs
 
 use anyhow::Result;
-use chrono::{Datelike, Timelike, Utc};
+use chrono::{Datelike, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,7 +72,7 @@ impl MaintenanceScheduler {
         Ok(())
     }
 
-    // NEW: Calculate next run time based on cron schedule
+    // FIXED: Calculate next run time based on cron schedule
     fn calculate_next_run(&self, schedule: &str, after: &chrono::DateTime<Utc>) -> Option<chrono::DateTime<Utc>> {
         let parts: Vec<&str> = schedule.split_whitespace().collect();
         if parts.len() != 6 {
@@ -91,7 +91,11 @@ impl MaintenanceScheduler {
 
         // Find next occurrence of the target weekday
         for _ in 0..7 {
-            let current_weekday = candidate.weekday().number_from_sunday() % 7;
+            // FIXED: Use consistent weekday numbering (0=Sunday, 1=Monday, etc.)
+            let current_weekday = match candidate.weekday().number_from_monday() {
+                7 => 0, // Sunday = 0
+                n => n, // Monday=1, Tuesday=2, etc.
+            };
 
             if current_weekday == weekday {
                 // Found the right weekday, set the time
@@ -122,7 +126,8 @@ impl MaintenanceScheduler {
 
                     // CALCULATE NEXT RUN TIME
                     operation.next_run = self.calculate_next_run(schedule, &now);
-                    debug!("Calculated next run for {}: {:?}", node_name, operation.next_run);
+                    info!("Loaded pruning schedule for {}: {} -> next run: {:?}",
+                          node_name, schedule, operation.next_run);
 
                     operations.insert(operation.id.clone(), operation);
                 }
@@ -138,7 +143,8 @@ impl MaintenanceScheduler {
 
             // CALCULATE NEXT RUN TIME
             operation.next_run = self.calculate_next_run(&hermes_config.restart_schedule, &now);
-            debug!("Calculated next run for {}: {:?}", hermes_name, operation.next_run);
+            info!("Loaded hermes restart schedule for {}: {} -> next run: {:?}",
+                  hermes_name, hermes_config.restart_schedule, operation.next_run);
 
             operations.insert(operation.id.clone(), operation);
         }
@@ -150,6 +156,14 @@ impl MaintenanceScheduler {
         }
 
         info!("Loaded {} scheduled operations from configuration with calculated next run times", operation_count);
+
+        // ADDED: Log all loaded operations for debugging
+        let scheduled_ops = self.scheduled_operations.read().await;
+        for (id, op) in scheduled_ops.iter() {
+            info!("Operation {}: {:?} for {} (enabled: {}, next_run: {:?})",
+                  id, op.operation_type, op.target_name, op.enabled, op.next_run);
+        }
+
         Ok(())
     }
 
@@ -175,26 +189,56 @@ impl MaintenanceScheduler {
                 let now = Utc::now();
                 let scheduled_ops = scheduler.scheduled_operations.read().await;
 
+                debug!("Scheduler check at {}: {} operations to evaluate", now.format("%Y-%m-%d %H:%M:%S UTC"), scheduled_ops.len());
+
                 for (operation_id, operation) in scheduled_ops.iter() {
                     if !operation.enabled {
+                        debug!("Operation {} is disabled, skipping", operation_id);
                         continue;
                     }
 
-                    // Check if this operation should run now
-                    if scheduler.should_run_operation(operation, &now) {
-                        info!("Triggering scheduled operation: {} ({})", operation_id, operation.target_name);
+                    // FIXED: Use next_run time instead of cron pattern matching
+                    if let Some(next_run) = operation.next_run {
+                        // Allow a 2-minute window for execution (in case we miss the exact minute)
+                        let execution_window_start = next_run;
+                        let execution_window_end = next_run + chrono::Duration::minutes(2);
 
-                        let op_id = operation_id.clone();
-                        let op_type = operation.operation_type.clone();
-                        let target = operation.target_name.clone();
-                        let sched = scheduler.clone();
-
-                        // Execute the operation in a separate task
-                        tokio::spawn(async move {
-                            if let Err(e) = sched.execute_scheduled_operation(&op_id, &op_type, &target).await {
-                                error!("Scheduled operation {} failed: {}", op_id, e);
+                        if now >= execution_window_start && now <= execution_window_end {
+                            // Additional check: don't run if we just ran this recently
+                            let mut should_execute = true;
+                            if let Some(last_run) = operation.last_run {
+                                let time_since_last = now.signed_duration_since(last_run);
+                                if time_since_last.num_hours() < 1 {
+                                    should_execute = false;
+                                    debug!("Operation {} ran recently ({}m ago), skipping",
+                                           operation_id, time_since_last.num_minutes());
+                                }
                             }
-                        });
+
+                            if should_execute {
+                                info!("Triggering scheduled operation: {} ({}) - next_run: {}, current: {}",
+                                      operation_id, operation.target_name, next_run.format("%Y-%m-%d %H:%M:%S UTC"),
+                                      now.format("%Y-%m-%d %H:%M:%S UTC"));
+
+                                let op_id = operation_id.clone();
+                                let op_type = operation.operation_type.clone();
+                                let target = operation.target_name.clone();
+                                let sched = scheduler.clone();
+
+                                // Execute the operation in a separate task
+                                tokio::spawn(async move {
+                                    if let Err(e) = sched.execute_scheduled_operation(&op_id, &op_type, &target).await {
+                                        error!("Scheduled operation {} failed: {}", op_id, e);
+                                    }
+                                });
+                            }
+                        } else {
+                            debug!("Operation {} not due yet. Next run: {}, Current: {}",
+                                   operation_id, next_run.format("%Y-%m-%d %H:%M:%S UTC"),
+                                   now.format("%Y-%m-%d %H:%M:%S UTC"));
+                        }
+                    } else {
+                        warn!("Operation {} has no next_run time calculated", operation_id);
                     }
                 }
 
@@ -202,85 +246,10 @@ impl MaintenanceScheduler {
             }
         });
 
-        info!("Simple scheduler background task started");
+        info!("Simple scheduler background task started - checking every 60 seconds");
     }
 
-    fn should_run_operation(&self, operation: &ScheduledOperation, now: &chrono::DateTime<Utc>) -> bool {
-        // Simple cron parser for basic patterns like "0 0 12 * * 2"
-        // Format: SEC MIN HOUR DAY MONTH WEEKDAY
-
-        let parts: Vec<&str> = operation.schedule.split_whitespace().collect();
-        if parts.len() != 6 {
-            warn!("Invalid schedule format for operation {}: {}", operation.id, operation.schedule);
-            return false;
-        }
-
-        // Parse schedule parts
-        let sec = parts[0];
-        let min = parts[1];
-        let hour = parts[2];
-        let _day = parts[3];   // Currently not used (always *)
-        let _month = parts[4]; // Currently not used (always *)
-        let weekday = parts[5];
-
-        // Check if current time matches the schedule
-        if !self.matches_time_component(sec, now.second() as i32) {
-            return false;
-        }
-
-        if !self.matches_time_component(min, now.minute() as i32) {
-            return false;
-        }
-
-        if !self.matches_time_component(hour, now.hour() as i32) {
-            return false;
-        }
-
-        if !self.matches_weekday_component(weekday, now.weekday().number_from_monday() as i32) {
-            return false;
-        }
-
-        // Additional check: don't run the same operation multiple times in the same minute
-        if let Some(last_run) = operation.last_run {
-            let time_since_last = now.signed_duration_since(last_run);
-            if time_since_last.num_minutes() < 1 {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    fn matches_time_component(&self, pattern: &str, current_value: i32) -> bool {
-        if pattern == "*" {
-            return true;
-        }
-
-        // Handle simple numeric values
-        if let Ok(target_value) = pattern.parse::<i32>() {
-            return current_value == target_value;
-        }
-
-        // Handle ranges like "1-5" (not implemented yet, but could be added)
-        // Handle lists like "1,3,5" (not implemented yet, but could be added)
-
-        false
-    }
-
-    fn matches_weekday_component(&self, pattern: &str, current_weekday: i32) -> bool {
-        if pattern == "*" {
-            return true;
-        }
-
-        // Convert current weekday (1=Monday, 7=Sunday) to cron format (0=Sunday, 6=Saturday)
-        let cron_weekday = if current_weekday == 7 { 0 } else { current_weekday };
-
-        if let Ok(target_weekday) = pattern.parse::<i32>() {
-            return cron_weekday == target_weekday;
-        }
-
-        false
-    }
+    // REMOVED: should_run_operation method is no longer needed since we use next_run times
 
     async fn execute_scheduled_operation(
         &self,
