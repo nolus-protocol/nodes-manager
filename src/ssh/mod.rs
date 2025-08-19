@@ -75,10 +75,12 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // Execute command with NO timeout - let it run as long as needed (n8n style)
+        // Wrap command to ensure proper completion and connection cleanup
+        let wrapped_command = format!("{} ; echo 'COMMAND_COMPLETED_$$' ; exit 0", command);
+
         let result = self
             .client
-            .execute(command)
+            .execute(&wrapped_command)
             .await
             .map_err(|e| anyhow::anyhow!("SSH command execution failed: {}", e))?;
 
@@ -98,13 +100,17 @@ impl SshConnection {
         }
 
         let output_str = result.stdout.trim().to_string();
+
+        // Remove our completion marker if present
+        let cleaned_output = output_str.replace("COMMAND_COMPLETED_$$", "").trim().to_string();
+
         debug!(
             "Command completed on {} with output length: {} bytes",
             self.host,
-            output_str.len()
+            cleaned_output.len()
         );
 
-        Ok(output_str)
+        Ok(cleaned_output)
     }
 
     pub async fn check_service_status(&mut self, service_name: &str) -> Result<ServiceStatus> {

@@ -228,7 +228,7 @@ impl SshManager {
         }
     }
 
-    /// FIXED: Run pruning with output redirection to avoid buffering issues (n8n style)
+    /// Run pruning with command wrapping to ensure completion
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -246,14 +246,14 @@ impl SshManager {
         let node_name = self.find_node_config_key(node).await
             .ok_or_else(|| anyhow::anyhow!("Could not find node config key for pruning"))?;
 
-        info!("Starting pruning for node {} on server {} with output redirection", node_name, server_name);
+        info!("Starting pruning for node {} on server {}", node_name, server_name);
 
         // STEP 1: Start maintenance mode
         self.maintenance_tracker
             .start_maintenance(&node_name, "pruning", 300, server_name) // 300 minutes = 5 hours
             .await?;
 
-        // STEP 2: Execute pruning with discrete SSH commands and output redirection
+        // STEP 2: Execute pruning with discrete SSH commands
         let pruning_result = async {
             // SSH Command 1: Stop the service
             info!("Step 1: Stopping service {}", service_name);
@@ -269,41 +269,22 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: Run cosmos-pruner with output redirection (FIXED: no buffering)
-            let log_file = format!("/tmp/pruning_{}_{}.log",
-                                   node_name.replace('-', "_"),
-                                   chrono::Utc::now().timestamp());
-
-            let prune_command = format!(
-                "cosmos-pruner prune {} --blocks={} --versions={} >{} 2>&1; echo $? >{}.exit",
-                deploy_path, keep_blocks, keep_versions, log_file, log_file
-            );
-
-            info!("Step 3: Executing pruning command with output redirected to {}", log_file);
+            // SSH Command 3: Run cosmos-pruner
+            info!("Step 3: Executing pruning command");
             let start_time = std::time::Instant::now();
 
-            // Execute the command - output goes to file, no buffering in SSH session
+            let prune_command = format!(
+                "cosmos-pruner prune {} --blocks={} --versions={}",
+                deploy_path, keep_blocks, keep_versions
+            );
+
             let _output = self.execute_simple_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
+            info!("Cosmos-pruner completed for node {} in {:.2} minutes",
+                  node_name, duration.as_secs_f64() / 60.0);
 
-            // SSH Command 4: Check exit code
-            let exit_check = format!("cat {}.exit", log_file);
-            let exit_code = self.execute_simple_command(server_name, &exit_check).await?;
-
-            if exit_code.trim() == "0" {
-                info!("Cosmos-pruner completed successfully for node {} in {:.2} minutes",
-                      node_name, duration.as_secs_f64() / 60.0);
-            } else {
-                warn!("Cosmos-pruner finished with exit code {} for node {}", exit_code.trim(), node_name);
-                // Don't fail - cosmos-pruner might have partial success
-            }
-
-            // SSH Command 5: Cleanup log files
-            let cleanup_cmd = format!("rm -f {} {}.exit", log_file, log_file);
-            let _ = self.execute_simple_command(server_name, &cleanup_cmd).await;
-
-            // SSH Command 6: Start the service
+            // SSH Command 4: Start the service
             info!("Step 4: Starting service {}", service_name);
             self.start_service(server_name, service_name).await?;
 
