@@ -22,7 +22,7 @@ impl SshConnection {
         host: &str,
         username: &str,
         key_path: &str,
-        _timeout_seconds: u64,
+        connection_timeout_seconds: u64,
     ) -> Result<Self> {
         debug!("Establishing SSH connection to {}@{}", username, host);
 
@@ -48,14 +48,18 @@ impl SshConnection {
             AuthMethod::with_key(&key_content, None)
         };
 
-        // Create client with timeout
-        let client = Client::connect(
-            addr,
-            username,
-            auth_method,
-            ServerCheckMethod::NoCheck, // In production, use proper host key checking
+        // Create client with connection timeout (FIXED: actually use the timeout parameter)
+        let client = tokio::time::timeout(
+            Duration::from_secs(connection_timeout_seconds),
+            Client::connect(
+                addr,
+                username,
+                auth_method,
+                ServerCheckMethod::NoCheck, // In production, use proper host key checking
+            )
         )
         .await
+        .map_err(|_| anyhow::anyhow!("SSH connection timed out after {}s", connection_timeout_seconds))?
         .map_err(|e| {
             anyhow::anyhow!("Failed to connect to SSH server {}@{}: {}", username, host, e)
         })?;
@@ -71,6 +75,7 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
+        // Execute command with NO timeout - let it run as long as needed (n8n style)
         let result = self
             .client
             .execute(command)
@@ -135,31 +140,19 @@ impl SshConnection {
                     return Ok(None);
                 }
 
-                // Parse systemd timestamp (format: "Wed 2024-01-15 10:30:45 UTC")
-                // For simplicity, we'll calculate uptime differently
-                let uptime_cmd = format!(
-                    "systemctl show {} --property=ExecMainStartTimestamp --value",
-                    service_name
-                );
-
-                match self.execute_command(&uptime_cmd).await {
-                    Ok(_) => {
-                        // Use a simpler approach: check how long the process has been running
-                        let pid_cmd = format!("systemctl show {} --property=MainPID --value", service_name);
-                        if let Ok(pid_output) = self.execute_command(&pid_cmd).await {
-                            if let Ok(pid) = pid_output.trim().parse::<u32>() {
-                                if pid > 0 {
-                                    let uptime_cmd = format!("ps -o etime= -p {}", pid);
-                                    if let Ok(uptime_str) = self.execute_command(&uptime_cmd).await {
-                                        return Ok(parse_process_uptime(&uptime_str.trim()));
-                                    }
-                                }
+                // Use a simpler approach: check how long the process has been running
+                let pid_cmd = format!("systemctl show {} --property=MainPID --value", service_name);
+                if let Ok(pid_output) = self.execute_command(&pid_cmd).await {
+                    if let Ok(pid) = pid_output.trim().parse::<u32>() {
+                        if pid > 0 {
+                            let uptime_cmd = format!("ps -o etime= -p {}", pid);
+                            if let Ok(uptime_str) = self.execute_command(&uptime_cmd).await {
+                                return Ok(parse_process_uptime(&uptime_str.trim()));
                             }
                         }
-                        Ok(None)
                     }
-                    Err(_) => Ok(None),
                 }
+                Ok(None)
             }
             Err(_) => Ok(None),
         }
