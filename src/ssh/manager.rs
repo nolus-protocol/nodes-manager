@@ -24,7 +24,7 @@ impl SshManager {
         }
     }
 
-    /// MULTIPLEXED: System SSH command execution with connection multiplexing
+    /// System SSH command execution
     async fn execute_command(&self, server_name: &str, command: &str) -> Result<String> {
         let server_config = self
             .config
@@ -32,21 +32,15 @@ impl SshManager {
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
 
-        debug!("Executing multiplexed SSH command on {}: {}", server_name, command);
+        debug!("Executing SSH command on {}: {}", server_name, command);
 
-        // SSH MULTIPLEXING: Reuse master connections, auto-cleanup after 10 minutes of inactivity
         let ssh_command = format!(
-            "ssh -i {} -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ControlMaster=auto -o ControlPath=/tmp/ssh-{}@{}:%p -o ControlPersist=10m {}@{} '{}'",
+            "ssh -i {} -o StrictHostKeyChecking=no -o ConnectTimeout=30 {}@{} '{}'",
             server_config.ssh_key_path,
-            server_config.ssh_username,
-            server_config.host,
             server_config.ssh_username,
             server_config.host,
             command.replace("'", "'\"'\"'")
         );
-
-        // DEBUG: Log the exact SSH command being executed
-        info!("EXACT SSH COMMAND: {}", ssh_command);
 
         let output = tokio::process::Command::new("sh")
             .arg("-c")
@@ -67,17 +61,12 @@ impl SshManager {
         }
 
         let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        debug!(
-            "Multiplexed SSH command completed successfully on {}: {} chars output",
-            server_name,
-            result.len()
-        );
+        debug!("SSH command completed successfully on {}: {} chars output", server_name, result.len());
 
         Ok(result)
     }
 
-    /// Check service status using multiplexed SSH
+    /// Check service status using SSH
     pub async fn check_service_status(&self, server_name: &str, service_name: &str) -> Result<ServiceStatus> {
         let command = format!("systemctl is-active {}", service_name);
 
@@ -92,14 +81,11 @@ impl SshManager {
                     other => Ok(ServiceStatus::Unknown(other.to_string())),
                 }
             }
-            Err(_) => {
-                // If systemctl command fails, service might not exist
-                Ok(ServiceStatus::NotFound)
-            }
+            Err(_) => Ok(ServiceStatus::NotFound),
         }
     }
 
-    /// Get service uptime using multiplexed SSH
+    /// Get service uptime using SSH
     pub async fn get_service_uptime(&self, server_name: &str, service_name: &str) -> Result<Option<Duration>> {
         let command = format!(
             "systemctl show {} --property=ExecMainStartTimestamp --value",
@@ -112,7 +98,6 @@ impl SshManager {
                     return Ok(None);
                 }
 
-                // Use a simpler approach: check how long the process has been running
                 let pid_cmd = format!("systemctl show {} --property=MainPID --value", service_name);
                 if let Ok(pid_output) = self.execute_command(server_name, &pid_cmd).await {
                     if let Ok(pid) = pid_output.trim().parse::<u32>() {
@@ -130,14 +115,13 @@ impl SshManager {
         }
     }
 
-    /// Stop service using multiplexed SSH
+    /// Stop service using SSH
     pub async fn stop_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Stopping service {} on server {}", service_name, server_name);
 
         let command = format!("sudo systemctl stop {}", service_name);
         self.execute_command(server_name, &command).await?;
 
-        // Verify it stopped with a separate SSH command
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         let status = self.check_service_status(server_name, service_name).await?;
@@ -156,14 +140,13 @@ impl SshManager {
         Ok(())
     }
 
-    /// Start service using multiplexed SSH
+    /// Start service using SSH
     pub async fn start_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Starting service {} on server {}", service_name, server_name);
 
         let command = format!("sudo systemctl start {}", service_name);
         self.execute_command(server_name, &command).await?;
 
-        // Verify it started with a separate SSH command
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let status = self.check_service_status(server_name, service_name).await?;
@@ -183,7 +166,7 @@ impl SshManager {
         Ok(())
     }
 
-    /// Restart service using multiplexed SSH
+    /// Restart service using SSH
     #[allow(dead_code)]
     pub async fn restart_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Restarting service {} on server {}", service_name, server_name);
@@ -191,7 +174,6 @@ impl SshManager {
         let command = format!("sudo systemctl restart {}", service_name);
         self.execute_command(server_name, &command).await?;
 
-        // Verify it restarted with a separate SSH command
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         let status = self.check_service_status(server_name, service_name).await?;
@@ -211,7 +193,7 @@ impl SshManager {
         Ok(())
     }
 
-    /// Truncate logs using multiplexed SSH
+    /// Truncate logs using SSH
     pub async fn truncate_logs(&self, server_name: &str, log_path: &str, service_name: &str) -> Result<()> {
         info!("Truncating logs for service {} on server {} at path: {}", service_name, server_name, log_path);
 
@@ -233,13 +215,12 @@ impl SshManager {
             }
             Err(e) => {
                 warn!("Log truncation failed for service {} on server {}: {}", service_name, server_name, e);
-                // Don't fail the entire operation if log truncation fails
                 Ok(())
             }
         }
     }
 
-    /// Run pruning with multiplexed SSH commands (NO LOCKS - CONCURRENT OPERATIONS SUPPORTED)
+    /// Run pruning with SSH commands
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -253,24 +234,19 @@ impl SshManager {
         let keep_blocks = node.pruning_keep_blocks.unwrap_or(1000);
         let keep_versions = node.pruning_keep_versions.unwrap_or(1000);
 
-        // Find the actual node config key
         let node_name = self.find_node_config_key(node).await
             .ok_or_else(|| anyhow::anyhow!("Could not find node config key for pruning"))?;
 
-        info!("Starting MULTIPLEXED pruning for node {} on server {} (concurrent operations supported)", node_name, server_name);
+        info!("Starting pruning for node {} on server {}", node_name, server_name);
 
-        // STEP 1: Start maintenance mode (estimate is for monitoring purposes only)
         self.maintenance_tracker
-            .start_maintenance(&node_name, "pruning", 120, server_name) // 120 minutes = 2h estimate for monitoring
+            .start_maintenance(&node_name, "pruning", 120, server_name)
             .await?;
 
-        // STEP 2: Execute pruning with multiplexed SSH commands (CONCURRENT-SAFE)
         let pruning_result = async {
-            // SSH Command 1: Stop the service
             info!("Step 1: Stopping service {}", service_name);
             self.stop_service(server_name, service_name).await?;
 
-            // SSH Command 2: Truncate logs if enabled
             if node.truncate_logs_enabled.unwrap_or(false) {
                 if let Some(log_path) = &node.log_path {
                     info!("Step 2: Truncating logs for node {}", node_name);
@@ -280,8 +256,7 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: MULTIPLEXED - Run cosmos-pruner (CONCURRENT WITH OTHER OPERATIONS)
-            info!("Step 3: Executing pruning command (MULTIPLEXED - other operations can run)");
+            info!("Step 3: Executing pruning command");
             let start_time = std::time::Instant::now();
 
             let prune_command = format!(
@@ -291,7 +266,6 @@ impl SshManager {
 
             info!("Executing: {}", prune_command);
 
-            // Use multiplexed SSH - other servers/operations can run concurrently
             let output = self.execute_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
@@ -299,7 +273,6 @@ impl SshManager {
             info!("Cosmos-pruner completed successfully for node {} in {:.2} minutes",
                   node_name, duration.as_secs_f64() / 60.0);
 
-            // Log a preview of the output for debugging
             if !output.trim().is_empty() {
                 let preview = output.lines()
                     .take(3)
@@ -308,7 +281,6 @@ impl SshManager {
                 info!("Pruning output preview: {}", preview);
             }
 
-            // SSH Command 4: Start the service
             info!("Step 4: Starting service {}", service_name);
             self.start_service(server_name, service_name).await?;
 
@@ -316,38 +288,34 @@ impl SshManager {
         }
         .await;
 
-        // STEP 3: End maintenance mode (regardless of success/failure)
         if let Err(e) = self.maintenance_tracker.end_maintenance(&node_name).await {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // STEP 4: Send completion notification
         let completion_status = if pruning_result.is_ok() { "completed" } else { "failed" };
         if let Err(e) = self.send_maintenance_notification(&node_name, completion_status, "pruning").await {
             warn!("Failed to send maintenance completion notification: {}", e);
         }
 
-        // STEP 5: Return the result
         match pruning_result {
             Ok(_) => {
-                info!("MULTIPLEXED pruning workflow completed successfully for node {} on server {}", node_name, server_name);
+                info!("Pruning workflow completed successfully for node {} on server {}", node_name, server_name);
                 Ok(())
             }
             Err(e) => {
-                error!("MULTIPLEXED pruning workflow failed for node {} on server {}: {}", node_name, server_name, e);
+                error!("Pruning workflow failed for node {} on server {}: {}", node_name, server_name, e);
                 Err(e)
             }
         }
     }
 
-    /// Restart Hermes with multiplexed SSH commands
+    /// Restart Hermes with SSH commands
     pub async fn restart_hermes(&self, hermes: &HermesConfig) -> Result<()> {
         let server_name = &hermes.server_host;
         let service_name = &hermes.service_name;
 
-        info!("Starting Hermes restart: {} on server {} using MULTIPLEXED SSH", service_name, server_name);
+        info!("Starting Hermes restart: {} on server {}", service_name, server_name);
 
-        // STEP 1: Check dependent nodes are healthy
         if !self.check_node_dependencies(&hermes.dependent_nodes).await? {
             return Err(anyhow::anyhow!(
                 "Cannot restart Hermes {}: dependent nodes are not healthy",
@@ -355,7 +323,6 @@ impl SshManager {
             ));
         }
 
-        // STEP 2: Check minimum uptime
         if !self.check_hermes_min_uptime(hermes).await? {
             return Err(anyhow::anyhow!(
                 "Cannot restart Hermes {}: minimum uptime not reached",
@@ -363,21 +330,17 @@ impl SshManager {
             ));
         }
 
-        // SSH Command 1: Stop the hermes service
         info!("Step 1: Stopping Hermes service {}", service_name);
         self.stop_service(server_name, service_name).await?;
 
-        // SSH Command 2: Truncate logs if enabled
         if hermes.truncate_logs_enabled.unwrap_or(false) {
             info!("Step 2: Truncating logs for Hermes {}", service_name);
             self.truncate_logs(server_name, &hermes.log_path, service_name).await?;
         }
 
-        // SSH Command 3: Start the hermes service
         info!("Step 3: Starting Hermes service {}", service_name);
         self.start_service(server_name, service_name).await?;
 
-        // SSH Command 4: Verify Hermes startup
         info!("Step 4: Waiting for Hermes {} to fully start...", service_name);
         tokio::time::sleep(Duration::from_secs(15)).await;
 
@@ -389,18 +352,15 @@ impl SshManager {
             ));
         }
 
-        // SSH Command 5: Additional verification - check Hermes logs
         match self.verify_hermes_startup(server_name, service_name).await {
             Ok(true) => {
                 info!("Hermes {} startup verification passed", service_name);
             }
             Ok(false) => {
                 warn!("Hermes {} started but verification failed - check logs", service_name);
-                // Don't fail the restart, just warn
             }
             Err(e) => {
                 warn!("Could not verify Hermes {} startup: {}", service_name, e);
-                // Don't fail the restart, just warn
             }
         }
 
@@ -518,7 +478,7 @@ impl SshManager {
         }
     }
 
-    /// Verify Hermes startup using multiplexed SSH
+    /// Verify Hermes startup using SSH
     async fn verify_hermes_startup(&self, server_name: &str, service_name: &str) -> Result<bool> {
         let log_cmd = format!(
             "journalctl -u {} --since '1 minute ago' --no-pager | grep -E '(started|ready|listening)' | tail -5",
@@ -612,9 +572,9 @@ impl SshManager {
         None
     }
 
-    /// Test server connectivity using multiplexed SSH
+    /// Test server connectivity using SSH
     pub async fn validate_all_servers_connectivity(&self) -> HashMap<String, Result<String, String>> {
-        info!("Validating connectivity to all servers using MULTIPLEXED SSH commands");
+        info!("Validating connectivity to all servers");
 
         let mut connectivity_status = HashMap::new();
 
@@ -636,13 +596,12 @@ impl SshManager {
         connectivity_status
     }
 
-    /// Get status of all services using multiplexed SSH
+    /// Get status of all services using SSH
     pub async fn get_all_service_statuses(&self) -> HashMap<String, HashMap<String, String>> {
-        info!("Getting status of all services using MULTIPLEXED SSH commands");
+        info!("Getting status of all services");
 
         let mut all_statuses = HashMap::new();
 
-        // Check all node services
         for (node_name, node) in &self.config.nodes {
             if let Some(service_name) = &node.pruning_service_name {
                 match self.check_service_status(&node.server_host, service_name).await {
@@ -662,7 +621,6 @@ impl SshManager {
             }
         }
 
-        // Check all hermes services
         for (hermes_name, hermes) in &self.config.hermes {
             match self.check_service_status(&hermes.server_host, &hermes.service_name).await {
                 Ok(status) => {
@@ -719,11 +677,10 @@ impl SshManager {
         }
     }
 
-    /// Get connection status (shows master connection status)
+    /// Get connection status
     pub async fn get_connection_status(&self) -> HashMap<String, bool> {
         let mut status = HashMap::new();
 
-        // Test connectivity for each server
         for server_name in self.config.servers.keys() {
             let connected = match self.execute_command(server_name, "echo 'test'").await {
                 Ok(output) => output.trim() == "test",
@@ -735,11 +692,9 @@ impl SshManager {
         status
     }
 
-    /// Get active connections count (master connections)
+    /// Get active connections count
     pub async fn get_active_connections(&self) -> usize {
-        // For multiplexed SSH, we don't manage connections directly
-        // But we can check how many control sockets exist
-        0 // Simplified for now
+        0
     }
 }
 
