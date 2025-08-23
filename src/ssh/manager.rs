@@ -43,6 +43,9 @@ impl SshManager {
             command.replace("'", "'\"'\"'") // Escape single quotes properly
         );
 
+        // DEBUG: Log the exact SSH command being executed
+        info!("EXACT SSH COMMAND: {}", ssh_command);
+
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(&ssh_command)
