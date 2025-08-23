@@ -75,36 +75,54 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
+        // FIXED: Add explicit command termination to force SSH library to detect completion
+        let wrapped_command = format!("bash -c '{} && echo COMMAND_SUCCESS || echo COMMAND_FAILED'", command);
+
         let result = self
             .client
-            .execute(command)  // FIXED: No wrapping for proper exit code detection
+            .execute(&wrapped_command)
             .await
             .map_err(|e| anyhow::anyhow!("SSH command execution failed: {}", e))?;
 
         let exit_code = result.exit_status;
+        let output_str = result.stdout.trim().to_string();
+        let stderr_str = result.stderr.trim();
 
-        if exit_code != 0 {
-            let stderr = &result.stderr;
+        debug!(
+            "Command completed on {} with exit code {}, output length: {} bytes",
+            self.host, exit_code, output_str.len()
+        );
+
+        // Check if command actually succeeded by looking at our completion markers
+        let command_succeeded = if output_str.ends_with("COMMAND_SUCCESS") {
+            true
+        } else if output_str.ends_with("COMMAND_FAILED") {
+            false
+        } else {
+            // Fallback to exit code if markers not found
+            exit_code == 0
+        };
+
+        if !command_succeeded || exit_code != 0 {
             warn!(
                 "Command failed on {} with exit code {}: {}",
-                self.host, exit_code, stderr
+                self.host, exit_code, stderr_str
             );
             return Err(anyhow::anyhow!(
                 "Command failed with exit code {}: {}",
                 exit_code,
-                stderr
+                if stderr_str.is_empty() { "Unknown error" } else { stderr_str }
             ));
         }
 
-        let output_str = result.stdout.trim().to_string();
+        // Clean up our completion markers
+        let cleaned_output = output_str
+            .trim_end_matches("COMMAND_SUCCESS")
+            .trim_end_matches("COMMAND_FAILED")
+            .trim()
+            .to_string();
 
-        debug!(
-            "Command completed on {} with output length: {} bytes",
-            self.host,
-            output_str.len()
-        );
-
-        Ok(output_str)
+        Ok(cleaned_output)
     }
 }
 
