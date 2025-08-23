@@ -24,7 +24,7 @@ impl SshConnection {
         key_path: &str,
         connection_timeout_seconds: u64,
     ) -> Result<Self> {
-        debug!("Establishing SSH connection to {}@{}", username, host);
+        debug!("Establishing fresh SSH connection to {}@{}", username, host);
 
         // Parse host and port
         let addr: SocketAddr = if host.contains(':') {
@@ -48,7 +48,7 @@ impl SshConnection {
             AuthMethod::with_key(&key_content, None)
         };
 
-        // Create client with connection timeout (FIXED: actually use the timeout parameter)
+        // Create client with connection timeout
         let client = tokio::time::timeout(
             Duration::from_secs(connection_timeout_seconds),
             Client::connect(
@@ -64,7 +64,7 @@ impl SshConnection {
             anyhow::anyhow!("Failed to connect to SSH server {}@{}: {}", username, host, e)
         })?;
 
-        debug!("SSH connection established to {}@{}", username, host);
+        debug!("Fresh SSH connection established to {}@{}", username, host);
 
         Ok(Self {
             client,
@@ -75,14 +75,14 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // FIXED: Add explicit command termination to force SSH library to detect completion
-        let wrapped_command = format!("bash -c '{} && echo COMMAND_SUCCESS || echo COMMAND_FAILED'", command);
+        // Execute command with proper termination detection
+        let wrapped_command = format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command);
 
         let result = self
             .client
             .execute(&wrapped_command)
             .await
-            .map_err(|e| anyhow::anyhow!("SSH command execution failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("SSH command execution failed on {}: {}", self.host, e))?;
 
         let exit_code = result.exit_status;
         let output_str = result.stdout.trim().to_string();
@@ -93,34 +93,37 @@ impl SshConnection {
             self.host, exit_code, output_str.len()
         );
 
-        // Check if command actually succeeded by looking at our completion markers
-        let command_succeeded = if output_str.ends_with("COMMAND_SUCCESS") {
+        // Check command completion using our markers
+        let command_succeeded = if output_str.ends_with("__COMMAND_SUCCESS__") {
             true
-        } else if output_str.ends_with("COMMAND_FAILED") {
+        } else if output_str.ends_with("__COMMAND_FAILED__") {
             false
         } else {
             // Fallback to exit code if markers not found
             exit_code == 0
         };
 
-        if !command_succeeded || exit_code != 0 {
+        if !command_succeeded {
             warn!(
                 "Command failed on {} with exit code {}: {}",
                 self.host, exit_code, stderr_str
             );
             return Err(anyhow::anyhow!(
-                "Command failed with exit code {}: {}",
+                "Command failed on {} with exit code {}: {}",
+                self.host,
                 exit_code,
                 if stderr_str.is_empty() { "Unknown error" } else { stderr_str }
             ));
         }
 
-        // Clean up our completion markers
+        // Clean up our completion markers from output
         let cleaned_output = output_str
-            .trim_end_matches("COMMAND_SUCCESS")
-            .trim_end_matches("COMMAND_FAILED")
+            .trim_end_matches("__COMMAND_SUCCESS__")
+            .trim_end_matches("__COMMAND_FAILED__")
             .trim()
             .to_string();
+
+        debug!("Command completed successfully on {}: {} chars of output", self.host, cleaned_output.len());
 
         Ok(cleaned_output)
     }
@@ -192,5 +195,15 @@ mod tests {
             Some(Duration::from_secs(5025))
         );
         assert_eq!(test_parse_process_uptime("invalid"), None);
+    }
+
+    #[test]
+    fn test_service_status() {
+        assert!(ServiceStatus::Active.is_healthy());
+        assert!(ServiceStatus::Active.is_running());
+        assert!(!ServiceStatus::Inactive.is_healthy());
+        assert!(!ServiceStatus::Inactive.is_running());
+        assert!(ServiceStatus::Activating.is_running());
+        assert!(!ServiceStatus::Activating.is_healthy());
     }
 }
