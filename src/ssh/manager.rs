@@ -8,7 +8,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::maintenance_tracker::MaintenanceTracker;
-use crate::ssh::{ServiceStatus, SshConnection};
+use crate::ssh::ServiceStatus;
 use crate::{AlarmPayload, Config, HermesConfig, NodeConfig};
 
 pub struct SshManager {
@@ -24,97 +24,59 @@ impl SshManager {
         }
     }
 
-    /// Simple SSH command execution - creates fresh connection, executes, closes
-    async fn execute_simple_command(&self, server_name: &str, command: &str) -> Result<String> {
+    /// UNIFIED: System SSH command execution for ALL operations
+    async fn execute_command(&self, server_name: &str, command: &str) -> Result<String> {
         let server_config = self
             .config
             .servers
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
 
-        debug!("Executing command on {}: {}", server_name, command);
+        debug!("Executing system SSH command on {}: {}", server_name, command);
 
-        // Create fresh SSH connection for this command only
-        let mut connection = SshConnection::new(
-            &server_config.host,
-            &server_config.ssh_username,
-            &server_config.ssh_key_path,
-            server_config.ssh_timeout_seconds,
-        )
-        .await?;
+        // Use system SSH command for ALL operations - uniform and reliable
+        let ssh_command = format!(
+            "ssh -i {} -o StrictHostKeyChecking=no -o ConnectTimeout=30 {}@{} '{}'",
+            server_config.ssh_key_path,
+            server_config.ssh_username,
+            server_config.host,
+            command.replace("'", "'\"'\"'") // Escape single quotes properly
+        );
 
-        // Execute command - connection closes automatically when this scope ends
-        let result = connection.execute_command(command).await;
+        let output = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&ssh_command)
+            .output()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to execute SSH command: {}", e))?;
 
-        match result {
-            Ok(output) => {
-                debug!(
-                    "Command completed successfully on {}: {} chars output",
-                    server_name,
-                    output.len()
-                );
-                Ok(output)
-            }
-            Err(e) => {
-                error!("Command failed on {}: {}", server_name, e);
-                Err(e)
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            error!("SSH command failed on {}: stderr: {}, stdout: {}", server_name, stderr, stdout);
+            return Err(anyhow::anyhow!(
+                "SSH command failed with exit code {:?}: {}",
+                output.status.code(),
+                stderr
+            ));
         }
+
+        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        debug!(
+            "System SSH command completed successfully on {}: {} chars output",
+            server_name,
+            result.len()
+        );
+
+        Ok(result)
     }
 
-    /// FIXED: Long-running command execution with proper completion detection
-    async fn execute_long_running_command(&self, server_name: &str, command: &str) -> Result<(String, bool)> {
-        let server_config = self
-            .config
-            .servers
-            .get(server_name)
-            .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
-
-        info!("Executing long-running command on {}: {}", server_name, command);
-
-        // Create fresh SSH connection for this long-running command
-        let mut connection = SshConnection::new(
-            &server_config.host,
-            &server_config.ssh_username,
-            &server_config.ssh_key_path,
-            server_config.ssh_timeout_seconds,
-        )
-        .await?;
-
-        // FIXED: Simple command execution that waits for natural completion
-        // Remove any wrapping that might interfere with exit code detection
-        match connection.execute_command(command).await {
-            Ok(output) => {
-                info!(
-                    "Long-running command completed successfully on {}: {} chars output",
-                    server_name,
-                    output.len()
-                );
-                if !output.trim().is_empty() {
-                    debug!("Command output preview: {}",
-                           output.lines().take(5).collect::<Vec<_>>().join("\n"));
-                }
-                Ok((output, true))
-            }
-            Err(e) => {
-                warn!("Long-running command failed on {}: {}", server_name, e);
-                // Command failed with non-zero exit code
-                Ok((e.to_string(), false))
-            }
-        }
-    }
-
-    /// Public alias for execute_simple_command (for backward compatibility)
-    #[allow(dead_code)]
-    pub async fn execute_command(&self, server_name: &str, command: &str) -> Result<String> {
-        self.execute_simple_command(server_name, command).await
-    }
-
-    /// Check service status using simple SSH command
+    /// Check service status using system SSH
     pub async fn check_service_status(&self, server_name: &str, service_name: &str) -> Result<ServiceStatus> {
         let command = format!("systemctl is-active {}", service_name);
 
-        match self.execute_simple_command(server_name, &command).await {
+        match self.execute_command(server_name, &command).await {
             Ok(output) => {
                 match output.trim() {
                     "active" => Ok(ServiceStatus::Active),
@@ -132,14 +94,14 @@ impl SshManager {
         }
     }
 
-    /// Get service uptime using simple SSH command
+    /// Get service uptime using system SSH
     pub async fn get_service_uptime(&self, server_name: &str, service_name: &str) -> Result<Option<Duration>> {
         let command = format!(
             "systemctl show {} --property=ExecMainStartTimestamp --value",
             service_name
         );
 
-        match self.execute_simple_command(server_name, &command).await {
+        match self.execute_command(server_name, &command).await {
             Ok(output) => {
                 if output.trim().is_empty() || output.trim() == "n/a" {
                     return Ok(None);
@@ -147,11 +109,11 @@ impl SshManager {
 
                 // Use a simpler approach: check how long the process has been running
                 let pid_cmd = format!("systemctl show {} --property=MainPID --value", service_name);
-                if let Ok(pid_output) = self.execute_simple_command(server_name, &pid_cmd).await {
+                if let Ok(pid_output) = self.execute_command(server_name, &pid_cmd).await {
                     if let Ok(pid) = pid_output.trim().parse::<u32>() {
                         if pid > 0 {
                             let uptime_cmd = format!("ps -o etime= -p {}", pid);
-                            if let Ok(uptime_str) = self.execute_simple_command(server_name, &uptime_cmd).await {
+                            if let Ok(uptime_str) = self.execute_command(server_name, &uptime_cmd).await {
                                 return Ok(parse_process_uptime(&uptime_str.trim()));
                             }
                         }
@@ -163,12 +125,12 @@ impl SshManager {
         }
     }
 
-    /// Stop service using simple SSH command
+    /// Stop service using system SSH
     pub async fn stop_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Stopping service {} on server {}", service_name, server_name);
 
         let command = format!("sudo systemctl stop {}", service_name);
-        self.execute_simple_command(server_name, &command).await?;
+        self.execute_command(server_name, &command).await?;
 
         // Verify it stopped with a separate SSH command
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -189,12 +151,12 @@ impl SshManager {
         Ok(())
     }
 
-    /// Start service using simple SSH command
+    /// Start service using system SSH
     pub async fn start_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Starting service {} on server {}", service_name, server_name);
 
         let command = format!("sudo systemctl start {}", service_name);
-        self.execute_simple_command(server_name, &command).await?;
+        self.execute_command(server_name, &command).await?;
 
         // Verify it started with a separate SSH command
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -216,13 +178,13 @@ impl SshManager {
         Ok(())
     }
 
-    /// Restart service using simple SSH command
+    /// Restart service using system SSH
     #[allow(dead_code)]
     pub async fn restart_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Restarting service {} on server {}", service_name, server_name);
 
         let command = format!("sudo systemctl restart {}", service_name);
-        self.execute_simple_command(server_name, &command).await?;
+        self.execute_command(server_name, &command).await?;
 
         // Verify it restarted with a separate SSH command
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -244,7 +206,7 @@ impl SshManager {
         Ok(())
     }
 
-    /// Truncate logs using simple SSH command
+    /// Truncate logs using system SSH
     pub async fn truncate_logs(&self, server_name: &str, log_path: &str, service_name: &str) -> Result<()> {
         info!("Truncating logs for service {} on server {} at path: {}", service_name, server_name, log_path);
 
@@ -256,7 +218,7 @@ impl SshManager {
             log_path, log_path, log_path, log_path, service_name, service_name
         );
 
-        match self.execute_simple_command(server_name, &cleanup_command).await {
+        match self.execute_command(server_name, &cleanup_command).await {
             Ok(output) => {
                 info!("Log truncation completed for service {} on server {}", service_name, server_name);
                 if !output.trim().is_empty() {
@@ -272,7 +234,7 @@ impl SshManager {
         }
     }
 
-    /// FIXED: Run cosmos-pruner with simple SSH command execution
+    /// Run pruning with unified system SSH commands
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -313,7 +275,7 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: SIMPLIFIED - Run cosmos-pruner with regular SSH command
+            // SSH Command 3: UNIFIED - Run cosmos-pruner with system SSH
             info!("Step 3: Executing pruning command");
             let start_time = std::time::Instant::now();
 
@@ -324,8 +286,8 @@ impl SshManager {
 
             info!("Executing: {}", prune_command);
 
-            // SIMPLIFIED: Just use the regular SSH command - no special handling needed
-            let output = self.execute_simple_command(server_name, &prune_command).await?;
+            // Use the same unified system SSH for pruning command
+            let output = self.execute_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
 
@@ -373,12 +335,12 @@ impl SshManager {
         }
     }
 
-    /// SIMPLIFIED: Restart Hermes with discrete SSH commands
+    /// Restart Hermes with unified system SSH commands
     pub async fn restart_hermes(&self, hermes: &HermesConfig) -> Result<()> {
         let server_name = &hermes.server_host;
         let service_name = &hermes.service_name;
 
-        info!("Starting Hermes restart: {} on server {} using discrete SSH commands", service_name, server_name);
+        info!("Starting Hermes restart: {} on server {} using system SSH", service_name, server_name);
 
         // STEP 1: Check dependent nodes are healthy
         if !self.check_node_dependencies(&hermes.dependent_nodes).await? {
@@ -483,7 +445,7 @@ impl SshManager {
         Ok(true)
     }
 
-    /// Quick health check for dependency validation using simple command
+    /// Quick health check for dependency validation
     pub async fn quick_node_health_check(&self, node_name: &str, node_config: &NodeConfig) -> Result<bool> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
@@ -551,14 +513,14 @@ impl SshManager {
         }
     }
 
-    /// Verify Hermes startup using simple SSH command
+    /// Verify Hermes startup using system SSH
     async fn verify_hermes_startup(&self, server_name: &str, service_name: &str) -> Result<bool> {
         let log_cmd = format!(
             "journalctl -u {} --since '1 minute ago' --no-pager | grep -E '(started|ready|listening)' | tail -5",
             service_name
         );
 
-        match self.execute_simple_command(server_name, &log_cmd).await {
+        match self.execute_command(server_name, &log_cmd).await {
             Ok(output) => {
                 if output.trim().is_empty() {
                     warn!("No startup messages found in Hermes logs");
@@ -645,14 +607,14 @@ impl SshManager {
         None
     }
 
-    /// SIMPLIFIED: Test server connectivity
+    /// Test server connectivity using system SSH
     pub async fn validate_all_servers_connectivity(&self) -> HashMap<String, Result<String, String>> {
-        info!("Validating connectivity to all servers using simple SSH commands");
+        info!("Validating connectivity to all servers using system SSH commands");
 
         let mut connectivity_status = HashMap::new();
 
         for server_name in self.config.servers.keys() {
-            match self.execute_simple_command(server_name, "echo 'connectivity_test'").await {
+            match self.execute_command(server_name, "echo 'connectivity_test'").await {
                 Ok(output) => {
                     if output.trim() == "connectivity_test" {
                         connectivity_status.insert(server_name.clone(), Ok("Connected".to_string()));
@@ -669,9 +631,9 @@ impl SshManager {
         connectivity_status
     }
 
-    /// SIMPLIFIED: Get status of all services
+    /// Get status of all services using system SSH
     pub async fn get_all_service_statuses(&self) -> HashMap<String, HashMap<String, String>> {
-        info!("Getting status of all services using simple SSH commands");
+        info!("Getting status of all services using system SSH commands");
 
         let mut all_statuses = HashMap::new();
 
@@ -720,7 +682,7 @@ impl SshManager {
     pub async fn kill_stuck_pruning_process(&self, server_name: &str, deploy_path: &str) -> Result<()> {
         let kill_command = format!("pkill -f 'cosmos-pruner.*{}'", deploy_path);
 
-        match self.execute_simple_command(server_name, &kill_command).await {
+        match self.execute_command(server_name, &kill_command).await {
             Ok(_) => {
                 info!("Killed stuck pruning process for path: {}", deploy_path);
                 Ok(())
@@ -732,14 +694,14 @@ impl SshManager {
         }
     }
 
-    /// UPDATED: Check if a pruning process is running
+    /// Check if a pruning process is running
     pub async fn check_pruning_process_status(&self, server_name: &str, deploy_path: &str) -> Result<bool> {
         let check_command = format!(
             "pgrep -f 'cosmos-pruner.*{}' > /dev/null && echo 'running' || echo 'not_running'",
             deploy_path
         );
 
-        match self.execute_simple_command(server_name, &check_command).await {
+        match self.execute_command(server_name, &check_command).await {
             Ok(output) => {
                 let is_running = output.trim() == "running";
                 debug!("Pruning process status check for {}: {}", deploy_path, if is_running { "running" } else { "not running" });
@@ -752,15 +714,13 @@ impl SshManager {
         }
     }
 
-    /// SIMPLIFIED: Get connection status (no persistent connections in n8n model)
+    /// Get connection status (always true for system SSH)
     pub async fn get_connection_status(&self) -> HashMap<String, bool> {
         let mut status = HashMap::new();
 
-        // In the simplified model, we don't maintain persistent connections
-        // Instead, we test connectivity on-demand
+        // Test connectivity for each server
         for server_name in self.config.servers.keys() {
-            // Test if we can connect to each server
-            let connected = match self.execute_simple_command(server_name, "echo 'test'").await {
+            let connected = match self.execute_command(server_name, "echo 'test'").await {
                 Ok(output) => output.trim() == "test",
                 Err(_) => false,
             };
@@ -770,9 +730,9 @@ impl SshManager {
         status
     }
 
-    /// SIMPLIFIED: Get active connections count (always 0 in n8n model)
+    /// Get active connections count (always 0 for system SSH)
     pub async fn get_active_connections(&self) -> usize {
-        // In the simplified model, connections are created and closed immediately
+        // System SSH creates connections on-demand and closes them immediately
         // So there are never any "active" persistent connections
         0
     }
