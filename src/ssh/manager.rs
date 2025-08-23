@@ -14,6 +14,7 @@ use crate::{AlarmPayload, Config, HermesConfig, NodeConfig};
 pub struct SshManager {
     pub config: Arc<Config>,
     pub maintenance_tracker: Arc<MaintenanceTracker>,
+    ssh_lock: Arc<tokio::sync::Mutex<()>>, // SEQUENTIAL SSH EXECUTION LOCK
 }
 
 impl SshManager {
@@ -21,11 +22,14 @@ impl SshManager {
         Self {
             config,
             maintenance_tracker,
+            ssh_lock: Arc::new(tokio::sync::Mutex::new(())), // INITIALIZE SSH LOCK
         }
     }
 
-    /// UNIFIED: System SSH command execution for ALL operations
+    /// SEQUENTIAL: System SSH command execution with mutex lock
     async fn execute_command(&self, server_name: &str, command: &str) -> Result<String> {
+        let _guard = self.ssh_lock.lock().await; // ENSURE SEQUENTIAL EXECUTION
+
         let server_config = self
             .config
             .servers
@@ -255,14 +259,14 @@ impl SshManager {
         let node_name = self.find_node_config_key(node).await
             .ok_or_else(|| anyhow::anyhow!("Could not find node config key for pruning"))?;
 
-        info!("Starting pruning for node {} on server {}", node_name, server_name);
+        info!("Starting SEQUENTIAL pruning for node {} on server {}", node_name, server_name);
 
         // STEP 1: Start maintenance mode (estimate is for monitoring purposes only)
         self.maintenance_tracker
             .start_maintenance(&node_name, "pruning", 120, server_name) // 120 minutes = 2h estimate for monitoring
             .await?;
 
-        // STEP 2: Execute pruning with discrete SSH commands
+        // STEP 2: Execute pruning with discrete SSH commands (ALL SEQUENTIAL)
         let pruning_result = async {
             // SSH Command 1: Stop the service
             info!("Step 1: Stopping service {}", service_name);
@@ -278,8 +282,8 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: UNIFIED - Run cosmos-pruner with system SSH
-            info!("Step 3: Executing pruning command");
+            // SSH Command 3: SEQUENTIAL - Run cosmos-pruner with system SSH
+            info!("Step 3: Executing pruning command (SEQUENTIAL)");
             let start_time = std::time::Instant::now();
 
             let prune_command = format!(
@@ -289,7 +293,7 @@ impl SshManager {
 
             info!("Executing: {}", prune_command);
 
-            // Use the same unified system SSH for pruning command
+            // Use the same sequential system SSH for pruning command
             let output = self.execute_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
@@ -328,11 +332,11 @@ impl SshManager {
         // STEP 5: Return the result
         match pruning_result {
             Ok(_) => {
-                info!("Pruning workflow completed successfully for node {} on server {}", node_name, server_name);
+                info!("SEQUENTIAL pruning workflow completed successfully for node {} on server {}", node_name, server_name);
                 Ok(())
             }
             Err(e) => {
-                error!("Pruning workflow failed for node {} on server {}: {}", node_name, server_name, e);
+                error!("SEQUENTIAL pruning workflow failed for node {} on server {}: {}", node_name, server_name, e);
                 Err(e)
             }
         }
@@ -343,7 +347,7 @@ impl SshManager {
         let server_name = &hermes.server_host;
         let service_name = &hermes.service_name;
 
-        info!("Starting Hermes restart: {} on server {} using system SSH", service_name, server_name);
+        info!("Starting Hermes restart: {} on server {} using SEQUENTIAL SSH", service_name, server_name);
 
         // STEP 1: Check dependent nodes are healthy
         if !self.check_node_dependencies(&hermes.dependent_nodes).await? {
@@ -612,7 +616,7 @@ impl SshManager {
 
     /// Test server connectivity using system SSH
     pub async fn validate_all_servers_connectivity(&self) -> HashMap<String, Result<String, String>> {
-        info!("Validating connectivity to all servers using system SSH commands");
+        info!("Validating connectivity to all servers using SEQUENTIAL SSH commands");
 
         let mut connectivity_status = HashMap::new();
 
@@ -636,7 +640,7 @@ impl SshManager {
 
     /// Get status of all services using system SSH
     pub async fn get_all_service_statuses(&self) -> HashMap<String, HashMap<String, String>> {
-        info!("Getting status of all services using system SSH commands");
+        info!("Getting status of all services using SEQUENTIAL SSH commands");
 
         let mut all_statuses = HashMap::new();
 
@@ -769,6 +773,7 @@ impl Clone for SshManager {
         Self {
             config: self.config.clone(),
             maintenance_tracker: self.maintenance_tracker.clone(),
+            ssh_lock: self.ssh_lock.clone(), // CLONE SSH LOCK
         }
     }
 }
