@@ -75,8 +75,14 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // Execute command with proper termination detection
-        let wrapped_command = format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command);
+        // Consistent approach: use markers for ALL commands, but handle long-running properly
+        let wrapped_command = if command.contains("cosmos-pruner") {
+            // Long-running command: redirect output to avoid buffering issues that prevent completion detection
+            format!("bash -c '{} >/dev/null 2>&1 && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
+        } else {
+            // Normal command with completion markers
+            format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
+        };
 
         let result = self
             .client
@@ -89,11 +95,11 @@ impl SshConnection {
         let stderr_str = result.stderr.trim();
 
         debug!(
-            "Command completed on {} with exit code {}, output length: {} bytes",
-            self.host, exit_code, output_str.len()
+            "Command completed on {} with exit code {}, stdout: {} chars, stderr: {} chars",
+            self.host, exit_code, output_str.len(), stderr_str.len()
         );
 
-        // Check command completion using our markers
+        // Consistent completion detection using markers for ALL commands
         let command_succeeded = if output_str.ends_with("__COMMAND_SUCCESS__") {
             true
         } else if output_str.ends_with("__COMMAND_FAILED__") {
@@ -116,12 +122,18 @@ impl SshConnection {
             ));
         }
 
-        // Clean up our completion markers from output
+        // Clean up completion markers from output
         let cleaned_output = output_str
             .trim_end_matches("__COMMAND_SUCCESS__")
             .trim_end_matches("__COMMAND_FAILED__")
             .trim()
             .to_string();
+
+        // For cosmos-pruner, since we redirected output, provide a meaningful completion message
+        if command.contains("cosmos-pruner") {
+            debug!("cosmos-pruner completed successfully on {}", self.host);
+            return Ok("Pruning completed successfully".to_string());
+        }
 
         debug!("Command completed successfully on {}: {} chars of output", self.host, cleaned_output.len());
 
