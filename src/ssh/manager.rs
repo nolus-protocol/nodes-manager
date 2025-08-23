@@ -62,7 +62,50 @@ impl SshManager {
         }
     }
 
+    /// FIXED: Long-running command execution with proper output capture
+    async fn execute_long_running_command(&self, server_name: &str, command: &str) -> Result<(String, bool)> {
+        let server_config = self
+            .config
+            .servers
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
+
+        info!("Executing long-running command on {}: {}", server_name, command);
+
+        // Create fresh SSH connection for this long-running command
+        let mut connection = SshConnection::new(
+            &server_config.host,
+            &server_config.ssh_username,
+            &server_config.ssh_key_path,
+            server_config.ssh_timeout_seconds,
+        )
+        .await?;
+
+        // Execute command and capture both output and success status
+        match connection.execute_command(command).await {
+            Ok(output) => {
+                info!(
+                    "Long-running command completed successfully on {}: {} chars output",
+                    server_name,
+                    output.len()
+                );
+                if !output.trim().is_empty() {
+                    debug!("Command output preview: {}",
+                           output.lines().take(5).collect::<Vec<_>>().join("\n"));
+                }
+                Ok((output, true))
+            }
+            Err(e) => {
+                warn!("Long-running command failed on {}: {}", server_name, e);
+                // For long-running commands, we want to capture the error but still return it
+                // The error message often contains useful information about what went wrong
+                Ok((e.to_string(), false))
+            }
+        }
+    }
+
     /// Public alias for execute_simple_command (for backward compatibility)
+    #[allow(dead_code)]
     pub async fn execute_command(&self, server_name: &str, command: &str) -> Result<String> {
         self.execute_simple_command(server_name, command).await
     }
@@ -174,6 +217,7 @@ impl SshManager {
     }
 
     /// Restart service using simple SSH command
+    #[allow(dead_code)]
     pub async fn restart_service(&self, server_name: &str, service_name: &str) -> Result<()> {
         info!("Restarting service {} on server {}", service_name, server_name);
 
@@ -228,7 +272,7 @@ impl SshManager {
         }
     }
 
-    /// Run pruning with stream redirection to prevent hanging
+    /// FIXED: Run pruning with proper output capture and exit code handling
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -269,20 +313,39 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: Run cosmos-pruner with stream redirection to prevent hanging
-            info!("Step 3: Executing pruning command");
+            // SSH Command 3: FIXED - Run cosmos-pruner with proper output capture
+            info!("Step 3: Executing pruning command with output capture");
             let start_time = std::time::Instant::now();
 
+            // FIXED: Remove output redirection, capture actual output and exit code
             let prune_command = format!(
-                "cosmos-pruner prune {} --blocks={} --versions={} </dev/null >/dev/null 2>&1",
+                "cosmos-pruner prune {} --blocks={} --versions={}",
                 deploy_path, keep_blocks, keep_versions
             );
 
-            let _output = self.execute_simple_command(server_name, &prune_command).await?;
+            info!("Executing: {}", prune_command);
+
+            let (output, success) = self.execute_long_running_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
-            info!("Cosmos-pruner completed for node {} in {:.2} minutes",
-                  node_name, duration.as_secs_f64() / 60.0);
+
+            if success {
+                info!("Cosmos-pruner completed successfully for node {} in {:.2} minutes",
+                      node_name, duration.as_secs_f64() / 60.0);
+
+                // Log a preview of the output for debugging
+                if !output.trim().is_empty() {
+                    let preview = output.lines()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    info!("Pruning output preview: {}", preview);
+                }
+            } else {
+                error!("Cosmos-pruner failed for node {} after {:.2} minutes: {}",
+                       node_name, duration.as_secs_f64() / 60.0, output);
+                return Err(anyhow::anyhow!("Cosmos-pruner failed: {}", output));
+            }
 
             // SSH Command 4: Start the service
             info!("Step 4: Starting service {}", service_name);
@@ -675,7 +738,7 @@ impl SshManager {
         }
     }
 
-    /// Check if a pruning process is running
+    /// UPDATED: Check if a pruning process is running
     pub async fn check_pruning_process_status(&self, server_name: &str, deploy_path: &str) -> Result<bool> {
         let check_command = format!(
             "pgrep -f 'cosmos-pruner.*{}' > /dev/null && echo 'running' || echo 'not_running'",

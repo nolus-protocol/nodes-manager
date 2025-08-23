@@ -529,6 +529,7 @@ impl HealthMonitor {
     }
 
     /// Get maintenance status for all nodes
+    #[allow(dead_code)]
     pub async fn get_maintenance_status(&self) -> HashMap<String, crate::maintenance_tracker::MaintenanceWindow> {
         let maintenance_windows = self.maintenance_tracker.get_all_in_maintenance().await;
         let mut status = HashMap::new();

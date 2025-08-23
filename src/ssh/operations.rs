@@ -181,6 +181,7 @@ impl SshManager {
     }
 
     /// SIMPLIFIED: Validate server connectivity using simple SSH commands
+    #[allow(dead_code)]
     pub async fn validate_hermes_dependencies(&self) -> HashMap<String, bool> {
         info!("Validating dependencies for all Hermes instances using simple SSH commands");
 
@@ -205,6 +206,7 @@ impl SshManager {
     }
 
     /// SIMPLIFIED: Get detailed dependency health report using simple SSH commands
+    #[allow(dead_code)]
     pub async fn get_hermes_dependency_report(&self) -> HashMap<String, serde_json::Value> {
         info!("Generating detailed dependency report for all Hermes instances using simple SSH commands");
 
