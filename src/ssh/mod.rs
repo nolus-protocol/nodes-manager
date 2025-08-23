@@ -75,12 +75,9 @@ impl SshConnection {
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // Wrap command to ensure proper completion and connection cleanup
-        let wrapped_command = format!("{} ; echo 'COMMAND_COMPLETED_$$' ; exit 0", command);
-
         let result = self
             .client
-            .execute(&wrapped_command)
+            .execute(command)  // FIXED: No wrapping for proper exit code detection
             .await
             .map_err(|e| anyhow::anyhow!("SSH command execution failed: {}", e))?;
 
@@ -101,16 +98,13 @@ impl SshConnection {
 
         let output_str = result.stdout.trim().to_string();
 
-        // Remove our completion marker if present
-        let cleaned_output = output_str.replace("COMMAND_COMPLETED_$$", "").trim().to_string();
-
         debug!(
             "Command completed on {} with output length: {} bytes",
             self.host,
-            cleaned_output.len()
+            output_str.len()
         );
 
-        Ok(cleaned_output)
+        Ok(output_str)
     }
 }
 

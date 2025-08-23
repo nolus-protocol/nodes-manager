@@ -62,7 +62,7 @@ impl SshManager {
         }
     }
 
-    /// FIXED: Long-running command execution with proper output capture
+    /// FIXED: Long-running command execution with proper completion detection
     async fn execute_long_running_command(&self, server_name: &str, command: &str) -> Result<(String, bool)> {
         let server_config = self
             .config
@@ -81,7 +81,8 @@ impl SshManager {
         )
         .await?;
 
-        // Execute command and capture both output and success status
+        // FIXED: Simple command execution that waits for natural completion
+        // Remove any wrapping that might interfere with exit code detection
         match connection.execute_command(command).await {
             Ok(output) => {
                 info!(
@@ -97,8 +98,7 @@ impl SshManager {
             }
             Err(e) => {
                 warn!("Long-running command failed on {}: {}", server_name, e);
-                // For long-running commands, we want to capture the error but still return it
-                // The error message often contains useful information about what went wrong
+                // Command failed with non-zero exit code
                 Ok((e.to_string(), false))
             }
         }
@@ -272,7 +272,7 @@ impl SshManager {
         }
     }
 
-    /// FIXED: Run pruning with proper output capture and exit code handling
+    /// FIXED: Run cosmos-pruner with simple SSH command execution
     pub async fn run_pruning(&self, node: &NodeConfig) -> Result<()> {
         let server_name = &node.server_host;
         let service_name = node
@@ -292,9 +292,9 @@ impl SshManager {
 
         info!("Starting pruning for node {} on server {}", node_name, server_name);
 
-        // STEP 1: Start maintenance mode
+        // STEP 1: Start maintenance mode (estimate is for monitoring purposes only)
         self.maintenance_tracker
-            .start_maintenance(&node_name, "pruning", 300, server_name) // 300 minutes = 5 hours
+            .start_maintenance(&node_name, "pruning", 120, server_name) // 120 minutes = 2h estimate for monitoring
             .await?;
 
         // STEP 2: Execute pruning with discrete SSH commands
@@ -313,11 +313,10 @@ impl SshManager {
                 }
             }
 
-            // SSH Command 3: FIXED - Run cosmos-pruner with proper output capture
-            info!("Step 3: Executing pruning command with output capture");
+            // SSH Command 3: SIMPLIFIED - Run cosmos-pruner with regular SSH command
+            info!("Step 3: Executing pruning command");
             let start_time = std::time::Instant::now();
 
-            // FIXED: Remove output redirection, capture actual output and exit code
             let prune_command = format!(
                 "cosmos-pruner prune {} --blocks={} --versions={}",
                 deploy_path, keep_blocks, keep_versions
@@ -325,26 +324,21 @@ impl SshManager {
 
             info!("Executing: {}", prune_command);
 
-            let (output, success) = self.execute_long_running_command(server_name, &prune_command).await?;
+            // SIMPLIFIED: Just use the regular SSH command - no special handling needed
+            let output = self.execute_simple_command(server_name, &prune_command).await?;
 
             let duration = start_time.elapsed();
 
-            if success {
-                info!("Cosmos-pruner completed successfully for node {} in {:.2} minutes",
-                      node_name, duration.as_secs_f64() / 60.0);
+            info!("Cosmos-pruner completed successfully for node {} in {:.2} minutes",
+                  node_name, duration.as_secs_f64() / 60.0);
 
-                // Log a preview of the output for debugging
-                if !output.trim().is_empty() {
-                    let preview = output.lines()
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    info!("Pruning output preview: {}", preview);
-                }
-            } else {
-                error!("Cosmos-pruner failed for node {} after {:.2} minutes: {}",
-                       node_name, duration.as_secs_f64() / 60.0, output);
-                return Err(anyhow::anyhow!("Cosmos-pruner failed: {}", output));
+            // Log a preview of the output for debugging
+            if !output.trim().is_empty() {
+                let preview = output.lines()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                info!("Pruning output preview: {}", preview);
             }
 
             // SSH Command 4: Start the service
