@@ -484,10 +484,11 @@ impl SshManager {
         }
     }
 
-    /// Verify Hermes startup using independent SSH connection
+    /// FIXED: Verify Hermes startup using independent SSH connection with proper quote escaping
     async fn verify_hermes_startup(&self, server_name: &str, service_name: &str) -> Result<bool> {
+        // FIXED: Use double quotes to avoid conflicts with outer single quotes from SSH wrapper
         let log_cmd = format!(
-            "journalctl -u {} --since '1 minute ago' --no-pager | grep -E '(started|ready|listening)' | tail -5",
+            "journalctl -u {} --since \"1 minute ago\" --no-pager | grep -E \"(started|ready|listening)\" | tail -5",
             service_name
         );
 
