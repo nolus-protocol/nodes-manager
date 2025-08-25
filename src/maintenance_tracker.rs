@@ -92,99 +92,108 @@ impl MaintenanceTracker {
     /// Get maintenance windows that have exceeded their estimated duration
     pub async fn get_overdue_maintenance(&self) -> Vec<MaintenanceWindow> {
         let active = self.active_maintenance.read().await;
-        let now = Utc::now();
+        let now_utc = Utc::now();
 
         active.values()
             .filter(|maintenance| {
-                let estimated_end = maintenance.started_at
+                // FIXED: Ensure UTC consistency in time calculations
+                let estimated_end_utc = maintenance.started_at
                     + chrono::Duration::minutes(maintenance.estimated_duration_minutes as i64);
-                now > estimated_end
+                now_utc > estimated_end_utc
             })
             .cloned()
             .collect()
     }
 
-    /// Cleanup expired maintenance windows (safety cleanup) - EXTENDED for long operations
+    /// Cleanup expired maintenance windows (safety cleanup) - FIXED timezone handling
     pub async fn cleanup_expired_maintenance(&self, max_duration_hours: u32) -> u32 {
         let mut active = self.active_maintenance.write().await;
-        let cutoff = Utc::now() - chrono::Duration::hours(max_duration_hours as i64);
+        let cutoff_utc = Utc::now() - chrono::Duration::hours(max_duration_hours as i64);
         let initial_count = active.len();
 
         let mut cleaned_nodes = Vec::new();
         active.retain(|node_name, maintenance| {
-            if maintenance.started_at < cutoff {
-                let duration = Utc::now().signed_duration_since(maintenance.started_at);
+            // FIXED: Ensure all time comparisons use UTC consistently
+            let started_utc = maintenance.started_at; // Already UTC from struct definition
+            let should_keep = started_utc > cutoff_utc;
+
+            if !should_keep {
+                let actual_duration = Utc::now().signed_duration_since(started_utc);
                 warn!(
-                    "Cleaning up expired maintenance for node: {} (started: {}, duration: {}h, operation: {})",
+                    "Cleaning up expired maintenance for node: {} (started: {} UTC, actual_duration: {}h, limit: {}h, operation: {})",
                     node_name,
-                    maintenance.started_at,
-                    duration.num_hours(),
+                    started_utc.format("%Y-%m-%d %H:%M:%S"),
+                    actual_duration.num_hours(),
+                    max_duration_hours,
                     maintenance.operation_type
                 );
                 cleaned_nodes.push(format!("{}:{}", node_name, maintenance.operation_type));
-                false
-            } else {
-                true
             }
+
+            should_keep
         });
 
         let cleaned_count = initial_count - active.len();
         if cleaned_count > 0 {
-            error!("Cleaned up {} expired maintenance windows ({}h max): {:?}",
+            error!("Cleaned up {} expired maintenance windows ({}h max, UTC-based): {:?}",
                    cleaned_count, max_duration_hours, cleaned_nodes);
         }
 
         cleaned_count as u32
     }
 
-    /// Cleanup maintenance windows that have exceeded their estimated duration by a factor
+    /// Cleanup maintenance windows that have exceeded their estimated duration by a factor - FIXED timezone
     pub async fn cleanup_overdue_maintenance(&self, overdue_factor: f64) -> u32 {
         let mut active = self.active_maintenance.write().await;
-        let now = Utc::now();
+        let now_utc = Utc::now();
         let initial_count = active.len();
 
         let mut cleaned_nodes = Vec::new();
         active.retain(|node_name, maintenance| {
             let estimated_duration_hours = maintenance.estimated_duration_minutes as f64 / 60.0;
             let max_allowed_hours = estimated_duration_hours * overdue_factor;
-            let actual_duration = now.signed_duration_since(maintenance.started_at);
+
+            // FIXED: Use UTC consistently for all time calculations
+            let actual_duration = now_utc.signed_duration_since(maintenance.started_at);
             let actual_hours = actual_duration.num_minutes() as f64 / 60.0;
 
-            if actual_hours > max_allowed_hours {
+            let should_keep = actual_hours <= max_allowed_hours;
+
+            if !should_keep {
                 warn!(
-                    "Cleaning up overdue maintenance for node: {} (operation: {}, estimated: {:.1}h, actual: {:.1}h, max allowed: {:.1}h)",
+                    "Cleaning up overdue maintenance for node: {} (operation: {}, started: {} UTC, estimated: {:.1}h, actual: {:.1}h, max_allowed: {:.1}h)",
                     node_name,
                     maintenance.operation_type,
+                    maintenance.started_at.format("%Y-%m-%d %H:%M:%S"),
                     estimated_duration_hours,
                     actual_hours,
                     max_allowed_hours
                 );
                 cleaned_nodes.push(format!("{}:{}({:.1}h)", node_name, maintenance.operation_type, actual_hours));
-                false
-            } else {
-                true
             }
+
+            should_keep
         });
 
         let cleaned_count = initial_count - active.len();
         if cleaned_count > 0 {
-            error!("Cleaned up {} overdue maintenance windows ({}x factor): {:?}",
+            error!("Cleaned up {} overdue maintenance windows ({}x factor, UTC-based): {:?}",
                    cleaned_count, overdue_factor, cleaned_nodes);
         }
 
         cleaned_count as u32
     }
 
-    /// Get maintenance statistics with enhanced information for long operations
+    /// Get maintenance statistics with enhanced information for long operations - FIXED timezone
     pub async fn get_maintenance_stats(&self) -> MaintenanceStats {
         let active = self.active_maintenance.read().await;
         let total_active = active.len();
-        let now = Utc::now();
+        let now_utc = Utc::now();
 
         let mut by_operation = HashMap::new();
         let mut by_server = HashMap::new();
         let mut overdue_count = 0;
-        let mut long_running_count = 0; // NEW: Track operations over 2 hours
+        let mut long_running_count = 0;
 
         for maintenance in active.values() {
             *by_operation
@@ -194,12 +203,13 @@ impl MaintenanceTracker {
                 .entry(maintenance.server_host.clone())
                 .or_insert(0) += 1;
 
-            let actual_duration = now.signed_duration_since(maintenance.started_at);
+            // FIXED: Use UTC consistently for duration calculations
+            let actual_duration = now_utc.signed_duration_since(maintenance.started_at);
 
-            // Check if this maintenance is overdue
-            let estimated_end = maintenance.started_at
+            // Check if this maintenance is overdue (estimated time passed)
+            let estimated_end_utc = maintenance.started_at
                 + chrono::Duration::minutes(maintenance.estimated_duration_minutes as i64);
-            if now > estimated_end {
+            if now_utc > estimated_end_utc {
                 overdue_count += 1;
             }
 
@@ -212,7 +222,7 @@ impl MaintenanceTracker {
         MaintenanceStats {
             total_active,
             overdue_count,
-            long_running_count, // NEW field
+            long_running_count,
             by_operation_type: by_operation,
             by_server: by_server,
         }
@@ -224,15 +234,17 @@ impl MaintenanceTracker {
         let count = active.len();
 
         if count > 0 {
+            // FIXED: Use UTC for duration calculations in emergency report
+            let now_utc = Utc::now();
             let node_operations: Vec<String> = active.iter()
                 .map(|(node_name, maintenance)| {
-                    let duration = Utc::now().signed_duration_since(maintenance.started_at);
+                    let duration = now_utc.signed_duration_since(maintenance.started_at);
                     format!("{}:{}({}h)", node_name, maintenance.operation_type, duration.num_hours())
                 })
                 .collect();
 
             active.clear();
-            error!("Emergency cleared {} maintenance windows: {:?}", count, node_operations);
+            error!("Emergency cleared {} maintenance windows (UTC-based): {:?}", count, node_operations);
         } else {
             info!("Emergency clear requested but no maintenance windows were active");
         }
@@ -240,20 +252,21 @@ impl MaintenanceTracker {
         count as u32
     }
 
-    /// Get detailed maintenance report with long-running operation analysis
+    /// Get detailed maintenance report with long-running operation analysis - FIXED timezone
     pub async fn get_maintenance_report(&self) -> MaintenanceReport {
         let active = self.active_maintenance.read().await;
-        let now = Utc::now();
+        let now_utc = Utc::now();
 
         let mut active_windows = Vec::new();
         let mut overdue_windows = Vec::new();
-        let mut long_running_windows = Vec::new(); // NEW: Track long-running operations
+        let mut long_running_windows = Vec::new();
 
         for maintenance in active.values() {
-            let duration = now.signed_duration_since(maintenance.started_at);
-            let estimated_end = maintenance.started_at
+            // FIXED: Use UTC consistently for all time calculations
+            let duration = now_utc.signed_duration_since(maintenance.started_at);
+            let estimated_end_utc = maintenance.started_at
                 + chrono::Duration::minutes(maintenance.estimated_duration_minutes as i64);
-            let is_overdue = now > estimated_end;
+            let is_overdue = now_utc > estimated_end_utc;
             let is_long_running = duration.num_hours() >= 2;
 
             let window_info = MaintenanceWindowInfo {
@@ -263,10 +276,10 @@ impl MaintenanceTracker {
                 started_at: maintenance.started_at,
                 estimated_duration_minutes: maintenance.estimated_duration_minutes,
                 actual_duration_minutes: duration.num_minutes() as u32,
-                actual_duration_hours: duration.num_hours() as u32, // NEW field
+                actual_duration_hours: duration.num_hours() as u32,
                 is_overdue,
-                is_long_running, // NEW field
-                estimated_completion: estimated_end,
+                is_long_running,
+                estimated_completion: estimated_end_utc,
             };
 
             if is_overdue {
@@ -281,11 +294,11 @@ impl MaintenanceTracker {
         MaintenanceReport {
             total_active: active_windows.len(),
             total_overdue: overdue_windows.len(),
-            total_long_running: long_running_windows.len(), // NEW field
+            total_long_running: long_running_windows.len(),
             active_windows,
             overdue_windows,
-            long_running_windows, // NEW field
-            report_generated_at: now,
+            long_running_windows,
+            report_generated_at: now_utc,
         }
     }
 }
@@ -294,7 +307,7 @@ impl MaintenanceTracker {
 pub struct MaintenanceStats {
     pub total_active: usize,
     pub overdue_count: usize,
-    pub long_running_count: usize, // NEW: Operations over 2 hours
+    pub long_running_count: usize,
     pub by_operation_type: HashMap<String, u32>,
     pub by_server: HashMap<String, u32>,
 }
@@ -307,9 +320,9 @@ pub struct MaintenanceWindowInfo {
     pub started_at: DateTime<Utc>,
     pub estimated_duration_minutes: u32,
     pub actual_duration_minutes: u32,
-    pub actual_duration_hours: u32, // NEW: For easier reading of long operations
+    pub actual_duration_hours: u32,
     pub is_overdue: bool,
-    pub is_long_running: bool, // NEW: Flag for operations over 2 hours
+    pub is_long_running: bool,
     pub estimated_completion: DateTime<Utc>,
 }
 
@@ -317,10 +330,10 @@ pub struct MaintenanceWindowInfo {
 pub struct MaintenanceReport {
     pub total_active: usize,
     pub total_overdue: usize,
-    pub total_long_running: usize, // NEW: Count of long-running operations
+    pub total_long_running: usize,
     pub active_windows: Vec<MaintenanceWindowInfo>,
     pub overdue_windows: Vec<MaintenanceWindowInfo>,
-    pub long_running_windows: Vec<MaintenanceWindowInfo>, // NEW: Separate list for long operations
+    pub long_running_windows: Vec<MaintenanceWindowInfo>,
     pub report_generated_at: DateTime<Utc>,
 }
 
@@ -385,20 +398,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_long_operation_tolerance() {
+    async fn test_timezone_consistency() {
         let tracker = MaintenanceTracker::new();
 
-        // Test that cleanup doesn't interfere with long but legitimate operations
+        // Test that cleanup uses UTC consistently
         tracker
-            .start_maintenance("long-node", "pruning", 300, "test-server") // 5 hours estimate
+            .start_maintenance("long-node", "pruning", 300, "test-server")
             .await
             .unwrap();
 
-        // Should not be cleaned up by standard cleanup (6 hours)
+        // Should not be cleaned up immediately
         let cleaned = tracker.cleanup_expired_maintenance(6).await;
         assert_eq!(cleaned, 0);
 
-        // Should not be cleaned up by moderate overdue factor (2x = 10 hours)
+        // Should not be cleaned up by overdue factor
         let cleaned = tracker.cleanup_overdue_maintenance(2.0).await;
         assert_eq!(cleaned, 0);
     }

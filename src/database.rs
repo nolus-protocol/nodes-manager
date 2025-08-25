@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
 use std::path::Path;
+use std::time::Duration;
 use tokio::fs;
 use tracing::{info, warn};
 
@@ -61,13 +62,21 @@ impl Database {
             let block_height: Option<i64> = row.get("block_height");
             let timestamp: i64 = row.get("timestamp");
 
+            // FIXED: Better timestamp handling with meaningful fallback
+            let last_check = DateTime::from_timestamp(timestamp, 0)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|| {
+                    warn!("Invalid timestamp {} for node {}, using current time", timestamp, node_name);
+                    Utc::now()
+                });
+
             Ok(Some(NodeHealth {
                 node_name: row.get("node_name"),
                 status,
                 latest_block_height: block_height.map(|h| h as u64),
                 latest_block_time: row.get("block_time"),
                 catching_up: row.get("catching_up"),
-                last_check: DateTime::from_timestamp(timestamp, 0).unwrap_or_default().with_timezone(&Utc),
+                last_check,
                 error_message: row.get("error_message"),
             }))
         } else {
@@ -122,13 +131,21 @@ impl Database {
             let block_height: Option<i64> = row.get("block_height");
             let timestamp: i64 = row.get("timestamp");
 
+            // FIXED: Better timestamp handling with meaningful fallback
+            let last_check = DateTime::from_timestamp(timestamp, 0)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|| {
+                    warn!("Invalid timestamp {} in health history for node {}, using current time", timestamp, node_name);
+                    Utc::now()
+                });
+
             health_records.push(NodeHealth {
                 node_name: row.get("node_name"),
                 status,
                 latest_block_height: block_height.map(|h| h as u64),
                 latest_block_time: row.get("block_time"),
                 catching_up: row.get("catching_up"),
-                last_check: DateTime::from_timestamp(timestamp, 0).unwrap_or_default().with_timezone(&Utc),
+                last_check,
                 error_message: row.get("error_message"),
             });
         }
@@ -195,13 +212,30 @@ impl Database {
             let started_at: Option<i64> = row.get("started_at");
             let completed_at: Option<i64> = row.get("completed_at");
 
+            // FIXED: Better timestamp handling for maintenance logs
+            let started_at_dt = started_at.and_then(|ts| {
+                DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Utc))
+            });
+
+            let completed_at_dt = completed_at.and_then(|ts| {
+                DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Utc))
+            });
+
+            // Log warnings for invalid timestamps
+            if started_at.is_some() && started_at_dt.is_none() {
+                warn!("Invalid started_at timestamp {} for operation {}", started_at.unwrap(), row.get::<String, _>("operation_id"));
+            }
+            if completed_at.is_some() && completed_at_dt.is_none() {
+                warn!("Invalid completed_at timestamp {} for operation {}", completed_at.unwrap(), row.get::<String, _>("operation_id"));
+            }
+
             operations.push(MaintenanceOperation {
                 id: row.get("operation_id"),
                 operation_type: row.get("operation_type"),
                 target_name: row.get("target_name"),
                 status: row.get("status"),
-                started_at: started_at.and_then(|ts| DateTime::from_timestamp(ts, 0)).map(|dt| dt.with_timezone(&Utc)),
-                completed_at: completed_at.and_then(|ts| DateTime::from_timestamp(ts, 0)).map(|dt| dt.with_timezone(&Utc)),
+                started_at: started_at_dt,
+                completed_at: completed_at_dt,
                 error_message: row.get("error_message"),
             });
         }
@@ -230,11 +264,19 @@ pub async fn init_database() -> Result<Database> {
         info!("Created data directory");
     }
 
-    // Connect to database
+    // Connect to database with proper pool configuration
     let database_url = "sqlite:data/nodes.db";
-    let pool = SqlitePool::connect(database_url).await?;
 
-    info!("Connected to database: {}", database_url);
+    // FIXED: Configure connection pool with appropriate limits
+    let pool = SqlitePoolOptions::new()
+        .max_connections(20)        // Reasonable limit for SQLite
+        .min_connections(5)         // Keep minimum pool
+        .acquire_timeout(Duration::from_secs(30)) // Connection acquire timeout
+        .idle_timeout(Duration::from_secs(600))   // Close idle connections after 10min
+        .max_lifetime(Duration::from_secs(3600))  // Force reconnect after 1 hour
+        .connect(database_url).await?;
+
+    info!("Connected to database: {} with pool limits (max: 20, min: 5)", database_url);
 
     // Create tables if they don't exist
     sqlx::query(

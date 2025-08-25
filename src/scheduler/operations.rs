@@ -72,7 +72,7 @@ impl MaintenanceScheduler {
         Ok(())
     }
 
-    // FIXED: Calculate next run time based on cron schedule
+    // Calculate next run time based on cron schedule
     fn calculate_next_run(&self, schedule: &str, after: &chrono::DateTime<Utc>) -> Option<chrono::DateTime<Utc>> {
         let parts: Vec<&str> = schedule.split_whitespace().collect();
         if parts.len() != 6 {
@@ -91,7 +91,7 @@ impl MaintenanceScheduler {
 
         // Find next occurrence of the target weekday
         for _ in 0..7 {
-            // FIXED: Use consistent weekday numbering (0=Sunday, 1=Monday, etc.)
+            // Use consistent weekday numbering (0=Sunday, 1=Monday, etc.)
             let current_weekday = match candidate.weekday().number_from_monday() {
                 7 => 0, // Sunday = 0
                 n => n, // Monday=1, Tuesday=2, etc.
@@ -157,7 +157,7 @@ impl MaintenanceScheduler {
 
         info!("Loaded {} scheduled operations from configuration with calculated next run times", operation_count);
 
-        // ADDED: Log all loaded operations for debugging
+        // Log all loaded operations for debugging
         let scheduled_ops = self.scheduled_operations.read().await;
         for (id, op) in scheduled_ops.iter() {
             info!("Operation {}: {:?} for {} (enabled: {}, next_run: {:?})",
@@ -197,7 +197,7 @@ impl MaintenanceScheduler {
                         continue;
                     }
 
-                    // FIXED: Use next_run time instead of cron pattern matching
+                    // Use next_run time instead of cron pattern matching
                     if let Some(next_run) = operation.next_run {
                         // Allow a 2-minute window for execution (in case we miss the exact minute)
                         let execution_window_start = next_run;
@@ -248,8 +248,6 @@ impl MaintenanceScheduler {
 
         info!("Simple scheduler background task started - checking every 60 seconds");
     }
-
-    // REMOVED: should_run_operation method is no longer needed since we use next_run times
 
     async fn execute_scheduled_operation(
         &self,
@@ -321,18 +319,31 @@ impl MaintenanceScheduler {
             ),
         };
 
-        // Update scheduled operation with execution time and result
+        // FIXED: Update scheduled operation with minimal lock scope to prevent deadlock
         {
-            let mut scheduled_ops = self.scheduled_operations.write().await;
-            if let Some(operation) = scheduled_ops.get_mut(operation_id) {
-                operation.last_run = Some(end_time);
-                operation.update_result(operation_result.clone());
+            // Pre-calculate next run time outside the lock
+            let now = Utc::now();
+            let (schedule, next_run_time) = {
+                let scheduled_ops = self.scheduled_operations.read().await;
+                if let Some(operation) = scheduled_ops.get(operation_id) {
+                    let schedule = operation.schedule.clone();
+                    let next_run = self.calculate_next_run(&schedule, &now);
+                    (schedule, next_run)
+                } else {
+                    return Err(anyhow::anyhow!("Operation {} not found for update", operation_id));
+                }
+            };
 
-                // FIXED: Calculate next run time within the same lock scope to avoid deadlock
-                let now = Utc::now();
-                operation.next_run = self.calculate_next_run(&operation.schedule, &now);
-                info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
-            }
+            // Now acquire write lock and update quickly
+            {
+                let mut scheduled_ops = self.scheduled_operations.write().await;
+                if let Some(operation) = scheduled_ops.get_mut(operation_id) {
+                    operation.last_run = Some(end_time);
+                    operation.update_result(operation_result.clone());
+                    operation.next_run = next_run_time;
+                    info!("Updated next run time for operation {}: {:?}", operation_id, next_run_time);
+                }
+            } // Write lock released immediately
         }
 
         // Update maintenance operation in database
@@ -453,7 +464,7 @@ impl MaintenanceScheduler {
         Ok(operation_id)
     }
 
-    // FIXED: Update scheduled operation when manual operation completes - removed deadlock
+    // FIXED: Update scheduled operation when manual operation completes - no deadlock
     pub async fn update_scheduled_operation_result(
         &self,
         target_name: &str,
@@ -461,44 +472,46 @@ impl MaintenanceScheduler {
         success: bool,
         error_message: Option<String>,
     ) -> Result<()> {
-        let mut scheduled_ops = self.scheduled_operations.write().await;
+        // Pre-calculate data outside the lock
+        let now = Utc::now();
+        let result = OperationResult {
+            success,
+            message: if success {
+                "Manual operation completed successfully".to_string()
+            } else {
+                error_message.unwrap_or_else(|| "Manual operation failed".to_string())
+            },
+            duration_seconds: 0, // Manual operations duration not tracked here
+            executed_at: now,
+        };
 
-        // Find matching scheduled operation
-        for (operation_id, operation) in scheduled_ops.iter_mut() {
-            if operation.target_name == target_name && operation.operation_type == *operation_type {
-                let result = OperationResult {
-                    success,
-                    message: if success {
-                        "Manual operation completed successfully".to_string()
-                    } else {
-                        error_message.unwrap_or_else(|| "Manual operation failed".to_string())
-                    },
-                    duration_seconds: 0, // Manual operations duration not tracked here
-                    executed_at: Utc::now(),
-                };
+        // Find and update the matching operation with minimal lock scope
+        {
+            let mut scheduled_ops = self.scheduled_operations.write().await;
 
-                operation.last_run = Some(Utc::now());
-                operation.update_result(result);
+            for (operation_id, operation) in scheduled_ops.iter_mut() {
+                if operation.target_name == target_name && operation.operation_type == *operation_type {
+                    operation.last_run = Some(now);
+                    operation.update_result(result.clone());
 
-                info!(
-                    "Updated scheduled operation {} with manual execution result: {}",
-                    operation_id,
-                    if success { "success" } else { "failure" }
-                );
+                    // Calculate next run time within the same lock to avoid deadlock
+                    operation.next_run = self.calculate_next_run(&operation.schedule, &now);
 
-                // FIXED: Update next run time within the same lock scope to avoid deadlock
-                let now = Utc::now();
-                operation.next_run = self.calculate_next_run(&operation.schedule, &now);
-                info!("Updated next run time for operation {}: {:?}", operation_id, operation.next_run);
-
-                break;
+                    info!(
+                        "Updated scheduled operation {} with manual execution result: {} (next run: {:?})",
+                        operation_id,
+                        if success { "success" } else { "failure" },
+                        operation.next_run
+                    );
+                    break;
+                }
             }
-        }
+        } // Lock released immediately
 
         Ok(())
     }
 
-    // UPDATED: Execute immediate pruning with scheduled operation tracking
+    // Execute immediate pruning with scheduled operation tracking
     pub async fn execute_immediate_pruning(&self, node_name: &str) -> Result<()> {
         info!("Executing immediate pruning for node: {}", node_name);
 
@@ -523,7 +536,7 @@ impl MaintenanceScheduler {
         result
     }
 
-    // UPDATED: Execute immediate hermes restart with scheduled operation tracking
+    // Execute immediate hermes restart with scheduled operation tracking
     pub async fn execute_immediate_hermes_restart(&self, hermes_name: &str) -> Result<()> {
         info!("Executing immediate Hermes restart: {}", hermes_name);
 
@@ -548,7 +561,7 @@ impl MaintenanceScheduler {
         result
     }
 
-    // UPDATED: Batch pruning should also update scheduled operations
+    // Batch pruning should also update scheduled operations
     pub async fn execute_batch_pruning(&self, node_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch pruning for {} nodes", node_names.len());
 
@@ -584,7 +597,7 @@ impl MaintenanceScheduler {
         Ok(result)
     }
 
-    // UPDATED: Batch hermes restart should also update scheduled operations
+    // Batch hermes restart should also update scheduled operations
     pub async fn execute_batch_hermes_restart(&self, hermes_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch Hermes restart for {} instances", hermes_names.len());
 

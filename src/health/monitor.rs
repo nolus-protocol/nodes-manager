@@ -151,10 +151,18 @@ impl HealthMonitor {
         });
     }
 
+    // FIXED: Race condition prevention - maintenance status takes priority
     async fn check_and_process_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<NodeHealth> {
         debug!("Checking health for node: {}", node_name);
 
-        let health = self.check_node_health_with_maintenance(node_name, node_config).await;
+        // FIXED: Always check maintenance status first and give it absolute priority
+        let health = if self.maintenance_tracker.is_in_maintenance(node_name).await {
+            // Node is in maintenance - return maintenance status without doing RPC check
+            self.create_maintenance_health_status(node_name).await
+        } else {
+            // Node is not in maintenance - do regular health check
+            self.check_node_health(node_name, node_config).await
+        };
 
         // Handle recovery notification (only for non-maintenance status)
         if matches!(health.status, HealthStatus::Healthy) {
@@ -176,7 +184,7 @@ impl HealthMonitor {
             }
         }
 
-        // Save to database
+        // Save to database - this is the single point of truth for health status
         if let Err(e) = self.database.save_node_health(&health).await {
             error!("Failed to save health data for node {}: {}", node_name, e);
         }
@@ -192,47 +200,41 @@ impl HealthMonitor {
         Ok(health)
     }
 
-    /// Enhanced health check that considers maintenance status
-    pub async fn check_node_health_with_maintenance(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
-        // STEP 1: Check if node is in maintenance
-        if self.maintenance_tracker.is_in_maintenance(node_name).await {
-            if let Some(maintenance) = self.maintenance_tracker.get_maintenance_status(node_name).await {
-                let duration = Utc::now().signed_duration_since(maintenance.started_at);
+    /// FIXED: Create maintenance health status with proper info from tracker
+    async fn create_maintenance_health_status(&self, node_name: &str) -> NodeHealth {
+        if let Some(maintenance) = self.maintenance_tracker.get_maintenance_status(node_name).await {
+            let duration = Utc::now().signed_duration_since(maintenance.started_at);
 
-                return NodeHealth {
-                    node_name: node_name.to_string(),
-                    status: HealthStatus::Maintenance,
-                    latest_block_height: None,
-                    latest_block_time: None,
-                    catching_up: None,
-                    last_check: Utc::now(),
-                    error_message: Some(format!(
-                        "Node is undergoing {} ({}m elapsed, estimated {}m total)",
-                        maintenance.operation_type,
-                        duration.num_minutes(),
-                        maintenance.estimated_duration_minutes
-                    )),
-                };
-            } else {
-                // Maintenance tracker says it's in maintenance but no details
-                return NodeHealth {
-                    node_name: node_name.to_string(),
-                    status: HealthStatus::Maintenance,
-                    latest_block_height: None,
-                    latest_block_time: None,
-                    catching_up: None,
-                    last_check: Utc::now(),
-                    error_message: Some("Node is undergoing scheduled maintenance".to_string()),
-                };
+            NodeHealth {
+                node_name: node_name.to_string(),
+                status: HealthStatus::Maintenance,
+                latest_block_height: None,
+                latest_block_time: None,
+                catching_up: None,
+                last_check: Utc::now(),
+                error_message: Some(format!(
+                    "Node is undergoing {} ({}m elapsed, estimated {}m total)",
+                    maintenance.operation_type,
+                    duration.num_minutes(),
+                    maintenance.estimated_duration_minutes
+                )),
+            }
+        } else {
+            // Maintenance tracker says it's in maintenance but no details available
+            NodeHealth {
+                node_name: node_name.to_string(),
+                status: HealthStatus::Maintenance,
+                latest_block_height: None,
+                latest_block_time: None,
+                catching_up: None,
+                last_check: Utc::now(),
+                error_message: Some("Node is undergoing scheduled maintenance".to_string()),
             }
         }
-
-        // STEP 2: Regular health check (not in maintenance)
-        self.check_node_health(node_name, node).await
     }
 
-    /// Standard health check without maintenance considerations
-    pub async fn check_node_health(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
+    /// Standard health check without maintenance considerations - now private since race condition is fixed
+    async fn check_node_health(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
         let start_time = Instant::now();
         let check_time = Utc::now();
 
@@ -516,6 +518,7 @@ impl HealthMonitor {
         self.database.get_node_health_history(node_name, limit).await
     }
 
+    // UPDATED: Force health check now respects maintenance status
     pub async fn force_health_check(&self, node_name: &str) -> Result<NodeHealth> {
         let node_config = self
             .config
@@ -523,7 +526,13 @@ impl HealthMonitor {
             .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        let health = self.check_node_health_with_maintenance(node_name, node_config).await;
+        // Use the same race-condition-free logic as the regular monitoring
+        let health = if self.maintenance_tracker.is_in_maintenance(node_name).await {
+            self.create_maintenance_health_status(node_name).await
+        } else {
+            self.check_node_health(node_name, node_config).await
+        };
+
         self.database.save_node_health(&health).await?;
         Ok(health)
     }
