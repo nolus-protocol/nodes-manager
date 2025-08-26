@@ -20,6 +20,7 @@
             --maintenance-color: #3182ce;
             --hermes-color: #8b5cf6;
             --snapshot-color: #9f7aea;
+            --cancel-color: #e53e3e;
             --bg-primary: #f7fafc;
             --bg-secondary: #ffffff;
             --text-primary: #1a202c;
@@ -245,9 +246,58 @@
         .btn-snapshot:hover:not(:disabled) {
             background: rgba(159, 122, 234, 0.15);
         }
-        .btn-small {
-            padding: 0.375rem 0.75rem;
+        .btn-cancel {
+            background: rgba(229, 62, 62, 0.1);
+            border-color: rgba(229, 62, 62, 0.2);
+            color: var(--cancel-color);
+        }
+        .btn-cancel:hover:not(:disabled) {
+            background: rgba(229, 62, 62, 0.15);
+        }
+        .btn-icon {
+            padding: 0.5rem;
+            min-width: 2.5rem;
+            min-height: 2.5rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .btn-icon svg {
+            width: 16px;
+            height: 16px;
+        }
+        .tooltip {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            text-align: center;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.375rem;
             font-size: 0.75rem;
+            font-weight: 500;
+            white-space: nowrap;
+            z-index: 1000;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tooltip::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: rgba(0, 0, 0, 0.9) transparent transparent transparent;
+        }
+        .btn-icon:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
         }
         .panel-content {
             padding: 1.5rem;
@@ -329,6 +379,11 @@
             height: 100%;
             background: var(--maintenance-color);
             transition: width 0.3s ease-in-out;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
         .maintenance-progress-text {
             font-size: 0.7rem;
@@ -479,28 +534,6 @@
             font-size: 0.75rem;
             color: var(--text-secondary);
         }
-        .snapshot-list {
-            max-height: 200px;
-            overflow-y: auto;
-            margin-top: 1rem;
-        }
-        .snapshot-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem;
-            border: 1px solid var(--border-color);
-            border-radius: 0.375rem;
-            margin-bottom: 0.5rem;
-            font-size: 0.75rem;
-        }
-        .snapshot-item-info {
-            flex: 1;
-        }
-        .snapshot-item-actions {
-            display: flex;
-            gap: 0.25rem;
-        }
         @media (max-width: 1024px) {
             .metrics-grid {
                 grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -532,9 +565,14 @@
                 flex-direction: column;
                 gap: 0.25rem;
             }
-            .btn-small {
-                font-size: 0.625rem;
-                padding: 0.25rem 0.5rem;
+            .btn-icon {
+                padding: 0.375rem;
+                min-width: 2rem;
+                min-height: 2rem;
+            }
+            .btn-icon svg {
+                width: 14px;
+                height: 14px;
             }
             .infrastructure-table {
                 font-size: 0.75rem;
@@ -599,13 +637,13 @@
             </div>
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Snapshot Storage</div>
+                    <div class="metric-title">Active Servers</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                        <path fill-rule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z"/>
                     </svg>
                 </div>
-                <div class="metric-value" id="total-snapshots">-</div>
-                <div class="metric-subtitle" id="snapshot-storage">LZ4 Compressed</div>
+                <div class="metric-value" id="active-servers">-</div>
+                <div class="metric-subtitle" id="server-connections">- SSH connections</div>
             </div>
         </div>
 
@@ -654,29 +692,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Snapshot Management Panel -->
-        <div class="panel">
-            <div class="panel-header">
-                <h2 class="panel-title">Snapshot Management</h2>
-                <div class="panel-actions">
-                    <button class="btn btn-snapshot" onclick="refreshSnapshotStats()">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
-                        </svg>
-                        Refresh
-                    </button>
-                </div>
-            </div>
-            <div class="panel-content">
-                <div id="snapshot-container">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading snapshot information...
-                    </div>
-                </div>
-            </div>
-        </div>
     </main>
     <script>
         let refreshInterval;
@@ -685,7 +700,7 @@
         let scheduledOperations = {};
         let snapshotStats = {};
 
-        // FIXED: Store data globally to calculate metrics correctly
+        // Store data globally to calculate metrics correctly
         let currentNodesData = null;
         let currentHermesData = null;
 
@@ -700,7 +715,7 @@
 
         async function loadAllData() {
             try {
-                // FIXED: Load configs and scheduled operations first, then UI data
+                // Load configs and scheduled operations first, then UI data
                 await Promise.all([
                     loadNodeConfigs(),
                     loadHermesConfigs(),
@@ -711,11 +726,10 @@
                 // Then load UI data that depends on the configs
                 await Promise.all([
                     loadNodes(),
-                    loadHermesInstances(),
-                    loadSnapshotManagement()
+                    loadHermesInstances()
                 ]);
 
-                // FIXED: Calculate metrics after both datasets are loaded
+                // Calculate metrics after both datasets are loaded
                 updateAllMetrics();
                 updateLastUpdated();
             } catch (error) {
@@ -762,7 +776,7 @@
                     }
                     updateScheduleMetrics(data.data);
 
-                    // FIXED: Re-render tables if data is already loaded to show schedule info
+                    // Re-render tables if data is already loaded to show schedule info
                     if (currentNodesData) {
                         displayNodes(currentNodesData);
                     }
@@ -803,13 +817,13 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    currentNodesData = data.data; // FIXED: Store data globally
+                    currentNodesData = data.data;
                     displayNodes(data.data);
                 } else {
                     throw new Error('Failed to load node data');
                 }
             } catch (error) {
-                currentNodesData = null; // FIXED: Clear data on error
+                currentNodesData = null;
                 document.getElementById('nodes-container').innerHTML =
                     '<div class="alert alert-error">Failed to load blockchain nodes: ' + error.message + '</div>';
             }
@@ -821,33 +835,19 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    currentHermesData = data.data; // FIXED: Store data globally
+                    currentHermesData = data.data;
                     displayHermesInstances(data.data);
                 } else {
                     throw new Error('Failed to load Hermes data');
                 }
             } catch (error) {
-                currentHermesData = null; // FIXED: Clear data on error
+                currentHermesData = null;
                 document.getElementById('hermes-container').innerHTML =
                     '<div class="alert alert-error">Failed to load Hermes relayers: ' + error.message + '</div>';
             }
         }
 
-        async function loadSnapshotManagement() {
-            try {
-                const snapshotEnabledNodes = Object.entries(nodeConfigs)
-                    .filter(([_, config]) => config.snapshots_enabled)
-                    .map(([name, _]) => name);
-
-                displaySnapshotManagement(snapshotEnabledNodes);
-            } catch (error) {
-                console.error('Failed to load snapshot management:', error);
-                document.getElementById('snapshot-container').innerHTML =
-                    '<div class="alert alert-error">Failed to load snapshot management: ' + error.message + '</div>';
-            }
-        }
-
-        // FIXED: New function to calculate all metrics with proper data
+        // Function to calculate all metrics with proper data
         function updateAllMetrics() {
             const nodes = currentNodesData || [];
             const hermesInstances = currentHermesData || [];
@@ -873,11 +873,6 @@
             document.getElementById('health-percentage').textContent = `${healthPercentage}% operational`;
             document.getElementById('health-progress').style.width = `${healthPercentage}%`;
 
-            // Update snapshot metrics
-            const totalSnapshots = Object.values(snapshotStats).reduce((sum, stats) => sum + stats.total_snapshots, 0);
-            document.getElementById('total-snapshots').textContent = totalSnapshots;
-            document.getElementById('snapshot-storage').textContent = `${Object.keys(snapshotStats).length} nodes enabled`;
-
             // Update system status indicator
             const statusElement = document.getElementById('system-status');
             const statusText = statusElement.querySelector('span');
@@ -895,6 +890,11 @@
                 statusElement.className = 'status-indicator error';
                 statusText.textContent = 'Critical Issues';
             }
+
+            // Update server metrics
+            document.getElementById('active-servers').textContent = Object.keys(nodeConfigs || {}).length > 0 ?
+                new Set(Object.values(nodeConfigs).map(n => n.server_host)).size : '-';
+            document.getElementById('server-connections').textContent = 'Active connections';
         }
 
         function displayNodes(nodes) {
@@ -927,6 +927,7 @@
                             const isSnapshotEnabled = nodeConfig.snapshots_enabled;
                             const isAutoRestoreEnabled = nodeConfig.auto_restore_enabled;
                             const hasScheduledSnapshots = nodeConfig.snapshot_schedule;
+                            const isInMaintenance = node.status === 'Maintenance';
 
                             return `
                                 <tr onclick="showNodeDetails('${node.node_name}')" style="cursor: pointer;">
@@ -948,7 +949,7 @@
 
                                         ${node.error_message && node.status !== 'Maintenance' ?
                                             `<div class="error-message">${node.error_message}</div>` : ''}
-                                        ${node.maintenance_info ? renderMaintenanceDetails(node.maintenance_info) : ''}
+                                        ${node.maintenance_info ? renderMaintenanceDetails(node.maintenance_info, node.node_name) : ''}
                                     </td>
                                     <td onclick="event.stopPropagation();">
                                         <div class="node-status-badge status-${node.status.toLowerCase()}">
@@ -975,35 +976,46 @@
                                     </td>
                                     <td onclick="event.stopPropagation();">
                                         <div class="action-buttons">
-                                            ${isPruningEnabled ? `
-                                                <button class="btn btn-small btn-warning"
+                                            ${isPruningEnabled && !isInMaintenance ? `
+                                                <button class="btn btn-icon btn-warning"
                                                         onclick="executeManualPruning('${node.node_name}')"
                                                         title="Run pruning now">
-                                                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                         <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
                                                     </svg>
-                                                    Prune
+                                                    <div class="tooltip">Run Pruning</div>
                                                 </button>
                                             ` : ''}
 
-                                            ${isSnapshotEnabled ? `
-                                                <button class="btn btn-small btn-snapshot"
+                                            ${isSnapshotEnabled && !isInMaintenance ? `
+                                                <button class="btn btn-icon btn-snapshot"
                                                         onclick="executeCreateSnapshot('${node.node_name}')"
                                                         title="Create snapshot now">
-                                                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                         <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4z"/>
                                                         <path d="M3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6z"/>
                                                     </svg>
-                                                    Snapshot
+                                                    <div class="tooltip">Create Snapshot</div>
                                                 </button>
 
-                                                <button class="btn btn-small btn-primary"
+                                                <button class="btn btn-icon btn-primary"
                                                         onclick="executeRestoreSnapshot('${node.node_name}')"
                                                         title="Restore from latest snapshot">
-                                                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
                                                     </svg>
-                                                    Restore
+                                                    <div class="tooltip">Restore Snapshot</div>
+                                                </button>
+                                            ` : ''}
+
+                                            ${isInMaintenance && node.maintenance_info ? `
+                                                <button class="btn btn-icon btn-cancel"
+                                                        onclick="cancelMaintenanceOperation('${node.node_name}')"
+                                                        title="Cancel maintenance operation">
+                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/>
+                                                    </svg>
+                                                    <div class="tooltip">Cancel Operation</div>
                                                 </button>
                                             ` : ''}
                                         </div>
@@ -1072,102 +1084,13 @@
                                     </td>
                                     <td onclick="event.stopPropagation();">
                                         <div class="action-buttons">
-                                            <button class="btn btn-small btn-hermes"
+                                            <button class="btn btn-icon btn-hermes"
                                                     onclick="executeManualHermesRestart('${hermes.name}')"
                                                     title="Restart Hermes now">
-                                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
+                                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                     <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                 </svg>
-                                                Restart
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            `;
-
-            container.innerHTML = tableHtml;
-        }
-
-        function displaySnapshotManagement(snapshotEnabledNodes) {
-            const container = document.getElementById('snapshot-container');
-
-            if (!snapshotEnabledNodes || snapshotEnabledNodes.length === 0) {
-                container.innerHTML = '<div class="loading">No nodes configured for snapshots</div>';
-                return;
-            }
-
-            const tableHtml = `
-                <table class="infrastructure-table">
-                    <tbody>
-                        ${snapshotEnabledNodes.map(nodeName => {
-                            const nodeConfig = nodeConfigs[nodeName] || {};
-                            const nodeStats = snapshotStats[nodeName] || { total_snapshots: 0, total_size_bytes: 0 };
-                            const scheduledOp = Object.values(scheduledOperations).find(op =>
-                                op.target_name === nodeName && op.operation_type === 'SnapshotCreation'
-                            );
-
-                            const formatSize = (bytes) => {
-                                if (!bytes) return '0 MB';
-                                const gb = bytes / (1024 * 1024 * 1024);
-                                return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-                            };
-
-                            return `
-                                <tr onclick="showSnapshotDetails('${nodeName}')" style="cursor: pointer;">
-                                    <td onclick="event.stopPropagation();">
-                                        <div class="component-name-primary">${formatNodeName(nodeName)}</div>
-                                        <div class="component-name-technical">${nodeName}</div>
-                                        <div class="server-name" style="margin-top: 0.25rem;">Server: ${getServerFromNodeName(nodeName)}</div>
-                                        <div class="snapshot-features" style="margin-top: 0.5rem;">
-                                            ${nodeConfig.auto_restore_enabled ? '<span class="snapshot-feature">Auto-Restore</span>' : ''}
-                                            ${nodeConfig.snapshot_schedule ? '<span class="snapshot-feature">Scheduled</span>' : ''}
-                                            <span class="snapshot-feature">LZ4 Compressed</span>
-                                            ${nodeConfig.snapshot_retention_count ? `<span class="snapshot-feature">Keep ${nodeConfig.snapshot_retention_count}</span>` : ''}
-                                        </div>
-                                    </td>
-                                    <td onclick="event.stopPropagation();">
-                                        <div style="font-weight: 500; color: var(--text-primary);">
-                                            ${nodeStats.total_snapshots} snapshots
-                                        </div>
-                                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
-                                            ${formatSize(nodeStats.total_size_bytes)} total
-                                        </div>
-                                    </td>
-                                    <td onclick="event.stopPropagation();">
-                                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">Manual only</div>'}
-                                    </td>
-                                    <td onclick="event.stopPropagation();">
-                                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
-                                    </td>
-                                    <td onclick="event.stopPropagation();">
-                                        <div class="action-buttons">
-                                            <button class="btn btn-small btn-snapshot"
-                                                    onclick="executeCreateSnapshot('${nodeName}')"
-                                                    title="Create snapshot now">
-                                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4z"/>
-                                                </svg>
-                                                Create
-                                            </button>
-                                            <button class="btn btn-small btn-primary"
-                                                    onclick="executeRestoreSnapshot('${nodeName}')"
-                                                    title="Restore from latest snapshot">
-                                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
-                                                </svg>
-                                                Restore
-                                            </button>
-                                            <button class="btn btn-small"
-                                                    onclick="viewSnapshotList('${nodeName}')"
-                                                    title="View all snapshots">
-                                                <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path d="M3 4a1 1 0 000 2h14a1 1 0 100-2H3zM3 10a1 1 0 000 2h14a1 1 0 100-2H3zM3 16a1 1 0 100 2h14a1 1 0 100-2H3z"/>
-                                                </svg>
-                                                List
+                                                <div class="tooltip">Restart Hermes</div>
                                             </button>
                                         </div>
                                     </td>
@@ -1238,94 +1161,6 @@
             }
         }
 
-        async function viewSnapshotList(nodeName) {
-            try {
-                const response = await fetch(`/api/snapshots/${nodeName}/list`);
-                const data = await response.json();
-
-                if (data.success) {
-                    showSnapshotListModal(nodeName, data.data);
-                } else {
-                    throw new Error(data.message || 'Failed to load snapshots');
-                }
-            } catch (error) {
-                showAlert('Failed to load snapshot list: ' + error.message, 'error');
-            }
-        }
-
-        function showSnapshotListModal(nodeName, snapshots) {
-            const formatSize = (bytes) => {
-                if (!bytes) return 'Unknown';
-                const gb = bytes / (1024 * 1024 * 1024);
-                return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-            };
-
-            const formatDate = (dateStr) => {
-                return new Date(dateStr).toLocaleString();
-            };
-
-            let modalHtml = `
-                <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;" onclick="this.remove()">
-                    <div style="background: white; padding: 2rem; border-radius: 0.5rem; max-width: 800px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation()">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                            <h3>Snapshots for ${formatNodeName(nodeName)}</h3>
-                            <button onclick="this.closest('[style*=fixed]').remove()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">&times;</button>
-                        </div>
-                        <div class="snapshot-list">
-                            ${snapshots.length === 0 ?
-                                '<p>No snapshots found for this node.</p>' :
-                                snapshots.map(snapshot => `
-                                    <div class="snapshot-item">
-                                        <div class="snapshot-item-info">
-                                            <div style="font-weight: 500;">${snapshot.filename}</div>
-                                            <div style="font-size: 0.8rem; color: var(--text-muted);">
-                                                ${formatDate(snapshot.created_at)} • ${formatSize(snapshot.file_size_bytes)} • ${snapshot.compression_type}
-                                            </div>
-                                        </div>
-                                        <div class="snapshot-item-actions">
-                                            <button class="btn btn-small btn-primary" onclick="restoreSpecificSnapshot('${nodeName}', '${snapshot.filename}')">Restore</button>
-                                            <button class="btn btn-small btn-warning" onclick="deleteSnapshot('${nodeName}', '${snapshot.filename}')">Delete</button>
-                                        </div>
-                                    </div>
-                                `).join('')
-                            }
-                        </div>
-                        <div style="margin-top: 1rem; text-align: center;">
-                            <button class="btn" onclick="this.closest('[style*=fixed]').remove()">Close</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-        }
-
-        async function deleteSnapshot(nodeName, filename) {
-            if (!confirm(`Delete snapshot ${filename}?\n\nThis action cannot be undone.`)) {
-                return;
-            }
-
-            try {
-                const response = await fetch(`/api/snapshots/${nodeName}/${filename}`, {
-                    method: 'DELETE'
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    showAlert(`Snapshot ${filename} deleted successfully`, 'success');
-                    // Refresh the modal
-                    viewSnapshotList(nodeName);
-                    loadAllData();
-                } else {
-                    throw new Error(data.message || 'Failed to delete snapshot');
-                }
-            } catch (error) {
-                showAlert('Failed to delete snapshot: ' + error.message, 'error');
-            }
-        }
-
-        // Continue with existing functions...
         async function executeManualPruning(targetName) {
             const nodeDisplayName = formatNodeName(targetName);
 
@@ -1392,6 +1227,34 @@
             }
         }
 
+        async function cancelMaintenanceOperation(nodeName) {
+            const nodeDisplayName = formatNodeName(nodeName);
+
+            if (!confirm(`Cancel Maintenance Operation\n\nCancel ongoing maintenance for ${nodeDisplayName}?\n\n• This will attempt to stop the current operation\n• The service may need manual intervention\n• Use with caution\n\nProceed with cancellation?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Canceling maintenance operation for ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/maintenance/clear/${nodeName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Maintenance operation canceled for ${nodeDisplayName}`, 'success');
+                    loadAllData();
+                } else {
+                    throw new Error(data.message || 'Failed to cancel maintenance');
+                }
+            } catch (error) {
+                showAlert('Failed to cancel maintenance: ' + error.message, 'error');
+            }
+        }
+
         async function forceHealthCheck() {
             try {
                 showAlert('Initiating comprehensive health check...', 'success');
@@ -1422,18 +1285,6 @@
                 showAlert('Hermes status refreshed', 'success');
             } catch (error) {
                 showAlert('Hermes refresh failed: ' + error.message, 'error');
-            }
-        }
-
-        async function refreshSnapshotStats() {
-            try {
-                showAlert('Refreshing snapshot statistics...', 'success');
-                await loadSnapshotStats();
-                await loadSnapshotManagement();
-                updateAllMetrics();
-                showAlert('Snapshot statistics refreshed', 'success');
-            } catch (error) {
-                showAlert('Snapshot refresh failed: ' + error.message, 'error');
             }
         }
 
@@ -1490,35 +1341,30 @@
             `;
         }
 
-        function renderMaintenanceDetails(maintenance) {
-            const progress = calculateMaintenanceProgress(maintenance.elapsed_minutes, maintenance.estimated_duration_minutes);
-
+        function renderMaintenanceDetails(maintenance, nodeName) {
             return `
                 <div class="maintenance-details">
-                    <div style="font-weight: 600; color: var(--maintenance-color); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.375rem;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
-                        </svg>
-                        ${maintenance.operation_type} in progress
+                    <div style="font-weight: 600; color: var(--maintenance-color); margin-bottom: 0.5rem; display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 0.375rem;">
+                            <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
+                            </svg>
+                            ${maintenance.operation_type} in progress
+                        </div>
                     </div>
                     <div style="color: var(--text-muted); margin-bottom: 0.5rem; font-size: 0.7rem;">
                         Started: ${formatTime(maintenance.started_at)}
                     </div>
                     <div class="maintenance-progress">
                         <div class="maintenance-progress-bar">
-                            <div class="maintenance-progress-fill" style="width: ${progress}%"></div>
+                            <div class="maintenance-progress-fill" style="width: 20%"></div>
                         </div>
                         <div class="maintenance-progress-text">
-                            ${maintenance.elapsed_minutes}m / ${maintenance.estimated_duration_minutes}m
+                            Running for ${maintenance.elapsed_minutes}m
                         </div>
                     </div>
                 </div>
             `;
-        }
-
-        function calculateMaintenanceProgress(elapsed, estimated) {
-            if (!elapsed || !estimated || estimated === 0) return 0;
-            return Math.min(Math.round((elapsed / estimated) * 100), 100);
         }
 
         function updateScheduleMetrics(scheduleData) {
@@ -1555,10 +1401,6 @@
 
         function showHermesDetails(hermesName) {
             console.log('Show details for hermes:', hermesName);
-        }
-
-        function showSnapshotDetails(nodeName) {
-            viewSnapshotList(nodeName);
         }
 
         function formatTime(timestamp) {
