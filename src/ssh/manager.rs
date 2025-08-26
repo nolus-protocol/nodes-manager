@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -579,75 +578,6 @@ impl SshManager {
         None
     }
 
-    /// Test server connectivity using independent connection for each server
-    pub async fn validate_all_servers_connectivity(&self) -> HashMap<String, Result<String, String>> {
-        info!("Validating connectivity to all servers (each with fresh connection)");
-
-        let mut connectivity_status = HashMap::new();
-
-        for server_name in self.config.servers.keys() {
-            match self.execute_single_command(server_name, "echo 'connectivity_test'").await {
-                Ok(output) => {
-                    if output.trim() == "connectivity_test" {
-                        connectivity_status.insert(server_name.clone(), Ok("Connected".to_string()));
-                    } else {
-                        connectivity_status.insert(server_name.clone(), Err("Unexpected response".to_string()));
-                    }
-                }
-                Err(e) => {
-                    connectivity_status.insert(server_name.clone(), Err(e.to_string()));
-                }
-            }
-        }
-
-        connectivity_status
-    }
-
-    /// Get status of all services using independent connections
-    pub async fn get_all_service_statuses(&self) -> HashMap<String, HashMap<String, String>> {
-        info!("Getting status of all services (each with fresh connection)");
-
-        let mut all_statuses = HashMap::new();
-
-        for (node_name, node) in &self.config.nodes {
-            if let Some(service_name) = &node.pruning_service_name {
-                match self.check_service_status(&node.server_host, service_name).await {
-                    Ok(status) => {
-                        all_statuses
-                            .entry(node.server_host.clone())
-                            .or_insert_with(HashMap::new)
-                            .insert(node_name.clone(), format!("{:?}", status));
-                    }
-                    Err(e) => {
-                        all_statuses
-                            .entry(node.server_host.clone())
-                            .or_insert_with(HashMap::new)
-                            .insert(node_name.clone(), format!("Error: {}", e));
-                    }
-                }
-            }
-        }
-
-        for (hermes_name, hermes) in &self.config.hermes {
-            match self.check_service_status(&hermes.server_host, &hermes.service_name).await {
-                Ok(status) => {
-                    all_statuses
-                        .entry(hermes.server_host.clone())
-                        .or_insert_with(HashMap::new)
-                        .insert(hermes_name.clone(), format!("{:?}", status));
-                }
-                Err(e) => {
-                    all_statuses
-                        .entry(hermes.server_host.clone())
-                        .or_insert_with(HashMap::new)
-                        .insert(hermes_name.clone(), format!("Error: {}", e));
-                }
-            }
-        }
-
-        all_statuses
-    }
-
     /// Check if a pruning process is running (independent connection)
     pub async fn check_pruning_process_status(&self, server_name: &str, deploy_path: &str) -> Result<bool> {
         let check_command = format!(
@@ -682,26 +612,6 @@ impl SshManager {
                 Ok(())
             }
         }
-    }
-
-    /// Get connection status (test connectivity to all servers)
-    pub async fn get_connection_status(&self) -> HashMap<String, bool> {
-        let mut status = HashMap::new();
-
-        for server_name in self.config.servers.keys() {
-            let connected = match self.execute_single_command(server_name, "echo 'test'").await {
-                Ok(output) => output.trim() == "test",
-                Err(_) => false,
-            };
-            status.insert(server_name.clone(), connected);
-        }
-
-        status
-    }
-
-    /// Get active connections count (always 0 since we don't keep persistent connections)
-    pub async fn get_active_connections(&self) -> usize {
-        0 // No persistent connections in this implementation
     }
 }
 

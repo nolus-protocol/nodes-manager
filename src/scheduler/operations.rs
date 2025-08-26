@@ -12,9 +12,10 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::scheduler::{
-    create_operation_summary, validate_cron_expression, OperationResult, OperationStatus,
+    create_operation_summary, OperationResult, OperationStatus,
     OperationType, ScheduledOperation, SchedulerConfig,
 };
+use crate::snapshot::SnapshotManager;
 use crate::ssh::{manager::SshManager, operations::BatchOperationResult};
 use crate::{Config, MaintenanceOperation};
 
@@ -26,6 +27,7 @@ pub struct MaintenanceScheduler {
     scheduled_operations: Arc<RwLock<HashMap<String, ScheduledOperation>>>,
     running_operations: Arc<RwLock<HashMap<String, MaintenanceOperation>>>,
     scheduler_config: SchedulerConfig,
+    snapshot_manager: Arc<SnapshotManager>,  // NEW: Added snapshot manager
 }
 
 impl MaintenanceScheduler {
@@ -33,6 +35,7 @@ impl MaintenanceScheduler {
         database: Arc<Database>,
         ssh_manager: Arc<SshManager>,
         config: Arc<Config>,
+        snapshot_manager: Arc<SnapshotManager>,  // NEW: Accept snapshot manager
     ) -> Self {
         Self {
             database,
@@ -42,11 +45,12 @@ impl MaintenanceScheduler {
             scheduled_operations: Arc::new(RwLock::new(HashMap::new())),
             running_operations: Arc::new(RwLock::new(HashMap::new())),
             scheduler_config: SchedulerConfig::default(),
+            snapshot_manager,
         }
     }
 
     pub async fn start_scheduler(&self) -> Result<()> {
-        info!("Starting maintenance scheduler");
+        info!("Starting maintenance scheduler with scheduled snapshot support");
 
         let job_scheduler = JobScheduler::new().await?;
 
@@ -68,7 +72,7 @@ impl MaintenanceScheduler {
         // Start cleanup task
         self.start_cleanup_task().await;
 
-        info!("Maintenance scheduler started successfully with automatic scheduling enabled");
+        info!("Maintenance scheduler started successfully with automatic scheduling and snapshot support enabled");
         Ok(())
     }
 
@@ -124,9 +128,26 @@ impl MaintenanceScheduler {
                         schedule.clone(),
                     );
 
-                    // CALCULATE NEXT RUN TIME
                     operation.next_run = self.calculate_next_run(schedule, &now);
                     info!("Loaded pruning schedule for {}: {} -> next run: {:?}",
+                          node_name, schedule, operation.next_run);
+
+                    operations.insert(operation.id.clone(), operation);
+                }
+            }
+        }
+
+        // NEW: Load scheduled snapshot creation
+        for (node_name, node_config) in &self.config.nodes {
+            if let Some(schedule) = &node_config.snapshot_schedule {
+                if node_config.snapshots_enabled.unwrap_or(false) {
+                    let mut operation = ScheduledOperation::new_snapshot_creation(
+                        node_name.clone(),
+                        schedule.clone(),
+                    );
+
+                    operation.next_run = self.calculate_next_run(schedule, &now);
+                    info!("Loaded snapshot schedule for {}: {} -> next run: {:?}",
                           node_name, schedule, operation.next_run);
 
                     operations.insert(operation.id.clone(), operation);
@@ -141,7 +162,6 @@ impl MaintenanceScheduler {
                 hermes_config.restart_schedule.clone(),
             );
 
-            // CALCULATE NEXT RUN TIME
             operation.next_run = self.calculate_next_run(&hermes_config.restart_schedule, &now);
             info!("Loaded hermes restart schedule for {}: {} -> next run: {:?}",
                   hermes_name, hermes_config.restart_schedule, operation.next_run);
@@ -290,6 +310,10 @@ impl MaintenanceScheduler {
             OperationType::SystemMaintenance => {
                 self.execute_system_maintenance(target_name).await
             }
+            // NEW: Handle scheduled snapshot creation
+            OperationType::SnapshotCreation => {
+                self.execute_snapshot_creation(target_name).await
+            }
         };
 
         let end_time = Utc::now();
@@ -319,32 +343,27 @@ impl MaintenanceScheduler {
             ),
         };
 
-        // FIXED: Update scheduled operation with minimal lock scope to prevent deadlock
-        {
-            // Pre-calculate next run time outside the lock
-            let now = Utc::now();
-            let (schedule, next_run_time) = {
-                let scheduled_ops = self.scheduled_operations.read().await;
-                if let Some(operation) = scheduled_ops.get(operation_id) {
-                    let schedule = operation.schedule.clone();
-                    let next_run = self.calculate_next_run(&schedule, &now);
-                    (schedule, next_run)
-                } else {
-                    return Err(anyhow::anyhow!("Operation {} not found for update", operation_id));
-                }
-            };
+        // Calculate next run time outside of any locks to prevent deadlock
+        let now = Utc::now();
+        let next_run_time = {
+            let scheduled_ops = self.scheduled_operations.read().await;
+            if let Some(operation) = scheduled_ops.get(operation_id) {
+                self.calculate_next_run(&operation.schedule, &now)
+            } else {
+                return Err(anyhow::anyhow!("Operation {} not found for update", operation_id));
+            }
+        }; // Read lock released here
 
-            // Now acquire write lock and update quickly
-            {
-                let mut scheduled_ops = self.scheduled_operations.write().await;
-                if let Some(operation) = scheduled_ops.get_mut(operation_id) {
-                    operation.last_run = Some(end_time);
-                    operation.update_result(operation_result.clone());
-                    operation.next_run = next_run_time;
-                    info!("Updated next run time for operation {}: {:?}", operation_id, next_run_time);
-                }
-            } // Write lock released immediately
-        }
+        // Now acquire write lock only for the update with minimal scope
+        {
+            let mut scheduled_ops = self.scheduled_operations.write().await;
+            if let Some(operation) = scheduled_ops.get_mut(operation_id) {
+                operation.last_run = Some(end_time);
+                operation.update_result(operation_result.clone());
+                operation.next_run = next_run_time;
+                info!("Updated next run time for operation {}: {:?}", operation_id, next_run_time);
+            }
+        } // Write lock released immediately
 
         // Update maintenance operation in database
         let mut updated_maintenance_op = maintenance_op;
@@ -418,53 +437,47 @@ impl MaintenanceScheduler {
         Ok(())
     }
 
-    pub async fn schedule_pruning(&self, node_name: &str, schedule: &str) -> Result<String> {
-        validate_cron_expression(schedule)?;
+    // NEW: Execute scheduled snapshot creation with retention management
+    async fn execute_snapshot_creation(&self, node_name: &str) -> Result<()> {
+        let node_config = self
+            .config
+            .nodes
+            .get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?
+            .clone();
 
-        let mut operation = ScheduledOperation::new_pruning(
-            node_name.to_string(),
-            schedule.to_string(),
-        );
-
-        // CALCULATE NEXT RUN TIME for new operation
-        let now = Utc::now();
-        operation.next_run = self.calculate_next_run(schedule, &now);
-
-        let operation_id = operation.id.clone();
-
-        {
-            let mut scheduled_ops = self.scheduled_operations.write().await;
-            scheduled_ops.insert(operation_id.clone(), operation);
+        if !node_config.snapshots_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
-        info!("Scheduled pruning for node {} with schedule: {}", node_name, schedule);
-        Ok(operation_id)
-    }
+        info!("Starting scheduled snapshot creation for node: {}", node_name);
 
-    pub async fn schedule_hermes_restart(&self, hermes_name: &str, schedule: &str) -> Result<String> {
-        validate_cron_expression(schedule)?;
+        // Create the snapshot
+        let snapshot_info = self.snapshot_manager.create_snapshot(node_name).await?;
+        info!("Scheduled snapshot created: {}", snapshot_info.filename);
 
-        let mut operation = ScheduledOperation::new_hermes_restart(
-            hermes_name.to_string(),
-            schedule.to_string(),
-        );
+        // Apply retention policy if configured
+        if let Some(retention_count) = node_config.snapshot_retention_count {
+            info!("Applying retention policy: keeping {} most recent snapshots", retention_count);
 
-        // CALCULATE NEXT RUN TIME for new operation
-        let now = Utc::now();
-        operation.next_run = self.calculate_next_run(schedule, &now);
-
-        let operation_id = operation.id.clone();
-
-        {
-            let mut scheduled_ops = self.scheduled_operations.write().await;
-            scheduled_ops.insert(operation_id.clone(), operation);
+            match self.snapshot_manager.cleanup_old_snapshots(node_name, retention_count).await {
+                Ok(deleted_count) => {
+                    if deleted_count > 0 {
+                        info!("Cleaned up {} old snapshots for node {}", deleted_count, node_name);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to cleanup old snapshots for node {}: {}", node_name, e);
+                    // Don't fail the entire operation if cleanup fails
+                }
+            }
         }
 
-        info!("Scheduled Hermes restart for {} with schedule: {}", hermes_name, schedule);
-        Ok(operation_id)
+        info!("Scheduled snapshot creation completed for node: {}", node_name);
+        Ok(())
     }
 
-    // FIXED: Update scheduled operation when manual operation completes - no deadlock
+    // Update scheduled operation when manual operation completes
     pub async fn update_scheduled_operation_result(
         &self,
         target_name: &str,
@@ -472,7 +485,7 @@ impl MaintenanceScheduler {
         success: bool,
         error_message: Option<String>,
     ) -> Result<()> {
-        // Pre-calculate data outside the lock
+        // Pre-calculate data outside any locks
         let now = Utc::now();
         let result = OperationResult {
             success,
@@ -485,7 +498,29 @@ impl MaintenanceScheduler {
             executed_at: now,
         };
 
-        // Find and update the matching operation with minimal lock scope
+        // Step 1: Find the matching operation and get its schedule (read lock only)
+        let schedule_for_next_run = {
+            let scheduled_ops = self.scheduled_operations.read().await;
+            let mut found_schedule = None;
+
+            for operation in scheduled_ops.values() {
+                if operation.target_name == target_name && operation.operation_type == *operation_type {
+                    found_schedule = Some(operation.schedule.clone());
+                    break;
+                }
+            }
+            found_schedule
+        }; // Read lock released here
+
+        // Step 2: Calculate next run time outside of any locks
+        let next_run_time = if let Some(schedule) = schedule_for_next_run {
+            self.calculate_next_run(&schedule, &now)
+        } else {
+            // No matching operation found
+            return Ok(());
+        };
+
+        // Step 3: Update the operation with minimal write lock scope
         {
             let mut scheduled_ops = self.scheduled_operations.write().await;
 
@@ -493,9 +528,7 @@ impl MaintenanceScheduler {
                 if operation.target_name == target_name && operation.operation_type == *operation_type {
                     operation.last_run = Some(now);
                     operation.update_result(result.clone());
-
-                    // Calculate next run time within the same lock to avoid deadlock
-                    operation.next_run = self.calculate_next_run(&operation.schedule, &now);
+                    operation.next_run = next_run_time;
 
                     info!(
                         "Updated scheduled operation {} with manual execution result: {} (next run: {:?})",
@@ -506,12 +539,12 @@ impl MaintenanceScheduler {
                     break;
                 }
             }
-        } // Lock released immediately
+        } // Write lock released immediately
 
         Ok(())
     }
 
-    // Execute immediate pruning with scheduled operation tracking
+    // Execute immediate operations with scheduled operation tracking
     pub async fn execute_immediate_pruning(&self, node_name: &str) -> Result<()> {
         info!("Executing immediate pruning for node: {}", node_name);
 
@@ -536,7 +569,6 @@ impl MaintenanceScheduler {
         result
     }
 
-    // Execute immediate hermes restart with scheduled operation tracking
     pub async fn execute_immediate_hermes_restart(&self, hermes_name: &str) -> Result<()> {
         info!("Executing immediate Hermes restart: {}", hermes_name);
 
@@ -561,7 +593,32 @@ impl MaintenanceScheduler {
         result
     }
 
-    // Batch pruning should also update scheduled operations
+    // NEW: Execute immediate snapshot creation with scheduled operation tracking
+    pub async fn execute_immediate_snapshot_creation(&self, node_name: &str) -> Result<()> {
+        info!("Executing immediate snapshot creation for node: {}", node_name);
+
+        let result = self.execute_snapshot_creation(node_name).await;
+        let success = result.is_ok();
+        let error_message = if let Err(ref e) = result {
+            Some(e.to_string())
+        } else {
+            None
+        };
+
+        // Update corresponding scheduled operation
+        if let Err(e) = self.update_scheduled_operation_result(
+            node_name,
+            &OperationType::SnapshotCreation,
+            success,
+            error_message.clone(),
+        ).await {
+            warn!("Failed to update scheduled operation for manual snapshot creation: {}", e);
+        }
+
+        result
+    }
+
+    // Batch operations that also update scheduled operations
     pub async fn execute_batch_pruning(&self, node_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch pruning for {} nodes", node_names.len());
 
@@ -597,7 +654,6 @@ impl MaintenanceScheduler {
         Ok(result)
     }
 
-    // Batch hermes restart should also update scheduled operations
     pub async fn execute_batch_hermes_restart(&self, hermes_names: Vec<String>) -> Result<BatchOperationResult> {
         info!("Executing batch Hermes restart for {} instances", hermes_names.len());
 
@@ -629,18 +685,6 @@ impl MaintenanceScheduler {
         );
 
         Ok(result)
-    }
-
-    pub async fn cancel_scheduled_operation(&self, operation_id: &str) -> Result<()> {
-        let mut scheduled_ops = self.scheduled_operations.write().await;
-
-        if let Some(operation) = scheduled_ops.get_mut(operation_id) {
-            operation.enabled = false;
-            info!("Cancelled scheduled operation: {}", operation_id);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Operation {} not found", operation_id))
-        }
     }
 
     pub async fn get_scheduled_operations(&self) -> Vec<ScheduledOperation> {
@@ -724,6 +768,7 @@ impl Clone for MaintenanceScheduler {
             scheduled_operations: self.scheduled_operations.clone(),
             running_operations: self.running_operations.clone(),
             scheduler_config: self.scheduler_config.clone(),
+            snapshot_manager: self.snapshot_manager.clone(),
         }
     }
 }

@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::database::Database;
 use crate::health::{parse_rpc_response, parse_block_height, parse_block_time, HealthMetrics, HealthThresholds};
 use crate::maintenance_tracker::MaintenanceTracker;
+use crate::snapshot::SnapshotManager;
 use crate::{AlarmPayload, Config, HealthStatus, NodeConfig, NodeHealth};
 
 pub struct HealthMonitor {
@@ -24,10 +25,20 @@ pub struct HealthMonitor {
     last_alarm_times: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
     alarm_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
     maintenance_tracker: Arc<MaintenanceTracker>,
+    snapshot_manager: Arc<SnapshotManager>,
+    auto_restore_attempts: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
+    // NEW: Log monitoring state
+    last_log_check_times: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
+    log_alarm_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
 }
 
 impl HealthMonitor {
-    pub fn new(config: Arc<Config>, database: Arc<Database>, maintenance_tracker: Arc<MaintenanceTracker>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        database: Arc<Database>,
+        maintenance_tracker: Arc<MaintenanceTracker>,
+        snapshot_manager: Arc<SnapshotManager>,
+    ) -> Self {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(config.rpc_timeout_seconds))
             .build()
@@ -42,14 +53,31 @@ impl HealthMonitor {
             last_alarm_times: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             alarm_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             maintenance_tracker,
+            snapshot_manager,
+            auto_restore_attempts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            // NEW: Initialize log monitoring state
+            last_log_check_times: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            log_alarm_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
     pub async fn start_monitoring(&self) -> Result<()> {
-        info!("Starting health monitoring service with maintenance awareness");
+        info!("Starting health monitoring service with maintenance awareness, auto-restore capability, and log monitoring");
 
         let check_interval = Duration::from_secs(self.config.check_interval_seconds);
         info!("Health check interval: {}s", check_interval.as_secs());
+
+        // NEW: Log monitoring configuration
+        if self.config.log_monitoring_enabled {
+            info!("Log monitoring enabled with {} patterns, checking every {} minutes",
+                  self.config.log_monitoring_patterns.len(),
+                  self.config.log_monitoring_interval_minutes);
+
+            // Start log monitoring task
+            self.start_log_monitoring_task().await;
+        } else {
+            info!("Log monitoring disabled");
+        }
 
         // Start maintenance cleanup task
         self.start_maintenance_cleanup_task().await;
@@ -132,6 +160,261 @@ impl HealthMonitor {
         }
     }
 
+    // NEW: Log monitoring task
+    async fn start_log_monitoring_task(&self) {
+        let monitor = self.clone();
+
+        tokio::spawn(async move {
+            let log_check_interval = Duration::from_secs(monitor.config.log_monitoring_interval_minutes * 60);
+            info!("Starting log monitoring task - checking every {} minutes", monitor.config.log_monitoring_interval_minutes);
+
+            loop {
+                sleep(log_check_interval).await;
+
+                let start_time = Instant::now();
+                let enabled_nodes: Vec<(&String, &NodeConfig)> = monitor
+                    .config
+                    .nodes
+                    .iter()
+                    .filter(|(_, node)| node.enabled)
+                    .collect();
+
+                debug!("Log monitoring: checking {} enabled nodes", enabled_nodes.len());
+                let mut checked_nodes = 0;
+                let mut pattern_matches = 0;
+
+                for (node_name, node_config) in enabled_nodes {
+                    // Only check logs for healthy nodes (not in maintenance)
+                    let (in_maintenance, _) = monitor.maintenance_tracker.get_maintenance_status_atomic(node_name).await;
+                    if in_maintenance {
+                        debug!("Log monitoring: skipping {} - in maintenance", node_name);
+                        continue;
+                    }
+
+                    // Check if node has health status as healthy
+                    if let Ok(Some(health)) = monitor.database.get_latest_node_health(node_name).await {
+                        if !matches!(health.status, HealthStatus::Healthy) {
+                            debug!("Log monitoring: skipping {} - not healthy", node_name);
+                            continue;
+                        }
+                    } else {
+                        debug!("Log monitoring: skipping {} - no health data", node_name);
+                        continue;
+                    }
+
+                    checked_nodes += 1;
+
+                    match monitor.check_log_patterns(node_name, node_config).await {
+                        Ok(found_patterns) => {
+                            if found_patterns > 0 {
+                                pattern_matches += found_patterns;
+                                info!("Log monitoring: found {} pattern matches for node {}", found_patterns, node_name);
+                            } else {
+                                debug!("Log monitoring: no patterns found for node {}", node_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Log monitoring: failed to check patterns for node {}: {}", node_name, e);
+                        }
+                    }
+                }
+
+                let check_duration = start_time.elapsed();
+                info!("Log monitoring cycle completed in {:.2}s: {} nodes checked, {} pattern matches found",
+                      check_duration.as_secs_f64(), checked_nodes, pattern_matches);
+            }
+        });
+    }
+
+    // NEW: Check log patterns for a specific node
+    async fn check_log_patterns(&self, node_name: &str, node_config: &NodeConfig) -> Result<u32> {
+        if self.config.log_monitoring_patterns.is_empty() {
+            return Ok(0);
+        }
+
+        // Get log path - use node's log_path and append "/out1.log"
+        let log_file_path = if let Some(log_path) = &node_config.log_path {
+            format!("{}/out1.log", log_path)
+        } else {
+            debug!("Log monitoring: no log_path configured for node {}", node_name);
+            return Ok(0);
+        };
+
+        // Check logs for patterns (last 500 lines)
+        let check_logs_cmd = format!(
+            "tail -n 500 '{}' 2>/dev/null || echo ''",
+            log_file_path
+        );
+
+        // Use SSH to read logs
+        let log_output = match self.execute_ssh_command(&node_config.server_host, &check_logs_cmd).await {
+            Ok(output) => output,
+            Err(e) => {
+                warn!("Log monitoring: failed to read logs for {}: {}", node_name, e);
+                return Err(e);
+            }
+        };
+
+        if log_output.trim().is_empty() {
+            debug!("Log monitoring: no log content found for node {}", node_name);
+            return Ok(0);
+        }
+
+        let mut found_patterns = 0;
+
+        // Check for any patterns in logs
+        for pattern in &self.config.log_monitoring_patterns {
+            if log_output.to_lowercase().contains(&pattern.to_lowercase()) {
+                found_patterns += 1;
+                info!("Log monitoring: pattern '{}' found for node {}", pattern, node_name);
+
+                // Get context lines around the match
+                let context_lines = self.get_log_context(&log_output, pattern, self.config.log_monitoring_context_lines);
+
+                // Check if we should send alarm for this pattern
+                if self.should_send_log_alarm(node_name, pattern).await {
+                    if let Err(e) = self.send_log_pattern_alarm(node_name, pattern, &context_lines).await {
+                        error!("Log monitoring: failed to send alarm for pattern '{}' on node {}: {}", pattern, node_name, e);
+                    }
+                }
+            }
+        }
+
+        Ok(found_patterns)
+    }
+
+    // NEW: Get context lines around pattern match
+    fn get_log_context(&self, log_output: &str, pattern: &str, context_lines: u32) -> Vec<String> {
+        let lines: Vec<&str> = log_output.lines().collect();
+        let mut context = Vec::new();
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.to_lowercase().contains(&pattern.to_lowercase()) {
+                // Add context before
+                let start = i.saturating_sub(context_lines as usize);
+                let end = std::cmp::min(i + context_lines as usize + 1, lines.len());
+
+                for j in start..end {
+                    if j < lines.len() {
+                        context.push(lines[j].to_string());
+                    }
+                }
+                break; // Only get context for first match
+            }
+        }
+
+        // If no context found, return the pattern line itself
+        if context.is_empty() {
+            for line in lines {
+                if line.to_lowercase().contains(&pattern.to_lowercase()) {
+                    context.push(line.to_string());
+                    break;
+                }
+            }
+        }
+
+        context
+    }
+
+    // NEW: Check if we should send alarm for log pattern (reuse existing rate limiting logic)
+    async fn should_send_log_alarm(&self, node_name: &str, pattern: &str) -> bool {
+        let alarm_key = format!("{}:{}", node_name, pattern);
+
+        // Check alarm interval using same logic as health alarms
+        let log_alarm_counts = self.log_alarm_counts.read().await;
+        let alarm_count = log_alarm_counts.get(&alarm_key).copied().unwrap_or(0);
+
+        let required_hours = self.get_alarm_interval_hours(alarm_count);
+        if required_hours == 0 {
+            return true; // First alarm - send immediately
+        }
+
+        let last_log_checks = self.last_log_check_times.read().await;
+        if let Some(last_check) = last_log_checks.get(&alarm_key) {
+            let hours_since = Utc::now().signed_duration_since(*last_check).num_hours();
+            hours_since >= required_hours as i64
+        } else {
+            true // No previous alarm
+        }
+    }
+
+    // NEW: Send log pattern alarm
+    async fn send_log_pattern_alarm(&self, node_name: &str, pattern: &str, context_lines: &[String]) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let alarm_key = format!("{}:{}", node_name, pattern);
+        let server_host = self.get_server_for_node(node_name).await.unwrap_or_else(|| "unknown".to_string());
+
+        let context_text = if context_lines.is_empty() {
+            "No context available".to_string()
+        } else {
+            context_lines.join("\n")
+        };
+
+        let alarm = AlarmPayload {
+            timestamp: Utc::now(),
+            alarm_type: "log_pattern_match".to_string(),
+            severity: "medium".to_string(),
+            node_name: node_name.to_string(),
+            message: format!("Log pattern '{}' detected for node {}", pattern, node_name),
+            details: json!({
+                "pattern": pattern,
+                "node_name": node_name,
+                "server_host": server_host,
+                "context_lines_count": context_lines.len(),
+                "log_context": context_text,
+                "timestamp": Utc::now().to_rfc3339(),
+                "monitoring_type": "log_pattern_detection"
+            }),
+        };
+
+        let response = self
+            .http_client
+            .post(&self.config.alarm_webhook_url)
+            .json(&alarm)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            // Update alarm tracking for log patterns
+            {
+                let mut last_checks = self.last_log_check_times.write().await;
+                let mut alarm_counts = self.log_alarm_counts.write().await;
+                last_checks.insert(alarm_key.clone(), Utc::now());
+                let count = alarm_counts.get(&alarm_key).copied().unwrap_or(0);
+                alarm_counts.insert(alarm_key, count + 1);
+            }
+
+            info!("Sent log pattern alarm for node {}: pattern '{}'", node_name, pattern);
+        } else {
+            warn!("Failed to send log pattern alarm: HTTP {}", response.status());
+        }
+
+        Ok(())
+    }
+
+    // NEW: Execute SSH command (helper method for log monitoring)
+    async fn execute_ssh_command(&self, server_host: &str, command: &str) -> Result<String> {
+        // Find server config to use SSH manager pattern
+        let server_config = self.config.servers.values()
+            .find(|server| &server.host == server_host)
+            .ok_or_else(|| anyhow::anyhow!("Server host {} not found in config", server_host))?;
+
+        // Create SSH connection (following existing pattern)
+        let mut connection = crate::ssh::SshConnection::new(
+            &server_config.host,
+            &server_config.ssh_username,
+            &server_config.ssh_key_path,
+            server_config.ssh_timeout_seconds,
+        ).await?;
+
+        // Execute command
+        let result = connection.execute_command(command).await?;
+        Ok(result)
+    }
+
     async fn start_maintenance_cleanup_task(&self) {
         let maintenance_tracker = self.maintenance_tracker.clone();
 
@@ -141,28 +424,75 @@ impl HealthMonitor {
             loop {
                 interval.tick().await;
 
-                // EXTENDED: Cleanup maintenance windows that have been running too long (8 hours max)
-                // This accommodates 5-hour pruning operations plus buffer time
-                let cleaned = maintenance_tracker.cleanup_expired_maintenance(8).await;
+                // EXTENDED: Cleanup maintenance windows that have been running too long (25 hours max)
+                // This accommodates 24-hour snapshot operations plus buffer time
+                let cleaned = maintenance_tracker.cleanup_expired_maintenance(25).await;
                 if cleaned > 0 {
-                    warn!("Cleaned up {} expired maintenance windows (8h max)", cleaned);
+                    warn!("Cleaned up {} expired maintenance windows (25h max)", cleaned);
                 }
             }
         });
     }
 
-    // FIXED: Race condition prevention - maintenance status takes priority
+    /// FIXED: Race condition eliminated using atomic maintenance status check
     async fn check_and_process_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<NodeHealth> {
         debug!("Checking health for node: {}", node_name);
 
-        // FIXED: Always check maintenance status first and give it absolute priority
-        let health = if self.maintenance_tracker.is_in_maintenance(node_name).await {
-            // Node is in maintenance - return maintenance status without doing RPC check
-            self.create_maintenance_health_status(node_name).await
+        // FIXED: Single atomic operation that gets both maintenance status and details
+        let (in_maintenance, maintenance_window) = self.maintenance_tracker.get_maintenance_status_atomic(node_name).await;
+
+        let health = if in_maintenance {
+            // Node is in maintenance - return maintenance status using the already-retrieved details
+            self.create_maintenance_health_status(node_name, maintenance_window).await
         } else {
             // Node is not in maintenance - do regular health check
             self.check_node_health(node_name, node_config).await
         };
+
+        // Auto-restore logic for unhealthy nodes
+        if matches!(health.status, HealthStatus::Unhealthy) {
+            let current_failures = self.get_failure_count(node_name).await;
+
+            // After 3 consecutive failures, check if auto-restore should trigger
+            if current_failures >= 3 && node_config.auto_restore_enabled.unwrap_or(false) {
+                info!("Node {} has {} consecutive failures, checking auto-restore conditions", node_name, current_failures);
+
+                // Check if we've already attempted auto-restore recently (prevent loops)
+                if self.should_attempt_auto_restore(node_name).await {
+                    match self.snapshot_manager.check_auto_restore_trigger(node_name).await {
+                        Ok(true) => {
+                            info!("Auto-restore triggers detected for node {}, initiating restore", node_name);
+
+                            // Record auto-restore attempt
+                            self.record_auto_restore_attempt(node_name).await;
+
+                            // Execute auto-restore in background task to not block health checking
+                            let snapshot_manager = self.snapshot_manager.clone();
+                            let node_name_clone = node_name.to_string();
+
+                            tokio::spawn(async move {
+                                match snapshot_manager.execute_auto_restore(&node_name_clone).await {
+                                    Ok(_) => {
+                                        info!("Auto-restore completed successfully for node {}", node_name_clone);
+                                    }
+                                    Err(e) => {
+                                        error!("Auto-restore failed for node {}: {}", node_name_clone, e);
+                                    }
+                                }
+                            });
+                        }
+                        Ok(false) => {
+                            debug!("Auto-restore triggers not found for node {}", node_name);
+                        }
+                        Err(e) => {
+                            warn!("Failed to check auto-restore triggers for node {}: {}", node_name, e);
+                        }
+                    }
+                } else {
+                    debug!("Auto-restore recently attempted for node {}, skipping", node_name);
+                }
+            }
+        }
 
         // Handle recovery notification (only for non-maintenance status)
         if matches!(health.status, HealthStatus::Healthy) {
@@ -180,6 +510,12 @@ impl HealthMonitor {
                     let mut last_alarms = self.last_alarm_times.write().await;
                     alarm_counts.remove(node_name);
                     last_alarms.remove(node_name);
+                }
+
+                // Clear auto-restore attempt tracking on recovery
+                {
+                    let mut auto_restore_attempts = self.auto_restore_attempts.write().await;
+                    auto_restore_attempts.remove(node_name);
                 }
             }
         }
@@ -200,9 +536,29 @@ impl HealthMonitor {
         Ok(health)
     }
 
-    /// FIXED: Create maintenance health status with proper info from tracker
-    async fn create_maintenance_health_status(&self, node_name: &str) -> NodeHealth {
-        if let Some(maintenance) = self.maintenance_tracker.get_maintenance_status(node_name).await {
+    /// Check if we should attempt auto-restore (prevent infinite loops)
+    async fn should_attempt_auto_restore(&self, node_name: &str) -> bool {
+        let auto_restore_attempts = self.auto_restore_attempts.read().await;
+
+        if let Some(last_attempt) = auto_restore_attempts.get(node_name) {
+            let time_since_attempt = Utc::now().signed_duration_since(*last_attempt);
+            // Only attempt auto-restore if it's been more than 2 hours since last attempt
+            time_since_attempt.num_hours() >= 2
+        } else {
+            // No previous attempt recorded
+            true
+        }
+    }
+
+    /// Record auto-restore attempt
+    async fn record_auto_restore_attempt(&self, node_name: &str) {
+        let mut auto_restore_attempts = self.auto_restore_attempts.write().await;
+        auto_restore_attempts.insert(node_name.to_string(), Utc::now());
+    }
+
+    /// FIXED: Create maintenance health status using already-retrieved maintenance window
+    async fn create_maintenance_health_status(&self, node_name: &str, maintenance_window: Option<crate::maintenance_tracker::MaintenanceWindow>) -> NodeHealth {
+        if let Some(maintenance) = maintenance_window {
             let duration = Utc::now().signed_duration_since(maintenance.started_at);
 
             NodeHealth {
@@ -220,7 +576,7 @@ impl HealthMonitor {
                 )),
             }
         } else {
-            // Maintenance tracker says it's in maintenance but no details available
+            // Fallback case - maintenance tracker says it's in maintenance but no details available
             NodeHealth {
                 node_name: node_name.to_string(),
                 status: HealthStatus::Maintenance,
@@ -233,7 +589,7 @@ impl HealthMonitor {
         }
     }
 
-    /// Standard health check without maintenance considerations - now private since race condition is fixed
+    /// Standard health check without maintenance considerations
     async fn check_node_health(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
         let start_time = Instant::now();
         let check_time = Utc::now();
@@ -518,7 +874,7 @@ impl HealthMonitor {
         self.database.get_node_health_history(node_name, limit).await
     }
 
-    // UPDATED: Force health check now respects maintenance status
+    /// UPDATED: Force health check now respects maintenance status atomically
     pub async fn force_health_check(&self, node_name: &str) -> Result<NodeHealth> {
         let node_config = self
             .config
@@ -527,8 +883,10 @@ impl HealthMonitor {
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
         // Use the same race-condition-free logic as the regular monitoring
-        let health = if self.maintenance_tracker.is_in_maintenance(node_name).await {
-            self.create_maintenance_health_status(node_name).await
+        let (in_maintenance, maintenance_window) = self.maintenance_tracker.get_maintenance_status_atomic(node_name).await;
+
+        let health = if in_maintenance {
+            self.create_maintenance_health_status(node_name, maintenance_window).await
         } else {
             self.check_node_health(node_name, node_config).await
         };
@@ -562,6 +920,11 @@ impl Clone for HealthMonitor {
             last_alarm_times: self.last_alarm_times.clone(),
             alarm_counts: self.alarm_counts.clone(),
             maintenance_tracker: self.maintenance_tracker.clone(),
+            snapshot_manager: self.snapshot_manager.clone(),
+            auto_restore_attempts: self.auto_restore_attempts.clone(),
+            // NEW: Clone log monitoring state
+            last_log_check_times: self.last_log_check_times.clone(),
+            log_alarm_counts: self.log_alarm_counts.clone(),
         }
     }
 }

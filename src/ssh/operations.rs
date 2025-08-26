@@ -184,6 +184,7 @@ impl SshManager {
 
     /// Validate server connectivity using isolated SSH connections
     /// Each server test uses its own independent connection
+    #[allow(dead_code)]
     pub async fn validate_hermes_dependencies(&self) -> HashMap<String, bool> {
         info!("Validating dependencies for all Hermes instances using isolated SSH connections");
 
@@ -211,6 +212,7 @@ impl SshManager {
 
     /// Get detailed dependency health report using isolated SSH connections
     /// Each dependency check uses its own independent connection
+    #[allow(dead_code)]
     pub async fn get_hermes_dependency_report(&self) -> HashMap<String, serde_json::Value> {
         info!("Generating detailed dependency report for all Hermes instances using isolated SSH connections");
 
@@ -268,6 +270,7 @@ impl SshManager {
 
     /// Enhanced connectivity validation with detailed connection testing
     /// Each server gets multiple independent connection tests
+    #[allow(dead_code)]
     pub async fn validate_all_server_connectivity_detailed(&self) -> HashMap<String, serde_json::Value> {
         info!("Running detailed connectivity validation with multiple independent connections per server");
 

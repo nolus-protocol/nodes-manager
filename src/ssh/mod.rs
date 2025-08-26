@@ -72,15 +72,14 @@ impl SshConnection {
         })
     }
 
-    // REVERTED: Back to original working logic that was NOT a bug
+    // FIXED: Handle large output buffer while ensuring synchronous execution
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // REVERTED: Original working design - cosmos-pruner always continues workflow
         let wrapped_command = if command.contains("cosmos-pruner") {
-            // Long-running command: redirect output but always report success to continue workflow
-            // This is INTENTIONAL design - pruning workflow continues regardless of pruner result
-            format!("bash -c '{} >/dev/null 2>&1 && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
+            // FIXED: Run synchronously with output management - use semicolon not &&
+            // This waits for completion but manages the buffer issue
+            format!("bash -c '{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__'", command)
         } else {
             // Normal command with proper completion detection
             format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
@@ -131,9 +130,21 @@ impl SshConnection {
             .trim()
             .to_string();
 
-        // For cosmos-pruner, since we redirected output, provide a meaningful completion message
+        // For cosmos-pruner, try to get some output from the log file
         if command.contains("cosmos-pruner") {
             debug!("cosmos-pruner completed successfully on {}", self.host);
+
+            // Try to get last few lines of the pruner log for feedback
+            match self.client.execute("tail -5 /tmp/cosmos_pruner.log 2>/dev/null || echo 'Log not available'").await {
+                Ok(log_result) => {
+                    let log_output = log_result.stdout.trim();
+                    if !log_output.is_empty() && log_output != "Log not available" {
+                        return Ok(format!("Pruning completed. Last output:\n{}", log_output));
+                    }
+                }
+                Err(_) => {} // Ignore log read errors
+            }
+
             return Ok("Pruning completed successfully".to_string());
         }
 

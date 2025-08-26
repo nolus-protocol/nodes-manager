@@ -18,6 +18,12 @@ pub struct MainConfig {
     pub rpc_timeout_seconds: u64,
     pub alarm_webhook_url: String,
     pub hermes_min_uptime_minutes: u64,
+    pub auto_restore_trigger_words: Option<Vec<String>>,
+    // NEW: Log monitoring configuration
+    pub log_monitoring_enabled: Option<bool>,
+    pub log_monitoring_patterns: Option<Vec<String>>,
+    pub log_monitoring_interval_minutes: Option<u64>,
+    pub log_monitoring_context_lines: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +47,12 @@ pub struct NodeConfigFile {
     pub pruning_service_name: Option<String>,
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
+    pub snapshots_enabled: Option<bool>,
+    pub snapshot_backup_path: Option<String>,
+    pub auto_restore_enabled: Option<bool>,
+    // NEW: Scheduled snapshot fields
+    pub snapshot_schedule: Option<String>,
+    pub snapshot_retention_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +80,12 @@ impl From<NodeConfigFile> for NodeConfig {
             pruning_service_name: file_config.pruning_service_name,
             log_path: file_config.log_path,
             truncate_logs_enabled: file_config.truncate_logs_enabled,
+            snapshots_enabled: file_config.snapshots_enabled,
+            snapshot_backup_path: file_config.snapshot_backup_path,
+            auto_restore_enabled: file_config.auto_restore_enabled,
+            // NEW: Map scheduled snapshot fields
+            snapshot_schedule: file_config.snapshot_schedule,
+            snapshot_retention_count: file_config.snapshot_retention_count,
         }
     }
 }
@@ -102,6 +120,60 @@ pub fn validate_config(config: &Config) -> Result<()> {
                 "Node '{}' has truncate_logs_enabled=true but no log_path specified",
                 node_name
             ));
+        }
+
+        // Validate snapshot configurations
+        if node.snapshots_enabled.unwrap_or(false) {
+            if node.snapshot_backup_path.is_none() {
+                return Err(anyhow::anyhow!(
+                    "Node '{}' has snapshots enabled but no snapshot_backup_path specified",
+                    node_name
+                ));
+            }
+
+            if node.pruning_deploy_path.is_none() {
+                return Err(anyhow::anyhow!(
+                    "Node '{}' has snapshots enabled but no pruning_deploy_path specified (required for snapshot operations)",
+                    node_name
+                ));
+            }
+        }
+
+        if node.auto_restore_enabled.unwrap_or(false) && !node.snapshots_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!(
+                "Node '{}' has auto_restore_enabled=true but snapshots_enabled=false",
+                node_name
+            ));
+        }
+
+        // NEW: Validate scheduled snapshot configuration
+        if node.snapshot_schedule.is_some() {
+            if !node.snapshots_enabled.unwrap_or(false) {
+                return Err(anyhow::anyhow!(
+                    "Node '{}' has snapshot_schedule but snapshots_enabled=false",
+                    node_name
+                ));
+            }
+
+            if let Some(schedule) = &node.snapshot_schedule {
+                if let Err(e) = validate_cron_schedule(schedule) {
+                    return Err(anyhow::anyhow!(
+                        "Invalid snapshot schedule for node '{}': {}",
+                        node_name,
+                        e
+                    ));
+                }
+            }
+
+            // Validate retention count
+            if let Some(retention_count) = node.snapshot_retention_count {
+                if retention_count == 0 {
+                    return Err(anyhow::anyhow!(
+                        "Node '{}' has snapshot_retention_count=0, must be at least 1",
+                        node_name
+                    ));
+                }
+            }
         }
     }
 
@@ -154,6 +226,24 @@ pub fn validate_config(config: &Config) -> Result<()> {
                 "Invalid restart schedule for hermes '{}': {}",
                 hermes_name,
                 e
+            ));
+        }
+    }
+
+    // Validate global auto-restore trigger words
+    if config.auto_restore_trigger_words.is_empty() {
+        println!("Warning: No auto-restore trigger words configured - auto-restore will be disabled");
+    }
+
+    // NEW: Validate log monitoring configuration
+    if config.log_monitoring_enabled {
+        if config.log_monitoring_patterns.is_empty() {
+            println!("Warning: Log monitoring enabled but no patterns configured");
+        }
+
+        if config.log_monitoring_interval_minutes == 0 {
+            return Err(anyhow::anyhow!(
+                "Log monitoring interval must be greater than 0 minutes"
             ));
         }
     }

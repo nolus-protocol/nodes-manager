@@ -4,7 +4,6 @@ pub mod operations;
 
 pub use operations::MaintenanceScheduler;
 
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,6 +26,7 @@ pub enum OperationType {
     NodePruning,
     HermesRestart,
     SystemMaintenance,
+    SnapshotCreation,  // NEW: Scheduled snapshot creation
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +85,21 @@ impl ScheduledOperation {
         }
     }
 
+    // NEW: Scheduled snapshot creation
+    pub fn new_snapshot_creation(target_name: String, schedule: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            operation_type: OperationType::SnapshotCreation,
+            target_name,
+            schedule,
+            enabled: true,
+            next_run: None,
+            last_run: None,
+            last_result: None,
+            created_at: Utc::now(),
+        }
+    }
+
     pub fn update_result(&mut self, result: OperationResult) {
         self.last_run = Some(result.executed_at);
         self.last_result = Some(result);
@@ -126,36 +141,6 @@ pub enum OperationStatus {
     Overdue,
 }
 
-pub fn validate_cron_expression(expression: &str) -> Result<()> {
-    // Basic validation for cron expression format
-    let parts: Vec<&str> = expression.split_whitespace().collect();
-
-    if parts.len() != 6 {
-        return Err(anyhow::anyhow!(
-            "Cron expression must have exactly 6 parts (second minute hour day month weekday), got: {}",
-            expression
-        ));
-    }
-
-    // Basic range validation for each field
-    for (i, part) in parts.iter().enumerate() {
-        if part == &"*" {
-            continue; // Wildcard is always valid
-        }
-
-        // Simple numeric validation - in a real implementation you'd be more thorough
-        if !part.chars().all(|c| c.is_ascii_digit() || c == '-' || c == ',' || c == '/') {
-            return Err(anyhow::anyhow!(
-                "Invalid character in cron field {}: {}",
-                i + 1,
-                part
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 pub fn create_operation_summary(operations: &[ScheduledOperation]) -> OperationsSummary {
     let total = operations.len();
     let enabled = operations.iter().filter(|op| op.enabled).count();
@@ -171,12 +156,26 @@ pub fn create_operation_summary(operations: &[ScheduledOperation]) -> Operations
         .filter_map(|op| op.next_run)
         .min();
 
+    // NEW: Count operation types
+    let pruning_ops = operations.iter()
+        .filter(|op| matches!(op.operation_type, OperationType::NodePruning))
+        .count();
+    let hermes_ops = operations.iter()
+        .filter(|op| matches!(op.operation_type, OperationType::HermesRestart))
+        .count();
+    let snapshot_ops = operations.iter()
+        .filter(|op| matches!(op.operation_type, OperationType::SnapshotCreation))
+        .count();
+
     OperationsSummary {
         total_operations: total,
         enabled_operations: enabled,
         failed_operations: failed,
         overdue_operations: overdue,
         next_scheduled_run: next_run,
+        pruning_operations: pruning_ops,
+        hermes_operations: hermes_ops,
+        snapshot_operations: snapshot_ops,
     }
 }
 
@@ -187,22 +186,14 @@ pub struct OperationsSummary {
     pub failed_operations: usize,
     pub overdue_operations: usize,
     pub next_scheduled_run: Option<DateTime<Utc>>,
+    pub pruning_operations: usize,
+    pub hermes_operations: usize,
+    pub snapshot_operations: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_cron_expression() {
-        // Valid expressions
-        assert!(validate_cron_expression("0 0 12 * * 2").is_ok());
-        assert!(validate_cron_expression("0 30 14 * * 1-5").is_ok());
-
-        // Invalid expressions
-        assert!(validate_cron_expression("invalid").is_err());
-        assert!(validate_cron_expression("0 0 12 *").is_err()); // Too few parts
-    }
 
     #[test]
     fn test_scheduled_operation_creation() {
@@ -214,6 +205,19 @@ mod tests {
         assert_eq!(op.target_name, "test-node");
         assert_eq!(op.schedule, "0 0 12 * * 2");
         assert!(matches!(op.operation_type, OperationType::NodePruning));
+        assert!(op.enabled);
+    }
+
+    #[test]
+    fn test_snapshot_operation_creation() {
+        let op = ScheduledOperation::new_snapshot_creation(
+            "test-node".to_string(),
+            "0 0 6 * * 0".to_string()
+        );
+
+        assert_eq!(op.target_name, "test-node");
+        assert_eq!(op.schedule, "0 0 6 * * 0");
+        assert!(matches!(op.operation_type, OperationType::SnapshotCreation));
         assert!(op.enabled);
     }
 }
