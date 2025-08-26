@@ -264,8 +264,8 @@
             position: relative;
         }
         .btn-icon svg {
-            width: 16px;
-            height: 16px;
+            width: 20px;
+            height: 20px;
         }
         .tooltip {
             visibility: hidden;
@@ -456,10 +456,14 @@
         }
         .schedule-item {
             padding: 0.5rem;
-            background: rgba(49, 130, 206, 0.05);
-            border: 1px solid rgba(49, 130, 206, 0.1);
+            background: rgba(159, 122, 234, 0.05);
+            border: 1px solid rgba(159, 122, 234, 0.1);
             border-radius: 0.25rem;
             font-size: 0.75rem;
+        }
+        .schedule-item.pruning {
+            background: rgba(214, 158, 46, 0.05);
+            border-color: rgba(214, 158, 46, 0.1);
         }
         .schedule-item.snapshot {
             background: rgba(159, 122, 234, 0.05);
@@ -595,8 +599,8 @@
                 min-height: 2rem;
             }
             .btn-icon svg {
-                width: 14px;
-                height: 14px;
+                width: 18px;
+                height: 18px;
             }
             .infrastructure-table {
                 font-size: 0.75rem;
@@ -1016,7 +1020,7 @@
                                                 <button class="btn btn-icon btn-warning"
                                                         onclick="executeManualPruning('${node.node_name}')"
                                                         title="Run pruning now">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                                                         <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/>
                                                     </svg>
                                                     <div class="tooltip">Run Pruning</div>
@@ -1027,7 +1031,7 @@
                                                 <button class="btn btn-icon btn-snapshot"
                                                         onclick="executeCreateSnapshot('${node.node_name}')"
                                                         title="Create snapshot now">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                                                         <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4z"/>
                                                         <path d="M3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6z"/>
                                                     </svg>
@@ -1037,7 +1041,7 @@
                                                 <button class="btn btn-icon btn-primary"
                                                         onclick="executeRestoreSnapshot('${node.node_name}')"
                                                         title="Restore from latest snapshot">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
                                                     </svg>
                                                     <div class="tooltip">Restore Snapshot</div>
@@ -1048,7 +1052,7 @@
                                                 <button class="btn btn-icon btn-cancel"
                                                         onclick="cancelMaintenanceOperation('${node.node_name}')"
                                                         title="Cancel maintenance operation">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/>
                                                     </svg>
                                                     <div class="tooltip">Cancel Operation</div>
@@ -1164,7 +1168,7 @@
             return `
                 <div class="multiple-schedules">
                     ${nextRuns.map(run => `
-                        <div class="schedule-item">
+                        <div class="schedule-item ${run.type.toLowerCase()}">
                             <div class="schedule-type">${run.type}</div>
                             <div class="schedule-details">
                                 <div style="font-weight: 500; margin-bottom: 0.25rem;">${formatNextRun(run.next_run)}</div>
@@ -1233,7 +1237,7 @@
                                             <button class="btn btn-icon btn-hermes"
                                                     onclick="executeManualHermesRestart('${hermes.name}')"
                                                     title="Restart Hermes now">
-                                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                                                     <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                 </svg>
                                                 <div class="tooltip">Restart Hermes</div>
@@ -1254,7 +1258,7 @@
         async function executeCreateSnapshot(nodeName) {
             const nodeDisplayName = formatNodeName(nodeName);
 
-            if (!confirm(`Create LZ4 Snapshot Confirmation\n\nCreate snapshot for ${nodeDisplayName}?\n\n• Node service will be stopped\n• Data will be compressed with LZ4\n• Service will be restarted\n• This may take 30-120 minutes\n\nProceed with snapshot creation?`)) {
+            if (!confirm(`Create LZ4 Snapshot Confirmation\n\nCreate snapshot for ${nodeDisplayName}?\n\nThis will stop the node service\nData will be compressed with LZ4\nService will be restarted\nThis may take 30-120 minutes\n\nProceed with snapshot creation?`)) {
                 return;
             }
 
@@ -1282,7 +1286,7 @@
         async function executeRestoreSnapshot(nodeName) {
             const nodeDisplayName = formatNodeName(nodeName);
 
-            if (!confirm(`Restore Snapshot Confirmation\n\nRestore latest snapshot for ${nodeDisplayName}?\n\n• Node service will be stopped\n• Latest snapshot will be restored\n• Service will be restarted\n• This may take 15-45 minutes\n\nProceed with snapshot restore?`)) {
+            if (!confirm(`Restore Snapshot Confirmation\n\nRestore latest snapshot for ${nodeDisplayName}?\n\nNode service will be stopped\nLatest snapshot will be restored\nService will be restarted\nThis may take 15-45 minutes\n\nProceed with snapshot restore?`)) {
                 return;
             }
 
@@ -1310,7 +1314,7 @@
         async function executeManualPruning(targetName) {
             const nodeDisplayName = formatNodeName(targetName);
 
-            if (!confirm(`Manual Pruning Confirmation\n\nExecute pruning for ${nodeDisplayName}?\n\n• This will stop the node service\n• Data will be pruned according to configuration\n• Service will be restarted after completion\n• This may take 15-30 minutes\n\nProceed with manual pruning?`)) {
+            if (!confirm(`Manual Pruning Confirmation\n\nExecute pruning for ${nodeDisplayName}?\n\nThis will stop the node service\nData will be pruned according to configuration\nService will be restarted after completion\nThis may take 15-30 minutes\n\nProceed with manual pruning?`)) {
                 return;
             }
 
@@ -1343,7 +1347,7 @@
         async function executeManualHermesRestart(targetName) {
             const hermesDisplayName = formatHermesName(targetName);
 
-            if (!confirm(`Manual Hermes Restart Confirmation\n\nRestart Hermes instance: ${hermesDisplayName}?\n\n• Hermes service will be stopped\n• Dependencies will be checked\n• Service will be restarted\n• This may take 2-5 minutes\n\nProceed with manual restart?`)) {
+            if (!confirm(`Manual Hermes Restart Confirmation\n\nRestart Hermes instance: ${hermesDisplayName}?\n\nHermes service will be stopped\nDependencies will be checked\nService will be restarted\nThis may take 2-5 minutes\n\nProceed with manual restart?`)) {
                 return;
             }
 
@@ -1376,7 +1380,7 @@
         async function cancelMaintenanceOperation(nodeName) {
             const nodeDisplayName = formatNodeName(nodeName);
 
-            if (!confirm(`Cancel Maintenance Operation\n\nCancel ongoing maintenance for ${nodeDisplayName}?\n\n• This will attempt to stop the current operation\n• The service may need manual intervention\n• Use with caution\n\nProceed with cancellation?`)) {
+            if (!confirm(`Cancel Maintenance Operation\n\nCancel ongoing maintenance for ${nodeDisplayName}?\n\nThis will attempt to stop the current operation\nThe service may need manual intervention\nUse with caution\n\nProceed with cancellation?`)) {
                 return;
             }
 
