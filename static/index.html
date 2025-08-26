@@ -449,6 +449,30 @@
             color: var(--text-muted);
             font-family: 'Monaco', 'Consolas', monospace;
         }
+        .multiple-schedules {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        .schedule-item {
+            padding: 0.5rem;
+            background: rgba(49, 130, 206, 0.05);
+            border: 1px solid rgba(49, 130, 206, 0.1);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+        }
+        .schedule-item.snapshot {
+            background: rgba(159, 122, 234, 0.05);
+            border-color: rgba(159, 122, 234, 0.1);
+        }
+        .schedule-type {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+        .schedule-details {
+            color: var(--text-muted);
+        }
         .next-run {
             font-size: 0.75rem;
         }
@@ -699,6 +723,7 @@
         let hermesConfigs = {};
         let scheduledOperations = {};
         let snapshotStats = {};
+        let isLoadingData = false;
 
         // Store data globally to calculate metrics correctly
         let currentNodesData = null;
@@ -714,14 +739,20 @@
         }
 
         async function loadAllData() {
+            // Prevent overlapping load operations to reduce flickering
+            if (isLoadingData) return;
+            isLoadingData = true;
+
             try {
-                // Load configs and scheduled operations first, then UI data
+                // Load configs and scheduled operations first
                 await Promise.all([
                     loadNodeConfigs(),
                     loadHermesConfigs(),
-                    loadScheduledOperations(),
-                    loadSnapshotStats()
+                    loadScheduledOperations()
                 ]);
+
+                // Load snapshot stats completely before proceeding
+                await loadSnapshotStats();
 
                 // Then load UI data that depends on the configs
                 await Promise.all([
@@ -735,6 +766,8 @@
             } catch (error) {
                 console.error('Error loading data:', error);
                 showAlert('Failed to load data: ' + error.message, 'error');
+            } finally {
+                isLoadingData = false;
             }
         }
 
@@ -771,18 +804,13 @@
                     scheduledOperations = {};
                     if (data.data.scheduled) {
                         data.data.scheduled.forEach(op => {
-                            scheduledOperations[op.target_name] = op;
+                            if (!scheduledOperations[op.target_name]) {
+                                scheduledOperations[op.target_name] = [];
+                            }
+                            scheduledOperations[op.target_name].push(op);
                         });
                     }
                     updateScheduleMetrics(data.data);
-
-                    // Re-render tables if data is already loaded to show schedule info
-                    if (currentNodesData) {
-                        displayNodes(currentNodesData);
-                    }
-                    if (currentHermesData) {
-                        displayHermesInstances(currentHermesData);
-                    }
                 }
             } catch (error) {
                 console.error('Failed to load scheduled operations:', error);
@@ -791,21 +819,29 @@
 
         async function loadSnapshotStats() {
             try {
-                snapshotStats = {};
-                // Load stats for snapshot-enabled nodes
+                const newSnapshotStats = {};
+                const statPromises = [];
+
+                // Load stats for snapshot-enabled nodes in parallel but wait for all
                 for (const [nodeName, nodeConfig] of Object.entries(nodeConfigs)) {
                     if (nodeConfig.snapshots_enabled) {
-                        try {
-                            const response = await fetch(`/api/snapshots/${nodeName}/stats`);
-                            const data = await response.json();
-                            if (data.success) {
-                                snapshotStats[nodeName] = data.data;
-                            }
-                        } catch (error) {
-                            console.warn(`Failed to load snapshot stats for ${nodeName}:`, error);
-                        }
+                        const promise = fetch(`/api/snapshots/${nodeName}/stats`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    newSnapshotStats[nodeName] = data.data;
+                                }
+                            })
+                            .catch(error => {
+                                console.warn(`Failed to load snapshot stats for ${nodeName}:`, error);
+                            });
+                        statPromises.push(promise);
                     }
                 }
+
+                // Wait for all stats to load before updating
+                await Promise.all(statPromises);
+                snapshotStats = newSnapshotStats;
             } catch (error) {
                 console.error('Failed to load snapshot stats:', error);
             }
@@ -920,7 +956,7 @@
                     <tbody>
                         ${sortedNodes.map(node => {
                             const nodeConfig = nodeConfigs[node.node_name] || {};
-                            const scheduledOp = scheduledOperations[node.node_name];
+                            const nodeSchedules = scheduledOperations[node.node_name] || [];
                             const nodeSnapshots = snapshotStats[node.node_name];
 
                             const isPruningEnabled = nodeConfig.pruning_enabled;
@@ -942,7 +978,7 @@
                                                 <div class="snapshot-features">
                                                     ${hasScheduledSnapshots ? '<span class="snapshot-feature">Scheduled</span>' : ''}
                                                     ${isAutoRestoreEnabled ? '<span class="snapshot-feature">Auto-Restore</span>' : ''}
-                                                    ${nodeSnapshots ? `<span class="snapshot-feature">${nodeSnapshots.total_snapshots} saved</span>` : ''}
+                                                    <span class="snapshot-feature">${nodeSnapshots ? nodeSnapshots.total_snapshots : 0} saved</span>
                                                 </div>
                                             </div>
                                         ` : ''}
@@ -969,10 +1005,10 @@
                                         </div>
                                     </td>
                                     <td onclick="event.stopPropagation();">
-                                        ${scheduledOp ? renderScheduleInfo(scheduledOp) : '<div class="no-schedule">No schedule</div>'}
+                                        ${renderMultipleSchedules(node.node_name, nodeConfig)}
                                     </td>
                                     <td onclick="event.stopPropagation();">
-                                        ${scheduledOp ? renderNextRun(scheduledOp) : '<div class="no-schedule">-</div>'}
+                                        ${renderNextRunTimes(node.node_name, nodeConfig)}
                                     </td>
                                     <td onclick="event.stopPropagation();">
                                         <div class="action-buttons">
@@ -1030,6 +1066,116 @@
             container.innerHTML = tableHtml;
         }
 
+        function renderMultipleSchedules(nodeName, nodeConfig) {
+            const schedules = [];
+
+            // Check for pruning schedule
+            if (nodeConfig.pruning_enabled && nodeConfig.pruning_schedule) {
+                const scheduleInfo = parseCronExpression(nodeConfig.pruning_schedule);
+                schedules.push({
+                    type: 'Pruning',
+                    schedule: nodeConfig.pruning_schedule,
+                    readable: scheduleInfo.readable,
+                    class: 'pruning'
+                });
+            }
+
+            // Check for snapshot schedule
+            if (nodeConfig.snapshots_enabled && nodeConfig.snapshot_schedule) {
+                const scheduleInfo = parseCronExpression(nodeConfig.snapshot_schedule);
+                schedules.push({
+                    type: 'Snapshot',
+                    schedule: nodeConfig.snapshot_schedule,
+                    readable: scheduleInfo.readable,
+                    class: 'snapshot'
+                });
+            }
+
+            if (schedules.length === 0) {
+                return '<div class="no-schedule">No schedules</div>';
+            }
+
+            if (schedules.length === 1) {
+                return `
+                    <div class="schedule-info">
+                        <div class="schedule-readable">${schedules[0].readable}</div>
+                        <div class="schedule-cron">${schedules[0].schedule}</div>
+                        <div style="font-size: 0.7rem; color: var(--accent-color); margin-top: 0.25rem;">${schedules[0].type}</div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="multiple-schedules">
+                    ${schedules.map(sched => `
+                        <div class="schedule-item ${sched.class}">
+                            <div class="schedule-type">${sched.type}</div>
+                            <div class="schedule-details">
+                                <div style="font-weight: 500; margin-bottom: 0.25rem;">${sched.readable}</div>
+                                <div style="font-family: monospace; font-size: 0.7rem; color: var(--text-muted);">${sched.schedule}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderNextRunTimes(nodeName, nodeConfig) {
+            const nextRuns = [];
+
+            // Find scheduled operations for this node
+            const nodeSchedules = scheduledOperations[nodeName] || [];
+
+            // Look for pruning schedule
+            if (nodeConfig.pruning_enabled && nodeConfig.pruning_schedule) {
+                const pruningOp = nodeSchedules.find(op => op.operation_type === 'NodePruning' || op.operation_type === 'pruning');
+                if (pruningOp && pruningOp.next_run) {
+                    nextRuns.push({
+                        type: 'Pruning',
+                        next_run: pruningOp.next_run
+                    });
+                }
+            }
+
+            // Look for snapshot schedule
+            if (nodeConfig.snapshots_enabled && nodeConfig.snapshot_schedule) {
+                const snapshotOp = nodeSchedules.find(op => op.operation_type === 'SnapshotCreation' || op.operation_type === 'snapshot_creation');
+                if (snapshotOp && snapshotOp.next_run) {
+                    nextRuns.push({
+                        type: 'Snapshot',
+                        next_run: snapshotOp.next_run
+                    });
+                }
+            }
+
+            if (nextRuns.length === 0) {
+                return '<div class="no-schedule">-</div>';
+            }
+
+            if (nextRuns.length === 1) {
+                return `
+                    <div class="next-run">
+                        <div class="next-run-time">${formatNextRun(nextRuns[0].next_run)}</div>
+                        <div class="next-run-countdown">${getTimeUntil(nextRuns[0].next_run)}</div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="multiple-schedules">
+                    ${nextRuns.map(run => `
+                        <div class="schedule-item">
+                            <div class="schedule-type">${run.type}</div>
+                            <div class="schedule-details">
+                                <div style="font-weight: 500; margin-bottom: 0.25rem;">${formatNextRun(run.next_run)}</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">${getTimeUntil(run.next_run)}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
         function displayHermesInstances(hermesInstances) {
             const container = document.getElementById('hermes-container');
 
@@ -1050,7 +1196,7 @@
                 <table class="infrastructure-table">
                     <tbody>
                         ${sortedHermes.map(hermes => {
-                            const scheduledOp = scheduledOperations[hermes.name];
+                            const scheduledOp = (scheduledOperations[hermes.name] || [])[0];
                             const statusClass = hermes.status ? getHermesStatusClass(hermes.status) : 'status-unknown';
 
                             return `
