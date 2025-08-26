@@ -11,10 +11,20 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 use crate::database::Database;
-use crate::health::{parse_rpc_response, parse_block_height, parse_block_time, HealthMetrics, HealthThresholds};
+use crate::health::{parse_rpc_response, parse_block_height, parse_block_time, HealthThresholds};
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotManager;
 use crate::{AlarmPayload, Config, HealthStatus, NodeConfig, NodeHealth};
+
+// NEW: Track block progression for health determination
+#[derive(Debug, Clone)]
+struct BlockProgressionInfo {
+    node_name: String,
+    current_height: u64,
+    previous_height: Option<u64>,
+    last_progression_time: chrono::DateTime<Utc>,
+    stuck_check_count: u32,
+}
 
 pub struct HealthMonitor {
     config: Arc<Config>,
@@ -27,7 +37,9 @@ pub struct HealthMonitor {
     maintenance_tracker: Arc<MaintenanceTracker>,
     snapshot_manager: Arc<SnapshotManager>,
     auto_restore_attempts: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
-    // NEW: Log monitoring state
+    // NEW: Track block progression
+    block_progression: Arc<tokio::sync::RwLock<HashMap<String, BlockProgressionInfo>>>,
+    // Log monitoring state
     last_log_check_times: Arc<tokio::sync::RwLock<HashMap<String, chrono::DateTime<Utc>>>>,
     log_alarm_counts: Arc<tokio::sync::RwLock<HashMap<String, u32>>>,
 }
@@ -55,19 +67,19 @@ impl HealthMonitor {
             maintenance_tracker,
             snapshot_manager,
             auto_restore_attempts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            // NEW: Initialize log monitoring state
+            block_progression: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             last_log_check_times: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             log_alarm_counts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
     pub async fn start_monitoring(&self) -> Result<()> {
-        info!("Starting health monitoring service with maintenance awareness, auto-restore capability, and log monitoring");
+        info!("Starting health monitoring service with block progression-based health checks and log monitoring");
 
         let check_interval = Duration::from_secs(self.config.check_interval_seconds);
         info!("Health check interval: {}s", check_interval.as_secs());
 
-        // NEW: Log monitoring configuration
+        // Log monitoring configuration
         if self.config.log_monitoring_enabled {
             info!("Log monitoring enabled with {} patterns, checking every {} minutes",
                   self.config.log_monitoring_patterns.len(),
@@ -93,7 +105,7 @@ impl HealthMonitor {
                 .filter(|(_, node)| node.enabled)
                 .collect();
 
-            info!("Checking health for {} enabled nodes", enabled_nodes.len());
+            info!("Checking health for {} enabled nodes using block progression logic", enabled_nodes.len());
 
             // Check all nodes in parallel
             let mut tasks = Vec::new();
@@ -160,7 +172,7 @@ impl HealthMonitor {
         }
     }
 
-    // NEW: Log monitoring task
+    // Log monitoring task
     async fn start_log_monitoring_task(&self) {
         let monitor = self.clone();
 
@@ -226,7 +238,7 @@ impl HealthMonitor {
         });
     }
 
-    // NEW: Check log patterns for a specific node
+    // Check log patterns for a specific node
     async fn check_log_patterns(&self, node_name: &str, node_config: &NodeConfig) -> Result<u32> {
         if self.config.log_monitoring_patterns.is_empty() {
             return Ok(0);
@@ -283,7 +295,7 @@ impl HealthMonitor {
         Ok(found_patterns)
     }
 
-    // NEW: Get context lines around pattern match
+    // Get context lines around pattern match
     fn get_log_context(&self, log_output: &str, pattern: &str, context_lines: u32) -> Vec<String> {
         let lines: Vec<&str> = log_output.lines().collect();
         let mut context = Vec::new();
@@ -316,7 +328,7 @@ impl HealthMonitor {
         context
     }
 
-    // NEW: Check if we should send alarm for log pattern (reuse existing rate limiting logic)
+    // Check if we should send alarm for log pattern (reuse existing rate limiting logic)
     async fn should_send_log_alarm(&self, node_name: &str, pattern: &str) -> bool {
         let alarm_key = format!("{}:{}", node_name, pattern);
 
@@ -338,7 +350,7 @@ impl HealthMonitor {
         }
     }
 
-    // NEW: Send log pattern alarm
+    // Send log pattern alarm
     async fn send_log_pattern_alarm(&self, node_name: &str, pattern: &str, context_lines: &[String]) -> Result<()> {
         if self.config.alarm_webhook_url.is_empty() {
             return Ok(());
@@ -395,7 +407,7 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // NEW: Execute SSH command (helper method for log monitoring)
+    // Execute SSH command (helper method for log monitoring)
     async fn execute_ssh_command(&self, server_host: &str, command: &str) -> Result<String> {
         // Find server config to use SSH manager pattern
         let server_config = self.config.servers.values()
@@ -424,8 +436,7 @@ impl HealthMonitor {
             loop {
                 interval.tick().await;
 
-                // EXTENDED: Cleanup maintenance windows that have been running too long (25 hours max)
-                // This accommodates 24-hour snapshot operations plus buffer time
+                // Cleanup maintenance windows that have been running too long (25 hours max)
                 let cleaned = maintenance_tracker.cleanup_expired_maintenance(25).await;
                 if cleaned > 0 {
                     warn!("Cleaned up {} expired maintenance windows (25h max)", cleaned);
@@ -434,11 +445,11 @@ impl HealthMonitor {
         });
     }
 
-    /// FIXED: Race condition eliminated using atomic maintenance status check
+    /// Check and process node health with race condition elimination
     async fn check_and_process_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<NodeHealth> {
         debug!("Checking health for node: {}", node_name);
 
-        // FIXED: Single atomic operation that gets both maintenance status and details
+        // Single atomic operation that gets both maintenance status and details
         let (in_maintenance, maintenance_window) = self.maintenance_tracker.get_maintenance_status_atomic(node_name).await;
 
         let health = if in_maintenance {
@@ -526,7 +537,6 @@ impl HealthMonitor {
         }
 
         // Check if we need to send an alarm (but NOT for maintenance status)
-        // This prevents false alarms when nodes are deliberately down for maintenance
         if !matches!(health.status, HealthStatus::Maintenance) && self.should_send_alarm(node_name, &health).await {
             if let Err(e) = self.send_health_alarm(node_name, &health).await {
                 error!("Failed to send alarm for node {}: {}", node_name, e);
@@ -556,7 +566,7 @@ impl HealthMonitor {
         auto_restore_attempts.insert(node_name.to_string(), Utc::now());
     }
 
-    /// FIXED: Create maintenance health status using already-retrieved maintenance window
+    /// Create maintenance health status using already-retrieved maintenance window
     async fn create_maintenance_health_status(&self, node_name: &str, maintenance_window: Option<crate::maintenance_tracker::MaintenanceWindow>) -> NodeHealth {
         if let Some(maintenance) = maintenance_window {
             let duration = Utc::now().signed_duration_since(maintenance.started_at);
@@ -589,7 +599,7 @@ impl HealthMonitor {
         }
     }
 
-    /// Standard health check without maintenance considerations
+    /// NEW: Block progression-based health check
     async fn check_node_health(&self, node_name: &str, node: &NodeConfig) -> NodeHealth {
         let start_time = Instant::now();
         let check_time = Utc::now();
@@ -625,32 +635,19 @@ impl HealthMonitor {
                                     let block_time = parse_block_time(&rpc_status.result.sync_info.latest_block_time);
                                     let catching_up = rpc_status.result.sync_info.catching_up;
 
-                                    // Reset failure count when RPC succeeds
-                                    {
+                                    // NEW: Determine health based on block progression
+                                    let status = self.determine_health_from_block_progression(
+                                        node_name,
+                                        block_height,
+                                        catching_up,
+                                        response_time.as_millis() as u64
+                                    ).await;
+
+                                    // Reset failure count when RPC succeeds and node is healthy
+                                    if matches!(status, HealthStatus::Healthy) {
                                         let mut failure_counts = self.failure_counts.write().await;
                                         failure_counts.insert(node_name.to_string(), 0);
                                     }
-
-                                    // Create health metrics
-                                    let metrics = HealthMetrics {
-                                        node_name: node_name.to_string(),
-                                        network: node.network.clone(),
-                                        block_height,
-                                        block_time,
-                                        catching_up,
-                                        response_time_ms: response_time.as_millis() as u64,
-                                        peers_count: None,
-                                        last_check: check_time,
-                                        consecutive_failures: 0,
-                                    };
-
-                                    let status = if metrics.is_healthy(&self.thresholds) {
-                                        HealthStatus::Healthy
-                                    } else if catching_up {
-                                        HealthStatus::Unknown
-                                    } else {
-                                        HealthStatus::Unhealthy
-                                    };
 
                                     NodeHealth {
                                         node_name: node_name.to_string(),
@@ -714,6 +711,149 @@ impl HealthMonitor {
                     error_message: Some(format!("Network error: {}", e)),
                 }
             }
+        }
+    }
+
+    /// NEW: Determine health based on block progression logic
+    async fn determine_health_from_block_progression(
+        &self,
+        node_name: &str,
+        current_block_height: Option<u64>,
+        catching_up: bool,
+        response_time_ms: u64,
+    ) -> HealthStatus {
+        // Check response time first
+        if response_time_ms > self.thresholds.max_response_time_ms {
+            debug!("Node {} unhealthy: slow response ({}ms)", node_name, response_time_ms);
+            return HealthStatus::Unhealthy;
+        }
+
+        // If we don't have current block height, it's unhealthy
+        let current_height = match current_block_height {
+            Some(h) => h,
+            None => {
+                debug!("Node {} unhealthy: no block height from RPC", node_name);
+                return HealthStatus::Unhealthy;
+            }
+        };
+
+        // If node is catching up, it's not unhealthy, just syncing
+        if catching_up {
+            debug!("Node {} is catching up (height: {})", node_name, current_height);
+            // Update progression info even when catching up
+            self.update_block_progression(node_name, current_height).await;
+            return HealthStatus::Unknown;
+        }
+
+        let now = Utc::now();
+
+        // Read previous progression info first
+        let previous_info = {
+            let progression_map = self.block_progression.read().await;
+            progression_map.get(node_name).cloned()
+        };
+
+        // Determine health status based on previous info
+        match previous_info {
+            Some(prev_info) => {
+                let prev_height = prev_info.previous_height.unwrap_or(prev_info.current_height);
+
+                if current_height > prev_height {
+                    // Blocks are progressing - healthy!
+                    debug!("Node {} healthy: blocks progressing ({} -> {})",
+                           node_name, prev_height, current_height);
+
+                    // Update progression info
+                    let mut progression_map = self.block_progression.write().await;
+                    progression_map.insert(node_name.to_string(), BlockProgressionInfo {
+                        node_name: node_name.to_string(),
+                        current_height,
+                        previous_height: Some(prev_height),
+                        last_progression_time: now,
+                        stuck_check_count: 0,
+                    });
+
+                    HealthStatus::Healthy
+                } else if current_height == prev_height {
+                    // No block progression - could be stuck or just fast checks
+                    let time_since_progression = now.signed_duration_since(prev_info.last_progression_time);
+                    let stuck_check_count = prev_info.stuck_check_count + 1;
+
+                    // Update stuck check count
+                    let mut progression_map = self.block_progression.write().await;
+                    progression_map.insert(node_name.to_string(), BlockProgressionInfo {
+                        node_name: node_name.to_string(),
+                        current_height,
+                        previous_height: Some(prev_height),
+                        last_progression_time: prev_info.last_progression_time,
+                        stuck_check_count,
+                    });
+
+                    // Consider stuck if no progression for configured time AND multiple checks
+                    if time_since_progression.num_minutes() > self.thresholds.block_stuck_threshold_minutes as i64
+                       && stuck_check_count >= self.thresholds.min_block_progression_checks {
+                        warn!("Node {} appears stuck: no block progression for {}m ({} checks at height {})",
+                              node_name, time_since_progression.num_minutes(), stuck_check_count, current_height);
+                        HealthStatus::Unhealthy
+                    } else {
+                        debug!("Node {} same height: {} ({}m since progression, {} checks)",
+                               node_name, current_height, time_since_progression.num_minutes(), stuck_check_count);
+                        HealthStatus::Healthy // Still healthy, just no new blocks yet
+                    }
+                } else {
+                    // Block height went backwards - very bad!
+                    error!("Node {} critical: block height went backwards ({} -> {})",
+                           node_name, prev_height, current_height);
+                    HealthStatus::Unhealthy
+                }
+            }
+            None => {
+                // First check for this node - assume healthy
+                debug!("Node {} first check: height={}, catching_up={}", node_name, current_height, catching_up);
+
+                let mut progression_map = self.block_progression.write().await;
+                progression_map.insert(node_name.to_string(), BlockProgressionInfo {
+                    node_name: node_name.to_string(),
+                    current_height,
+                    previous_height: None,
+                    last_progression_time: now,
+                    stuck_check_count: 0,
+                });
+
+                HealthStatus::Healthy
+            }
+        }
+    }
+
+    /// Helper to update block progression info
+    async fn update_block_progression(&self, node_name: &str, current_height: u64) {
+        let now = Utc::now();
+
+        // Read previous info first
+        let previous_info = {
+            let progression_map = self.block_progression.read().await;
+            progression_map.get(node_name).cloned()
+        };
+
+        // Update with new info
+        let mut progression_map = self.block_progression.write().await;
+
+        if let Some(prev_info) = previous_info {
+            progression_map.insert(node_name.to_string(), BlockProgressionInfo {
+                node_name: node_name.to_string(),
+                current_height,
+                previous_height: Some(prev_info.current_height),
+                last_progression_time: if current_height > prev_info.current_height { now } else { prev_info.last_progression_time },
+                stuck_check_count: if current_height > prev_info.current_height { 0 } else { prev_info.stuck_check_count },
+            });
+        } else {
+            progression_map.insert(node_name.to_string(), BlockProgressionInfo {
+                node_name: node_name.to_string(),
+                current_height,
+                previous_height: None,
+                last_progression_time: now,
+                stuck_check_count: 0,
+            });
         }
     }
 
@@ -787,6 +927,7 @@ impl HealthMonitor {
                 "catching_up": health.catching_up,
                 "consecutive_failures": self.get_failure_count(node_name).await,
                 "server_host": self.get_server_for_node(node_name).await,
+                "health_check_method": "block_progression_based"
             }),
         };
 
@@ -829,6 +970,7 @@ impl HealthMonitor {
             details: json!({
                 "status": "Healthy",
                 "server_host": self.get_server_for_node(node_name).await,
+                "health_check_method": "block_progression_based"
             }),
         };
 
@@ -874,7 +1016,7 @@ impl HealthMonitor {
         self.database.get_node_health_history(node_name, limit).await
     }
 
-    /// UPDATED: Force health check now respects maintenance status atomically
+    /// Force health check now respects maintenance status atomically
     pub async fn force_health_check(&self, node_name: &str) -> Result<NodeHealth> {
         let node_config = self
             .config
@@ -922,7 +1064,7 @@ impl Clone for HealthMonitor {
             maintenance_tracker: self.maintenance_tracker.clone(),
             snapshot_manager: self.snapshot_manager.clone(),
             auto_restore_attempts: self.auto_restore_attempts.clone(),
-            // NEW: Clone log monitoring state
+            block_progression: self.block_progression.clone(),
             last_log_check_times: self.last_log_check_times.clone(),
             log_alarm_counts: self.log_alarm_counts.clone(),
         }

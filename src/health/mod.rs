@@ -104,18 +104,18 @@ pub struct HealthMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthThresholds {
     pub max_response_time_ms: u64,
-    pub max_block_age_minutes: u64,
-    pub min_peers: u32,
     pub max_consecutive_failures: u32,
+    pub min_block_progression_checks: u32,  // NEW: How many checks before considering stuck
+    pub block_stuck_threshold_minutes: u64, // NEW: Minutes without block progression = stuck
 }
 
 impl Default for HealthThresholds {
     fn default() -> Self {
         Self {
             max_response_time_ms: 5000,
-            max_block_age_minutes: 10,
-            min_peers: 3,
             max_consecutive_failures: 3,
+            min_block_progression_checks: 3,    // Check 3 times before marking as stuck
+            block_stuck_threshold_minutes: 10,  // 10 minutes without blocks = stuck
         }
     }
 }
@@ -132,25 +132,9 @@ impl HealthMetrics {
             return false;
         }
 
-        // Check if node is catching up (might be acceptable for some time)
+        // If node is catching up, it's not unhealthy, just syncing
         if self.catching_up {
-            // Allow catching up for a reasonable time
-            return true; // We'll handle this in the monitor logic
-        }
-
-        // Check block age if we have block time
-        if let Some(block_time) = self.block_time {
-            let age = Utc::now().signed_duration_since(block_time);
-            if age.num_minutes() > thresholds.max_block_age_minutes as i64 {
-                return false;
-            }
-        }
-
-        // Check minimum peers if available
-        if let Some(peers) = self.peers_count {
-            if peers < thresholds.min_peers {
-                return false;
-            }
+            return true; // Will be marked as Unknown, not Unhealthy
         }
 
         true
