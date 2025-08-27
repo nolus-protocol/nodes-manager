@@ -72,12 +72,12 @@ impl SshConnection {
         })
     }
 
-    // FIXED: Command chaining approach for snapshots to isolate completion detection issues
+    // FIXED: Command chaining approach only for long-running snapshot operations
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // Handle snapshot commands with separate execution and completion check
-        if self.is_snapshot_command(command) {
+        // Handle only long-running snapshot commands with chaining
+        if self.is_long_running_snapshot_command(command) {
             return self.execute_snapshot_with_chaining(command).await;
         }
 
@@ -86,7 +86,7 @@ impl SshConnection {
             let escaped_command = command.replace("\"", "\\\"");
             format!("bash -c \"{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__\"", escaped_command)
         } else {
-            // Normal commands
+            // All other commands (including simple snapshot stats)
             let escaped_command = command.replace("\"", "\\\"");
             format!("bash -c \"{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__\"", escaped_command)
         };
@@ -240,7 +240,25 @@ impl SshConnection {
         }
     }
 
-    // NEW: Helper method to detect snapshot-related commands
+    // NEW: Detect only long-running snapshot operations that need chaining
+    fn is_long_running_snapshot_command(&self, command: &str) -> bool {
+        // Only snapshot creation and restoration commands need chaining
+        if command.contains("tar -cf -") && command.contains("lz4 -z -c") {
+            return true; // LZ4 snapshot creation
+        }
+
+        if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+            return true; // LZ4 snapshot restoration
+        }
+
+        if command.contains("tar -xzf") && (command.contains("snapshot") || command.contains(".tar.gz")) {
+            return true; // Legacy snapshot restoration
+        }
+
+        false // All other commands (stats, listing, etc.) use regular execution
+    }
+
+    // NEW: Helper method to detect snapshot-related commands (broader than long-running)
     fn is_snapshot_command(&self, command: &str) -> bool {
         // Detect snapshot creation commands (tar + lz4 pipeline)
         if command.contains("tar -cf -") && command.contains("lz4 -z -c") {
