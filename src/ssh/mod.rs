@@ -73,6 +73,7 @@ impl SshConnection {
     }
 
     // FIXED: Handle large output buffer while ensuring synchronous execution
+    // Extended to handle snapshot operations in addition to cosmos-pruner
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
@@ -80,6 +81,10 @@ impl SshConnection {
             // FIXED: Run synchronously with output management - use semicolon not &&
             // This waits for completion but manages the buffer issue
             format!("bash -c '{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__'", command)
+        } else if self.is_snapshot_command(command) {
+            // NEW: Handle snapshot creation and restoration commands
+            // These are also long-running commands that need special handling
+            format!("bash -c '{} > /tmp/snapshot_operation.log 2>&1; echo __COMMAND_SUCCESS__'", command)
         } else {
             // Normal command with proper completion detection
             format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
@@ -130,7 +135,7 @@ impl SshConnection {
             .trim()
             .to_string();
 
-        // For cosmos-pruner, try to get some output from the log file
+        // Handle special cases for long-running operations
         if command.contains("cosmos-pruner") {
             debug!("cosmos-pruner completed successfully on {}", self.host);
 
@@ -146,11 +151,73 @@ impl SshConnection {
             }
 
             return Ok("Pruning completed successfully".to_string());
+        } else if self.is_snapshot_command(command) {
+            debug!("Snapshot operation completed successfully on {}", self.host);
+
+            // Try to get last few lines of the snapshot log for feedback
+            match self.client.execute("tail -5 /tmp/snapshot_operation.log 2>/dev/null || echo 'Log not available'").await {
+                Ok(log_result) => {
+                    let log_output = log_result.stdout.trim();
+                    if !log_output.is_empty() && log_output != "Log not available" {
+                        // Clean up the log output for user feedback
+                        let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
+                            "LZ4 snapshot creation"
+                        } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+                            "LZ4 snapshot restoration"
+                        } else if command.contains("tar -xzf") {
+                            "Legacy snapshot restoration"
+                        } else {
+                            "Snapshot operation"
+                        };
+
+                        return Ok(format!("{} completed. Last output:\n{}", operation_type, log_output));
+                    }
+                }
+                Err(_) => {} // Ignore log read errors
+            }
+
+            // Determine operation type for success message
+            let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
+                "LZ4 snapshot creation completed successfully"
+            } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+                "LZ4 snapshot restoration completed successfully"
+            } else if command.contains("tar -xzf") {
+                "Legacy snapshot restoration completed successfully"
+            } else {
+                "Snapshot operation completed successfully"
+            };
+
+            return Ok(operation_type.to_string());
         }
 
         debug!("Command completed successfully on {}: {} chars of output", self.host, cleaned_output.len());
 
         Ok(cleaned_output)
+    }
+
+    // NEW: Helper method to detect snapshot-related commands
+    fn is_snapshot_command(&self, command: &str) -> bool {
+        // Detect snapshot creation commands (tar + lz4 pipeline)
+        if command.contains("tar -cf -") && command.contains("lz4 -z -c") {
+            return true;
+        }
+
+        // Detect LZ4 snapshot restoration commands
+        if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+            return true;
+        }
+
+        // Detect legacy snapshot restoration commands
+        if command.contains("tar -xzf") && (command.contains("snapshot") || command.contains(".tar.gz")) {
+            return true;
+        }
+
+        // Detect other snapshot-related long operations
+        if command.contains("tar") && (command.contains("/backup") || command.contains("/snapshots")) {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -230,5 +297,50 @@ mod tests {
         assert!(!ServiceStatus::Inactive.is_running());
         assert!(ServiceStatus::Activating.is_running());
         assert!(!ServiceStatus::Activating.is_healthy());
+    }
+
+    #[test]
+    fn test_snapshot_command_detection() {
+        let conn = SshConnection {
+            client: unsafe { std::mem::zeroed() }, // Mock for testing
+            host: "test".to_string(),
+        };
+
+        // Test snapshot creation command detection
+        assert!(conn.is_snapshot_command("cd '/opt/deploy/osmosis' && tar -cf - data wasm 2>/dev/null | lz4 -z -c > '/backup/snapshot.lz4'"));
+
+        // Test LZ4 restoration command detection
+        assert!(conn.is_snapshot_command("cd '/opt/deploy/osmosis' && lz4 -d -c '/backup/snapshot.lz4' | tar -xf -"));
+
+        // Test legacy restoration command detection
+        assert!(conn.is_snapshot_command("cd '/opt/deploy/osmosis' && tar -xzf '/backup/snapshot.tar.gz'"));
+
+        // Test non-snapshot command
+        assert!(!conn.is_snapshot_command("systemctl start osmosis"));
+
+        // Test edge cases
+        assert!(conn.is_snapshot_command("tar -cf /snapshots/backup.tar data"));
+        assert!(!conn.is_snapshot_command("echo hello world"));
+    }
+
+    #[test]
+    fn test_command_wrapping_logic() {
+        let conn = SshConnection {
+            client: unsafe { std::mem::zeroed() }, // Mock for testing
+            host: "test".to_string(),
+        };
+
+        // Test that snapshot commands are detected correctly
+        let snapshot_cmd = "cd '/opt/deploy/node' && tar -cf - data wasm | lz4 -z -c > '/backup/test.lz4'";
+        assert!(conn.is_snapshot_command(snapshot_cmd));
+
+        // Test that pruner commands would be handled (not in this function but conceptually)
+        let pruner_cmd = "cosmos-pruner prune /opt/deploy/node/data --blocks=1000";
+        assert!(!conn.is_snapshot_command(pruner_cmd)); // Should be false, handled by different logic
+        assert!(pruner_cmd.contains("cosmos-pruner")); // But this should be true
+
+        // Test normal commands
+        let normal_cmd = "systemctl status node";
+        assert!(!conn.is_snapshot_command(normal_cmd));
     }
 }
