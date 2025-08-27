@@ -90,6 +90,9 @@ impl SshConnection {
             format!("bash -c \"{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__\"", escaped_command)
         };
 
+        // DEBUG: Log the exact command being sent to SSH client
+        debug!("SSH client will execute: {}", wrapped_command);
+
         let result = self
             .client
             .execute(&wrapped_command)
