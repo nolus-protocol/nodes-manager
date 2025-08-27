@@ -72,21 +72,20 @@ impl SshConnection {
         })
     }
 
-    // FIXED: Uniform pipeline approach for all long-running operations
-    // Uses consistent completion detection and failure handling
+    // FIXED: Use the exact same simple pattern that works for pruning
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
         let wrapped_command = if command.contains("cosmos-pruner") {
-            // FIXED: Use uniform pipeline approach for pruning too
+            // Pruning: redirect output to log, then success marker
             let escaped_command = command.replace("\"", "\\\"");
-            format!("bash -c \"set -o pipefail; {} > /tmp/cosmos_pruner.log 2>&1 && echo __PIPELINE_SUCCESS__\"", escaped_command)
+            format!("bash -c \"{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__\"", escaped_command)
         } else if self.is_snapshot_command(command) {
-            // FIXED: Same uniform pipeline approach for snapshots
+            // FIXED: Snapshots: exact same pattern, let command handle its own output
             let escaped_command = command.replace("\"", "\\\"");
-            format!("bash -c \"set -o pipefail; {} 2>/tmp/snapshot_operation.log && echo __PIPELINE_SUCCESS__\"", escaped_command)
+            format!("bash -c \"{}; echo __COMMAND_SUCCESS__\"", escaped_command)
         } else {
-            // Normal commands - keep existing pattern for consistency
+            // Normal commands
             let escaped_command = command.replace("\"", "\\\"");
             format!("bash -c \"{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__\"", escaped_command)
         };
@@ -106,10 +105,8 @@ impl SshConnection {
             self.host, exit_code, output_str.len(), stderr_str.len()
         );
 
-        // Unified completion detection - long-running operations use PIPELINE_SUCCESS
-        let command_succeeded = if output_str.ends_with("__PIPELINE_SUCCESS__") {
-            true
-        } else if output_str.ends_with("__COMMAND_SUCCESS__") {
+        // Simple completion detection - just like the original working version
+        let command_succeeded = if output_str.ends_with("__COMMAND_SUCCESS__") {
             true
         } else if output_str.ends_with("__COMMAND_FAILED__") {
             false
@@ -133,7 +130,6 @@ impl SshConnection {
 
         // Clean up completion markers from output
         let cleaned_output = output_str
-            .trim_end_matches("__PIPELINE_SUCCESS__")
             .trim_end_matches("__COMMAND_SUCCESS__")
             .trim_end_matches("__COMMAND_FAILED__")
             .trim()
@@ -157,28 +153,6 @@ impl SshConnection {
             return Ok("Pruning completed successfully".to_string());
         } else if self.is_snapshot_command(command) {
             debug!("Snapshot operation completed successfully on {}", self.host);
-
-            // Try to get last few lines of the snapshot log for feedback
-            match self.client.execute("tail -5 /tmp/snapshot_operation.log 2>/dev/null || echo 'Log not available'").await {
-                Ok(log_result) => {
-                    let log_output = log_result.stdout.trim();
-                    if !log_output.is_empty() && log_output != "Log not available" {
-                        // Clean up the log output for user feedback
-                        let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                            "LZ4 snapshot creation"
-                        } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
-                            "LZ4 snapshot restoration"
-                        } else if command.contains("tar -xzf") {
-                            "Legacy snapshot restoration"
-                        } else {
-                            "Snapshot operation"
-                        };
-
-                        return Ok(format!("{} completed. Last output:\n{}", operation_type, log_output));
-                    }
-                }
-                Err(_) => {} // Ignore log read errors
-            }
 
             // Determine operation type for success message
             let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
