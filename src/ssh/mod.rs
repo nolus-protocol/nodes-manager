@@ -82,9 +82,9 @@ impl SshConnection {
             // This waits for completion but manages the buffer issue
             format!("bash -c '{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__'", command)
         } else if self.is_snapshot_command(command) {
-            // NEW: Handle snapshot creation and restoration commands
-            // These are also long-running commands that need special handling
-            format!("bash -c '{} > /tmp/snapshot_operation.log 2>&1; echo __COMMAND_SUCCESS__'", command)
+            // FIXED: Handle snapshot creation and restoration commands
+            // Don't redirect the main command output - only redirect the wrapper's stderr/stdout
+            format!("bash -c '{}; echo __COMMAND_SUCCESS__' > /tmp/snapshot_operation.log 2>&1", command)
         } else {
             // Normal command with proper completion detection
             format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
