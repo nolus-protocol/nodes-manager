@@ -162,80 +162,64 @@ impl SshConnection {
         Ok(cleaned_output)
     }
 
-    // NEW: Command chaining approach for snapshots
+    // NEW: Use system SSH for long-running snapshot commands to avoid library limitations
     async fn execute_snapshot_with_chaining(&mut self, command: &str) -> Result<String> {
-        debug!("Executing snapshot command with chaining on {}: {}", self.host, command);
+        debug!("Executing snapshot command with system SSH on {}: {}", self.host, command);
 
-        // Step 1: Execute the snapshot command without success marker
         let escaped_command = command.replace("\"", "\\\"");
-        let snapshot_command = format!("bash -c \"{}\"", escaped_command);
+        let full_command = format!("bash -c \"{}; echo __COMMAND_SUCCESS__\"", escaped_command);
 
-        tracing::info!("SNAPSHOT_CHAINING - Step 1: Executing snapshot command: {}", snapshot_command);
+        tracing::info!("SNAPSHOT_SYSTEM_SSH - Executing via system ssh: {}", full_command);
 
-        let result = self
-            .client
-            .execute(&snapshot_command)
+        // Use system ssh command instead of the library
+        let output = tokio::process::Command::new("ssh")
+            .args([
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                &format!("root@{}", self.host),
+                &full_command
+            ])
+            .output()
             .await
-            .map_err(|e| anyhow::anyhow!("Snapshot command execution failed on {}: {}", self.host, e))?;
+            .map_err(|e| anyhow::anyhow!("System SSH command failed: {}", e))?;
 
-        let exit_code = result.exit_status;
-        let output_str = result.stdout.trim().to_string();
-        let stderr_str = result.stderr.trim();
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
         tracing::info!(
-            "SNAPSHOT_CHAINING - Step 1 completed on {} with exit code {}, stdout: {} chars, stderr: {} chars",
-            self.host, exit_code, output_str.len(), stderr_str.len()
+            "SNAPSHOT_SYSTEM_SSH - Completed with exit code {}, stdout: {} chars, stderr: {} chars",
+            exit_code, stdout.len(), stderr.len()
         );
 
-        // Check if snapshot command failed
         if exit_code != 0 {
-            warn!(
-                "Snapshot command failed on {} with exit code {}: {}",
-                self.host, exit_code, stderr_str
-            );
             return Err(anyhow::anyhow!(
-                "Snapshot command failed on {} with exit code {}: {}",
-                self.host,
+                "System SSH command failed with exit code {}: {}",
                 exit_code,
-                if stderr_str.is_empty() { "Unknown error" } else { stderr_str }
+                stderr
             ));
         }
 
-        tracing::info!("SNAPSHOT_CHAINING - Step 1 successful, executing step 2: success marker");
+        if stdout.contains("__COMMAND_SUCCESS__") {
+            debug!("Snapshot operation completed successfully via system SSH on {}", self.host);
 
-        // Step 2: Execute success marker separately
-        let marker_command = "bash -c \"echo __COMMAND_SUCCESS__\"";
-        let marker_result = self
-            .client
-            .execute(marker_command)
-            .await
-            .map_err(|e| anyhow::anyhow!("Success marker execution failed on {}: {}", self.host, e))?;
-
-        let marker_output = marker_result.stdout.trim().to_string();
-        tracing::info!(
-            "SNAPSHOT_CHAINING - Step 2 completed on {}, marker output: '{}'",
-            self.host, marker_output
-        );
-
-        if marker_output.contains("__COMMAND_SUCCESS__") {
-            debug!("Snapshot operation completed successfully via chaining on {}", self.host);
-
-            // Determine operation type for success message
             let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                "LZ4 snapshot creation completed successfully via command chaining"
+                "LZ4 snapshot creation completed successfully via system SSH"
             } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
-                "LZ4 snapshot restoration completed successfully via command chaining"
+                "LZ4 snapshot restoration completed successfully via system SSH"
             } else if command.contains("tar -xzf") {
-                "Legacy snapshot restoration completed successfully via command chaining"
+                "Legacy snapshot restoration completed successfully via system SSH"
             } else {
-                "Snapshot operation completed successfully via command chaining"
+                "Snapshot operation completed successfully via system SSH"
             };
 
             return Ok(operation_type.to_string());
         } else {
             return Err(anyhow::anyhow!(
-                "Success marker check failed on {} - expected __COMMAND_SUCCESS__, got: '{}'",
-                self.host, marker_output
+                "System SSH success marker not found. stdout: {}, stderr: {}",
+                stdout.trim(),
+                stderr.trim()
             ));
         }
     }
