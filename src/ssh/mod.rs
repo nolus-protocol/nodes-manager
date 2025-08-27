@@ -73,31 +73,18 @@ impl SshConnection {
     }
 
     // FIXED: Handle large output buffer while ensuring synchronous execution
+    // Extended to handle snapshot operations in addition to cosmos-pruner
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
-        // IMPORTANT: The snapshot command already contains "> /path/to/snapshot.lz4"
-        // which redirects the tar/lz4 output to the file. We just need to handle
-        // any diagnostic output to prevent SSH buffer issues.
-
         let wrapped_command = if command.contains("cosmos-pruner") {
-            // This works perfectly - keep it as is
+            // FIXED: Run synchronously with output management - use semicolon not &&
+            // This waits for completion but manages the buffer issue
             format!("bash -c '{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__'", command)
         } else if self.is_snapshot_command(command) {
-            // Use EXACTLY the same pattern as cosmos-pruner
-            // Since the snapshot command contains its own redirect (> file.lz4),
-            // we need to wrap it in a subshell first, then redirect the subshell's output
-            let log_file = if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                "/tmp/snapshot_creation.log"
-            } else if command.contains("lz4 -d -c") || command.contains("tar -xf") || command.contains("tar -xzf") {
-                "/tmp/snapshot_restoration.log"
-            } else {
-                "/tmp/snapshot_operation.log"
-            };
-
-            // Wrap in subshell FIRST, then redirect subshell's diagnostic output
-            // The snapshot data still goes to file via the internal redirect
-            format!("bash -c '( {} ) > {} 2>&1; echo __COMMAND_SUCCESS__'", command, log_file)
+            // FIXED: Handle snapshot creation and restoration commands
+            // Use same pattern as cosmos-pruner: redirect stderr only, let success marker reach stdout
+            format!("bash -c '{} 2>/tmp/snapshot_operation.log; echo __COMMAND_SUCCESS__'", command)
         } else {
             // Normal command with proper completion detection
             format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
@@ -167,61 +154,40 @@ impl SshConnection {
         } else if self.is_snapshot_command(command) {
             debug!("Snapshot operation completed successfully on {}", self.host);
 
-            // Determine log file and operation type
-            let (log_file, operation_type) = if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                ("/tmp/snapshot_creation.log", "LZ4 snapshot creation")
-            } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
-                ("/tmp/snapshot_restoration.log", "LZ4 snapshot restoration")
-            } else if command.contains("tar -xzf") {
-                ("/tmp/snapshot_restoration.log", "Legacy snapshot restoration")
-            } else {
-                ("/tmp/snapshot_operation.log", "Snapshot operation")
-            };
-
-            // Try to get last few lines of the log for feedback
-            match self.client.execute(&format!("tail -10 {} 2>/dev/null || echo 'Log not available'", log_file)).await {
+            // Try to get last few lines of the snapshot log for feedback
+            match self.client.execute("tail -5 /tmp/snapshot_operation.log 2>/dev/null || echo 'Log not available'").await {
                 Ok(log_result) => {
                     let log_output = log_result.stdout.trim();
                     if !log_output.is_empty() && log_output != "Log not available" {
-                        // Filter out verbose tar output if present
-                        let filtered_output: Vec<&str> = log_output
-                            .lines()
-                            .filter(|line| {
-                                !line.starts_with("tar: ") ||
-                                line.contains("error") ||
-                                line.contains("warning") ||
-                                line.contains("failed")
-                            })
-                            .take(5)
-                            .collect();
+                        // Clean up the log output for user feedback
+                        let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
+                            "LZ4 snapshot creation"
+                        } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+                            "LZ4 snapshot restoration"
+                        } else if command.contains("tar -xzf") {
+                            "Legacy snapshot restoration"
+                        } else {
+                            "Snapshot operation"
+                        };
 
-                        if !filtered_output.is_empty() {
-                            return Ok(format!("{} completed. Log output:\n{}",
-                                operation_type,
-                                filtered_output.join("\n")
-                            ));
-                        }
+                        return Ok(format!("{} completed. Last output:\n{}", operation_type, log_output));
                     }
                 }
                 Err(_) => {} // Ignore log read errors
             }
 
-            // Check file size if it's a creation operation
-            if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                if let Some(output_file) = self.extract_snapshot_output_file(command) {
-                    match self.client.execute(&format!("ls -lh {} 2>/dev/null | awk '{{print $5}}'", output_file)).await {
-                        Ok(size_result) => {
-                            let size = size_result.stdout.trim();
-                            if !size.is_empty() && size != "0" {
-                                return Ok(format!("{} completed successfully. File size: {}", operation_type, size));
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
+            // Determine operation type for success message
+            let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
+                "LZ4 snapshot creation completed successfully"
+            } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+                "LZ4 snapshot restoration completed successfully"
+            } else if command.contains("tar -xzf") {
+                "Legacy snapshot restoration completed successfully"
+            } else {
+                "Snapshot operation completed successfully"
+            };
 
-            return Ok(format!("{} completed successfully", operation_type));
+            return Ok(operation_type.to_string());
         }
 
         debug!("Command completed successfully on {}: {} chars of output", self.host, cleaned_output.len());
@@ -229,7 +195,7 @@ impl SshConnection {
         Ok(cleaned_output)
     }
 
-    // Helper method to detect snapshot-related commands
+    // NEW: Helper method to detect snapshot-related commands
     fn is_snapshot_command(&self, command: &str) -> bool {
         // Detect snapshot creation commands (tar + lz4 pipeline)
         if command.contains("tar -cf -") && command.contains("lz4 -z -c") {
@@ -252,30 +218,6 @@ impl SshConnection {
         }
 
         false
-    }
-
-    // Helper to extract output file from snapshot creation command
-    fn extract_snapshot_output_file(&self, command: &str) -> Option<String> {
-        // Look for pattern: > '/path/to/file.lz4'
-        if let Some(pos) = command.find("> '") {
-            let start = pos + 3;
-            if let Some(end_pos) = command[start..].find('\'') {
-                return Some(command[start..start + end_pos].to_string());
-            }
-        }
-
-        // Look for pattern: > /path/to/file.lz4 (without quotes)
-        if let Some(pos) = command.rfind("> ") {
-            let start = pos + 2;
-            let remaining = &command[start..];
-            let end = remaining.find(' ').unwrap_or(remaining.len());
-            let path = remaining[..end].trim().trim_matches('\'').trim_matches('"');
-            if path.ends_with(".lz4") {
-                return Some(path.to_string());
-            }
-        }
-
-        None
     }
 }
 
@@ -382,18 +324,23 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_snapshot_output_file() {
+    fn test_command_wrapping_logic() {
         let conn = SshConnection {
             client: unsafe { std::mem::zeroed() }, // Mock for testing
             host: "test".to_string(),
         };
 
-        // Test with single quotes
-        let cmd1 = "cd /opt && tar -cf - data | lz4 -z -c > '/backup/snapshot.lz4'";
-        assert_eq!(conn.extract_snapshot_output_file(cmd1), Some("/backup/snapshot.lz4".to_string()));
+        // Test that snapshot commands are detected correctly
+        let snapshot_cmd = "cd '/opt/deploy/node' && tar -cf - data wasm | lz4 -z -c > '/backup/test.lz4'";
+        assert!(conn.is_snapshot_command(snapshot_cmd));
 
-        // Test without quotes
-        let cmd2 = "cd /opt && tar -cf - data | lz4 -z -c > /backup/snapshot.lz4";
-        assert_eq!(conn.extract_snapshot_output_file(cmd2), Some("/backup/snapshot.lz4".to_string()));
+        // Test that pruner commands would be handled (not in this function but conceptually)
+        let pruner_cmd = "cosmos-pruner prune /opt/deploy/node/data --blocks=1000";
+        assert!(!conn.is_snapshot_command(pruner_cmd)); // Should be false, handled by different logic
+        assert!(pruner_cmd.contains("cosmos-pruner")); // But this should be true
+
+        // Test normal commands
+        let normal_cmd = "systemctl status node";
+        assert!(!conn.is_snapshot_command(normal_cmd));
     }
 }
