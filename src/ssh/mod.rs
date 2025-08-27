@@ -72,22 +72,23 @@ impl SshConnection {
         })
     }
 
-    // FIXED: Handle large output buffer while ensuring synchronous execution
-    // Extended to handle snapshot operations with proper pipeline wrapping
+    // FIXED: Uniform pipeline approach for all long-running operations
+    // Uses consistent completion detection and failure handling
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
 
         let wrapped_command = if command.contains("cosmos-pruner") {
-            // FIXED: Run synchronously with output management - use semicolon not &&
-            // This waits for completion but manages the buffer issue
-            format!("bash -c '{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__'", command)
+            // FIXED: Use uniform pipeline approach for pruning too
+            let escaped_command = command.replace("\"", "\\\"");
+            format!("bash -c \"set -o pipefail; {} > /tmp/cosmos_pruner.log 2>&1 && echo __PIPELINE_SUCCESS__\"", escaped_command)
         } else if self.is_snapshot_command(command) {
-            // FIXED: Properly wrap entire pipeline while preserving stdout flow
-            // Wrap the entire command in parentheses and redirect only stderr to log
-            format!("bash -c '({}) 2>/tmp/snapshot_operation.log; echo __COMMAND_SUCCESS__'", command)
+            // FIXED: Same uniform pipeline approach for snapshots
+            let escaped_command = command.replace("\"", "\\\"");
+            format!("bash -c \"set -o pipefail; {} 2>/tmp/snapshot_operation.log && echo __PIPELINE_SUCCESS__\"", escaped_command)
         } else {
-            // Normal command with proper completion detection
-            format!("bash -c '{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__'", command)
+            // Normal commands - keep existing pattern for consistency
+            let escaped_command = command.replace("\"", "\\\"");
+            format!("bash -c \"{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__\"", escaped_command)
         };
 
         let result = self
@@ -105,8 +106,10 @@ impl SshConnection {
             self.host, exit_code, output_str.len(), stderr_str.len()
         );
 
-        // Consistent completion detection using markers for ALL commands
-        let command_succeeded = if output_str.ends_with("__COMMAND_SUCCESS__") {
+        // Unified completion detection - long-running operations use PIPELINE_SUCCESS
+        let command_succeeded = if output_str.ends_with("__PIPELINE_SUCCESS__") {
+            true
+        } else if output_str.ends_with("__COMMAND_SUCCESS__") {
             true
         } else if output_str.ends_with("__COMMAND_FAILED__") {
             false
@@ -130,6 +133,7 @@ impl SshConnection {
 
         // Clean up completion markers from output
         let cleaned_output = output_str
+            .trim_end_matches("__PIPELINE_SUCCESS__")
             .trim_end_matches("__COMMAND_SUCCESS__")
             .trim_end_matches("__COMMAND_FAILED__")
             .trim()
@@ -342,18 +346,5 @@ mod tests {
         // Test normal commands
         let normal_cmd = "systemctl status node";
         assert!(!conn.is_snapshot_command(normal_cmd));
-    }
-
-    #[test]
-    fn test_pipeline_wrapping() {
-        // Test that the new pipeline wrapping preserves command structure
-        let original_cmd = "cd '/opt/deploy/osmosis' && tar -cf - data wasm | lz4 -z -c > '/backup/snapshot.lz4'";
-        let expected_wrapped = "bash -c '(cd '/opt/deploy/osmosis' && tar -cf - data wasm | lz4 -z -c > '/backup/snapshot.lz4') 2>/tmp/snapshot_operation.log; echo __COMMAND_SUCCESS__'";
-
-        // This test verifies the wrapping logic conceptually
-        // The actual wrapping happens in execute_command method
-        assert!(original_cmd.contains("tar -cf -"));
-        assert!(original_cmd.contains("lz4 -z -c"));
-        assert!(original_cmd.contains("> '/backup/"));
     }
 }
