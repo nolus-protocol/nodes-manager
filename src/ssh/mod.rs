@@ -72,25 +72,26 @@ impl SshConnection {
         })
     }
 
-    // FIXED: Use the exact same simple pattern that works for pruning
+    // FIXED: Command chaining approach for snapshots to isolate completion detection issues
     pub async fn execute_command(&mut self, command: &str) -> Result<String> {
         debug!("Executing command on {}: {}", self.host, command);
+
+        // Handle snapshot commands with separate execution and completion check
+        if self.is_snapshot_command(command) {
+            return self.execute_snapshot_with_chaining(command).await;
+        }
 
         let wrapped_command = if command.contains("cosmos-pruner") {
             // Pruning: redirect output to log, then success marker
             let escaped_command = command.replace("\"", "\\\"");
             format!("bash -c \"{} > /tmp/cosmos_pruner.log 2>&1; echo __COMMAND_SUCCESS__\"", escaped_command)
-        } else if self.is_snapshot_command(command) {
-            // FIXED: Snapshots: exact same pattern, let command handle its own output
-            let escaped_command = command.replace("\"", "\\\"");
-            format!("bash -c \"{}; echo __COMMAND_SUCCESS__\"", escaped_command)
         } else {
             // Normal commands
             let escaped_command = command.replace("\"", "\\\"");
             format!("bash -c \"{} && echo __COMMAND_SUCCESS__ || echo __COMMAND_FAILED__\"", escaped_command)
         };
 
-        // DEBUG: Log the exact command being sent to SSH client
+        // TEMPORARY: Info level logging to see the exact command without debug spam
         debug!("SSH client will execute: {}", wrapped_command);
 
         let result = self
@@ -154,26 +155,89 @@ impl SshConnection {
             }
 
             return Ok("Pruning completed successfully".to_string());
-        } else if self.is_snapshot_command(command) {
-            debug!("Snapshot operation completed successfully on {}", self.host);
-
-            // Determine operation type for success message
-            let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
-                "LZ4 snapshot creation completed successfully"
-            } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
-                "LZ4 snapshot restoration completed successfully"
-            } else if command.contains("tar -xzf") {
-                "Legacy snapshot restoration completed successfully"
-            } else {
-                "Snapshot operation completed successfully"
-            };
-
-            return Ok(operation_type.to_string());
         }
 
         debug!("Command completed successfully on {}: {} chars of output", self.host, cleaned_output.len());
 
         Ok(cleaned_output)
+    }
+
+    // NEW: Command chaining approach for snapshots
+    async fn execute_snapshot_with_chaining(&mut self, command: &str) -> Result<String> {
+        debug!("Executing snapshot command with chaining on {}: {}", self.host, command);
+
+        // Step 1: Execute the snapshot command without success marker
+        let escaped_command = command.replace("\"", "\\\"");
+        let snapshot_command = format!("bash -c \"{}\"", escaped_command);
+
+        tracing::info!("SNAPSHOT_CHAINING - Step 1: Executing snapshot command: {}", snapshot_command);
+
+        let result = self
+            .client
+            .execute(&snapshot_command)
+            .await
+            .map_err(|e| anyhow::anyhow!("Snapshot command execution failed on {}: {}", self.host, e))?;
+
+        let exit_code = result.exit_status;
+        let output_str = result.stdout.trim().to_string();
+        let stderr_str = result.stderr.trim();
+
+        tracing::info!(
+            "SNAPSHOT_CHAINING - Step 1 completed on {} with exit code {}, stdout: {} chars, stderr: {} chars",
+            self.host, exit_code, output_str.len(), stderr_str.len()
+        );
+
+        // Check if snapshot command failed
+        if exit_code != 0 {
+            warn!(
+                "Snapshot command failed on {} with exit code {}: {}",
+                self.host, exit_code, stderr_str
+            );
+            return Err(anyhow::anyhow!(
+                "Snapshot command failed on {} with exit code {}: {}",
+                self.host,
+                exit_code,
+                if stderr_str.is_empty() { "Unknown error" } else { stderr_str }
+            ));
+        }
+
+        tracing::info!("SNAPSHOT_CHAINING - Step 1 successful, executing step 2: success marker");
+
+        // Step 2: Execute success marker separately
+        let marker_command = "bash -c \"echo __COMMAND_SUCCESS__\"";
+        let marker_result = self
+            .client
+            .execute(marker_command)
+            .await
+            .map_err(|e| anyhow::anyhow!("Success marker execution failed on {}: {}", self.host, e))?;
+
+        let marker_output = marker_result.stdout.trim().to_string();
+        tracing::info!(
+            "SNAPSHOT_CHAINING - Step 2 completed on {}, marker output: '{}'",
+            self.host, marker_output
+        );
+
+        if marker_output.contains("__COMMAND_SUCCESS__") {
+            debug!("Snapshot operation completed successfully via chaining on {}", self.host);
+
+            // Determine operation type for success message
+            let operation_type = if command.contains("tar -cf -") && command.contains("lz4 -z") {
+                "LZ4 snapshot creation completed successfully via command chaining"
+            } else if command.contains("lz4 -d -c") && command.contains("tar -xf") {
+                "LZ4 snapshot restoration completed successfully via command chaining"
+            } else if command.contains("tar -xzf") {
+                "Legacy snapshot restoration completed successfully via command chaining"
+            } else {
+                "Snapshot operation completed successfully via command chaining"
+            };
+
+            return Ok(operation_type.to_string());
+        } else {
+            return Err(anyhow::anyhow!(
+                "Success marker check failed on {} - expected __COMMAND_SUCCESS__, got: '{}'",
+                self.host, marker_output
+            ));
+        }
     }
 
     // NEW: Helper method to detect snapshot-related commands
