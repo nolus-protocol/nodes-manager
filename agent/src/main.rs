@@ -1,4 +1,4 @@
-// File: server-agent/src/main.rs
+// File: agent/src/main.rs
 use anyhow::Result;
 use axum::{
     extract::{Json, State},
@@ -479,9 +479,9 @@ async fn execute_pruning(
     info!("Starting pruning: deploy_path={}, keep_blocks={}, keep_versions={}",
           request.deploy_path, request.keep_blocks, request.keep_versions);
 
-    // Execute the pruning synchronously - this may take a long time but manager just waits
+    // FIXED: Use correct cosmos-pruner command syntax
     let pruning_command = format!(
-        "cd {} && ./cosmos-pruner prune --blocks {} --versions {} --path data/application.db",
+        "cosmos-pruner prune {} --blocks={} --versions={}",
         request.deploy_path, request.keep_blocks, request.keep_versions
     );
 
@@ -560,7 +560,7 @@ async fn create_snapshot(
     info!("Target file: {}", snapshot_path);
 
     let snapshot_cmd = format!(
-        "cd {} && tar -cf - data wasm 2>/dev/null | lz4 -z -c > {}",
+        "cd {} && tar -cf - data wasm | lz4 -z -c > {}",
         request.deploy_path, snapshot_path
     );
 
