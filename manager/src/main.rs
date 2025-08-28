@@ -50,10 +50,14 @@ pub struct AlarmPayload {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging with proper tracing setup
+    // Initialize logging with reduced verbosity - NO DEBUG LOGS
     let env_filter = EnvFilter::from_default_env()
         .add_directive("manager=info".parse()?)
-        .add_directive("tower_http=debug".parse()?);
+        .add_directive("tower_http=warn".parse()?) // Changed from debug to warn
+        .add_directive("tokio_cron_scheduler=warn".parse()?) // Suppress scheduler debug
+        .add_directive("hyper=warn".parse()?) // Suppress HTTP client debug
+        .add_directive("reqwest=warn".parse()?) // Suppress HTTP client debug
+        .add_directive("sqlx=warn".parse()?); // Suppress database debug
 
     fmt()
         .with_env_filter(env_filter)
