@@ -23,7 +23,7 @@ pub async fn start_web_server(
     http_manager: Arc<HttpAgentManager>,
     config_manager: Arc<ConfigManager>,
     snapshot_manager: Arc<SnapshotManager>,
-    operation_tracker: Arc<SimpleOperationTracker>, // NEW: Operation tracker parameter
+    operation_tracker: Arc<SimpleOperationTracker>,
 ) -> Result<()> {
     let state = AppState::new(
         config.clone(),
@@ -32,7 +32,7 @@ pub async fn start_web_server(
         http_manager,
         config_manager,
         snapshot_manager,
-        operation_tracker, // NEW: Pass operation tracker
+        operation_tracker,
     );
 
     if state.config.host == "0.0.0.0" && state.config.port == 8095 {
@@ -86,7 +86,12 @@ fn create_router(state: AppState) -> Router {
         .route("/api/snapshots/:node_name/:filename", delete(handlers::delete_snapshot))
         .route("/api/snapshots/:node_name/cleanup", post(handlers::cleanup_old_snapshots))
 
-        // === OPERATION MANAGEMENT ROUTES (NEW) ===
+        // === NEW: MANUAL RESTORE ROUTES ===
+        .route("/api/snapshots/:node_name/restore", post(handlers::execute_manual_restore_from_latest))
+        .route("/api/snapshots/:node_name/check-triggers", get(handlers::check_auto_restore_triggers))
+        .route("/api/snapshots/:node_name/auto-restore-status", get(handlers::get_auto_restore_status))
+
+        // === OPERATION MANAGEMENT ROUTES ===
         .route("/api/operations/active", get(handlers::get_active_operations))
         .route("/api/operations/:target_name/cancel", post(handlers::cancel_operation))
         .route("/api/operations/:target_name/status", get(handlers::check_target_status))

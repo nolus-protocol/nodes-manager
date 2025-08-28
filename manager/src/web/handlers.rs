@@ -64,14 +64,13 @@ pub struct EmergencyCleanupQuery {
     pub max_hours: i64,
 }
 
-fn default_max_hours() -> i64 { 12 } // Default 12 hours for emergency cleanup
+fn default_max_hours() -> i64 { 12 }
 
 // Helper functions to convert health status to summary
 async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus, config: &crate::config::Config) -> NodeHealthSummary {
     let node_config = config.nodes.get(&health.node_name);
 
     let maintenance_info = if health.in_maintenance {
-        // In a real implementation, you'd get this from maintenance tracker
         Some(MaintenanceInfo {
             operation_type: "maintenance".to_string(),
             started_at: Utc::now().to_rfc3339(),
@@ -138,7 +137,7 @@ async fn get_hermes_instances(state: &AppState) -> Result<Vec<HermesInstance>, a
             status,
             uptime_formatted,
             dependent_nodes: hermes_config.dependent_nodes.clone().unwrap_or_default(),
-            in_maintenance: false, // TODO: Check maintenance tracker
+            in_maintenance: false,
         });
     }
 
@@ -379,7 +378,6 @@ pub async fn cleanup_old_snapshots(
     match state.snapshot_service.cleanup_old_snapshots(&node_name, query.retention_count).await {
         Ok(deleted_count) => {
             info!("Snapshot cleanup completed for {}", node_name);
-            // Convert u32 to Value
             Ok(Json(ApiResponse::success(json!({
                 "deleted_count": deleted_count,
                 "node_name": node_name,
@@ -391,6 +389,73 @@ pub async fn cleanup_old_snapshots(
             Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
         }
     }
+}
+
+// === NEW: MANUAL RESTORE ENDPOINTS ===
+
+pub async fn execute_manual_restore_from_latest(
+    Path(node_name): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<SnapshotInfo> {
+    info!("Manual restore from latest snapshot requested for: {}", node_name);
+
+    match state.snapshot_service.restore_from_snapshot(&node_name).await {
+        Ok(snapshot_info) => {
+            info!("Manual restore completed successfully for {}: {}", node_name, snapshot_info.filename);
+            Ok(Json(ApiResponse::success(snapshot_info)))
+        }
+        Err(e) => {
+            error!("Failed to restore from snapshot for {}: {}", node_name, e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+        }
+    }
+}
+
+pub async fn check_auto_restore_triggers(
+    Path(node_name): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Value> {
+    info!("Checking auto-restore triggers for: {}", node_name);
+
+    match state.snapshot_service.check_auto_restore_trigger(&node_name).await {
+        Ok(triggers_found) => {
+            info!("Auto-restore trigger check completed for {}: triggers_found={}", node_name, triggers_found);
+            Ok(Json(ApiResponse::success(json!({
+                "node_name": node_name,
+                "triggers_found": triggers_found,
+                "timestamp": Utc::now().to_rfc3339()
+            }))))
+        }
+        Err(e) => {
+            error!("Failed to check auto-restore triggers for {}: {}", node_name, e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+        }
+    }
+}
+
+pub async fn get_auto_restore_status(
+    Path(node_name): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Value> {
+    // Check if auto-restore is enabled for this node
+    let node_config = state.config.nodes.get(&node_name);
+
+    let auto_restore_enabled = node_config
+        .map(|c| c.auto_restore_enabled.unwrap_or(false) && c.snapshots_enabled.unwrap_or(false))
+        .unwrap_or(false);
+
+    let trigger_words = state.config.auto_restore_trigger_words.clone().unwrap_or_default();
+
+    let status = json!({
+        "node_name": node_name,
+        "auto_restore_enabled": auto_restore_enabled,
+        "trigger_words": trigger_words,
+        "snapshots_enabled": node_config.map(|c| c.snapshots_enabled.unwrap_or(false)).unwrap_or(false),
+        "log_path": node_config.and_then(|c| c.log_path.as_ref()),
+        "timestamp": Utc::now().to_rfc3339()
+    });
+
+    Ok(Json(ApiResponse::success(status)))
 }
 
 // === OPERATION MANAGEMENT ENDPOINTS ===
@@ -454,12 +519,11 @@ pub async fn check_target_status(
     }))))
 }
 
-// === MAINTENANCE SCHEDULE ENDPOINTS (Simple stub for compatibility) ===
+// === MAINTENANCE SCHEDULE ENDPOINTS ===
 
 pub async fn get_maintenance_schedule(
     State(_state): State<AppState>,
 ) -> ApiResult<Value> {
-    // Simple stub - no complex scheduling in simplified version
     Ok(Json(ApiResponse::success(json!({
         "scheduled": [],
         "active": []

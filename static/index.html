@@ -649,7 +649,6 @@
         let snapshotStats = {};
         let isLoadingData = false;
 
-        // Store data globally to calculate metrics correctly
         let currentNodesData = null;
         let currentHermesData = null;
 
@@ -663,28 +662,23 @@
         }
 
         async function loadAllData() {
-            // Prevent overlapping load operations to reduce flickering
             if (isLoadingData) return;
             isLoadingData = true;
 
             try {
-                // Load configs and scheduled operations first
                 await Promise.all([
                     loadNodeConfigs(),
                     loadHermesConfigs(),
                     loadScheduledOperations()
                 ]);
 
-                // Load snapshot stats completely before proceeding
                 await loadSnapshotStats();
 
-                // Then load UI data that depends on the configs
                 await Promise.all([
                     loadNodes(),
                     loadHermesInstances()
                 ]);
 
-                // Calculate metrics after both datasets are loaded
                 updateAllMetrics();
                 updateLastUpdated();
             } catch (error) {
@@ -724,7 +718,6 @@
                 const response = await fetch('/api/maintenance/schedule');
                 const data = await response.json();
                 if (data.success) {
-                    // Simple stub - no complex scheduling in simplified version
                     scheduledOperations = {};
                     updateScheduleMetrics(data.data);
                 }
@@ -738,7 +731,6 @@
                 const newSnapshotStats = {};
                 const statPromises = [];
 
-                // Load stats for snapshot-enabled nodes in parallel but wait for all
                 for (const [nodeName, nodeConfig] of Object.entries(nodeConfigs)) {
                     if (nodeConfig.snapshots_enabled) {
                         const promise = fetch(`/api/snapshots/${nodeName}/stats`)
@@ -755,7 +747,6 @@
                     }
                 }
 
-                // Wait for all snapshot stats to complete
                 await Promise.all(statPromises);
                 snapshotStats = newSnapshotStats;
             } catch (error) {
@@ -828,7 +819,7 @@
                                             ${nodeConfig.auto_restore_enabled ? `
                                                 <div class="recovery-indicator">
                                                     <div class="recovery-dot"></div>
-                                                    Snapshot Recovery Enabled
+                                                    Auto-Restore Enabled
                                                 </div>
                                             ` : ''}
                                         </div>
@@ -900,7 +891,15 @@
                                                     <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                     </svg>
-                                                    <div class="tooltip">Restore Latest Snapshot</div>
+                                                    <div class="tooltip">Manual Restore</div>
+                                                </button>
+                                                <button class="btn btn-icon btn-secondary"
+                                                        onclick="checkAutoRestoreTriggers('${node.node_name}')"
+                                                        title="Check for corruption triggers">
+                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"/>
+                                                    </svg>
+                                                    <div class="tooltip">Check Triggers</div>
                                                 </button>
                                             ` : ''}
                                         </div>
@@ -998,7 +997,6 @@
             const now = new Date();
             let next = new Date(now);
 
-            // Simple cron parsing - handles basic patterns
             if (cron.minute !== '*') {
                 next.setMinutes(parseInt(cron.minute), 0, 0);
             }
@@ -1007,12 +1005,10 @@
                 next.setHours(parseInt(cron.hour));
             }
 
-            // If the time has passed today, move to tomorrow
             if (next <= now) {
                 next.setDate(next.getDate() + 1);
             }
 
-            // Handle weekly patterns (day of week)
             if (cron.dayOfWeek !== '*') {
                 const targetDay = parseInt(cron.dayOfWeek);
                 const currentDay = next.getDay();
@@ -1080,7 +1076,7 @@
 
                 if (data.success) {
                     showAlert(`LZ4 snapshot created successfully for ${nodeDisplayName}`, 'success');
-                    await loadAllData(); // Refresh data
+                    await loadAllData();
                 } else {
                     throw new Error(data.message || 'Snapshot creation failed');
                 }
@@ -1108,7 +1104,7 @@
 
                 if (data.success) {
                     showAlert(`Pruning started for ${nodeDisplayName}`, 'success');
-                    await loadAllData(); // Refresh data
+                    await loadAllData();
                 } else {
                     throw new Error(data.message || 'Pruning failed');
                 }
@@ -1117,17 +1113,17 @@
             }
         }
 
+        // NEW: Manual restore function
         async function executeManualRestore(nodeName) {
             const nodeDisplayName = formatNodeName(nodeName);
 
-            if (!confirm(`Restore from Snapshot Confirmation\n\nRestore ${nodeDisplayName} from latest snapshot?\n\nThis will:\n- Stop the node service\n- Replace current data with latest snapshot\n- Start the service after completion\n- May take 30-60 minutes\n\nProceed with restore?`)) {
+            if (!confirm(`Restore from Snapshot Confirmation\n\nRestore ${nodeDisplayName} from latest snapshot?\n\nWARNING: This will:\n- Stop the node service\n- Delete ALL current data & wasm directories\n- Extract latest snapshot to replace data\n- Restore validator state\n- Start the service after completion\n- May take 30-60 minutes\n\nThis action CANNOT BE UNDONE.\n\nProceed with restore?`)) {
                 return;
             }
 
             try {
                 showAlert(`Restoring ${nodeDisplayName} from latest snapshot...`, 'warning');
 
-                // Note: This would need an API endpoint that doesn't exist yet
                 const response = await fetch(`/api/snapshots/${nodeName}/restore`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
@@ -1136,13 +1132,38 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert(`${nodeDisplayName} restored successfully`, 'success');
-                    await loadAllData(); // Refresh data
+                    showAlert(`${nodeDisplayName} restored successfully from snapshot`, 'success');
+                    await loadAllData();
                 } else {
                     throw new Error(data.message || 'Restore failed');
                 }
             } catch (error) {
                 showAlert(`Failed to restore ${nodeDisplayName}: ${error.message}`, 'error');
+            }
+        }
+
+        // NEW: Check auto-restore triggers function
+        async function checkAutoRestoreTriggers(nodeName) {
+            const nodeDisplayName = formatNodeName(nodeName);
+
+            try {
+                showAlert(`Checking auto-restore triggers for ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/snapshots/${nodeName}/check-triggers`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const triggersFound = data.data.triggers_found;
+                    if (triggersFound) {
+                        showAlert(`⚠️ CORRUPTION TRIGGERS DETECTED for ${nodeDisplayName}! Auto-restore may be needed.`, 'error');
+                    } else {
+                        showAlert(`✅ No corruption triggers found for ${nodeDisplayName}`, 'success');
+                    }
+                } else {
+                    throw new Error(data.message || 'Trigger check failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to check triggers for ${nodeDisplayName}: ${error.message}`, 'error');
             }
         }
 
@@ -1165,7 +1186,7 @@
 
                 if (data.success) {
                     showAlert(`${hermesDisplayName} restarted successfully`, 'success');
-                    await loadAllData(); // Refresh data
+                    await loadAllData();
                 } else {
                     throw new Error(data.message || 'Hermes restart failed');
                 }
@@ -1259,7 +1280,6 @@
 
             const healthPercentage = totalComponents > 0 ? Math.round((healthyComponents / totalComponents) * 100) : 0;
 
-            // Update DOM elements safely
             const totalEl = document.getElementById('total-components');
             const healthyEl = document.getElementById('healthy-components');
             const breakdownEl = document.getElementById('components-breakdown');
@@ -1273,7 +1293,6 @@
             if (percentageEl) percentageEl.textContent = `${healthPercentage}% operational`;
             if (progressEl) progressEl.style.width = `${healthPercentage}%`;
 
-            // Update system status indicator
             if (systemStatusEl) {
                 if (healthPercentage === 100) {
                     systemStatusEl.className = 'status-indicator healthy';
@@ -1292,7 +1311,6 @@
             const scheduledCount = scheduleData.scheduled ? scheduleData.scheduled.length : 0;
             const activeCount = scheduleData.active ? scheduleData.active.length : 0;
 
-            // Update DOM elements safely
             const scheduledEl = document.getElementById('scheduled-operations');
             const nextScheduledEl = document.getElementById('next-scheduled');
             const activeMaintenanceEl = document.getElementById('active-maintenance');
@@ -1320,10 +1338,8 @@
 
             document.body.appendChild(alert);
 
-            // Trigger the animation
             setTimeout(() => alert.classList.add('show'), 100);
 
-            // Auto remove after 5 seconds
             setTimeout(() => {
                 alert.classList.remove('show');
                 setTimeout(() => {

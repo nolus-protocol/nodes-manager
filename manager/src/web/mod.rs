@@ -20,7 +20,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub health_service: Arc<HealthMonitor>,
     pub agent_manager: Arc<HttpAgentManager>,
-    pub snapshot_service: Arc<SnapshotManager>,
+    pub snapshot_service: Arc<SnapshotManager>, // NEW: Add snapshot service
 }
 
 impl AppState {
@@ -37,7 +37,7 @@ impl AppState {
             config,
             health_service: health_monitor,
             agent_manager: http_manager,
-            snapshot_service: snapshot_manager,
+            snapshot_service: snapshot_manager, // NEW: Include snapshot service
         }
     }
 }
@@ -87,5 +87,5 @@ pub struct SystemMetrics {
     pub total_hermes: usize,
     pub active_hermes: usize,
     pub inactive_hermes: usize,
-    pub active_operations: usize, // NEW: Track active operations
+    pub active_operations: usize,
 }

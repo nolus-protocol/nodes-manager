@@ -68,39 +68,21 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
-        let backup_path = node_config.snapshot_backup_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
-
-        let deploy_path = node_config.pruning_deploy_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for node {}", node_name))?;
-
-        let service_name = node_config.pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for node {}", node_name))?;
-
-        info!("Starting LZ4 snapshot creation for node {} on server {} via HTTP agent", node_name, node_config.server_host);
+        info!("Starting LZ4 snapshot creation for node {} via HTTP agent", node_name);
 
         // Start maintenance tracking with 24-hour timeout for all snapshots
         self.maintenance_tracker
             .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
             .await?;
 
-        let snapshot_result = self.execute_snapshot_creation(
-            node_name,
-            &node_config,
-            deploy_path,
-            backup_path,
-            service_name
-        ).await;
+        let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
 
         // End maintenance tracking
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // Send notification ONLY on completion or error, not on start
+        // Send notification based on result
         match &snapshot_result {
             Ok(_) => {
                 if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_creation").await {
@@ -117,42 +99,7 @@ impl SnapshotManager {
         snapshot_result
     }
 
-    async fn execute_snapshot_creation(
-        &self,
-        node_name: &str,
-        node_config: &NodeConfig,
-        deploy_path: &str,
-        backup_path: &str,
-        service_name: &str,
-    ) -> Result<SnapshotInfo> {
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("{}_{}.lz4", node_config.network, timestamp);
-
-        // Execute the full snapshot sequence via HTTP agent
-        let agent_snapshot = self.http_manager.create_snapshot(
-            &node_config.server_host,
-            deploy_path,
-            backup_path,
-            node_name,
-            service_name,
-            node_config.log_path.as_deref()
-        ).await?;
-
-        let snapshot_info = SnapshotInfo {
-            node_name: node_name.to_string(),
-            network: node_config.network.clone(),
-            filename: agent_snapshot.filename,
-            created_at: agent_snapshot.created_at,
-            file_size_bytes: Some(agent_snapshot.size_bytes),
-            snapshot_path: agent_snapshot.path,
-            compression_type: agent_snapshot.compression,
-        };
-
-        info!("LZ4 snapshot creation completed for {} via HTTP agent: {}", node_name, snapshot_info.filename);
-        Ok(snapshot_info)
-    }
-
-    // NEW: Restore from latest snapshot
+    /// NEW: Restore from latest snapshot using HttpAgentManager
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -164,39 +111,21 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
 
-        let backup_path = node_config.snapshot_backup_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
-
-        let deploy_path = node_config.pruning_deploy_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for node {}", node_name))?;
-
-        let service_name = node_config.pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for node {}", node_name))?;
-
-        info!("Starting snapshot restore for node {} on server {} via HTTP agent", node_name, node_config.server_host);
+        info!("Starting snapshot restore for node {} via HTTP agent", node_name);
 
         // Start maintenance tracking with 24-hour timeout for restore operations
         self.maintenance_tracker
             .start_maintenance(node_name, "snapshot_restore", 1440, &node_config.server_host)
             .await?;
 
-        let restore_result = self.execute_snapshot_restore(
-            node_name,
-            &node_config,
-            deploy_path,
-            backup_path,
-            service_name
-        ).await;
+        let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
 
         // End maintenance tracking
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // Send notification ONLY on completion or error
+        // Send notification based on result
         match &restore_result {
             Ok(_) => {
                 if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_restore").await {
@@ -213,75 +142,7 @@ impl SnapshotManager {
         restore_result
     }
 
-    async fn execute_snapshot_restore(
-        &self,
-        node_name: &str,
-        node_config: &NodeConfig,
-        deploy_path: &str,
-        backup_path: &str,
-        service_name: &str,
-    ) -> Result<SnapshotInfo> {
-        // Find latest snapshot file
-        let find_latest_cmd = format!(
-            "find '{}' -name '{}_*.lz4' -o -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-            backup_path, node_config.network, node_config.network
-        );
-
-        let latest_snapshot_path = self.http_manager
-            .execute_single_command(&node_config.server_host, &find_latest_cmd)
-            .await?;
-
-        let latest_snapshot_path = latest_snapshot_path.trim();
-        if latest_snapshot_path.is_empty() {
-            return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
-        }
-
-        info!("Found latest snapshot: {}", latest_snapshot_path);
-
-        // Extract filename from path
-        let snapshot_filename = latest_snapshot_path.split('/').last()
-            .ok_or_else(|| anyhow::anyhow!("Invalid snapshot path"))?;
-
-        // Find corresponding validator backup file
-        let validator_backup_file = self.find_validator_backup_for_snapshot(
-            &node_config.server_host,
-            backup_path,
-            snapshot_filename
-        ).await?;
-
-        // Execute the full restore sequence via HTTP agent
-        let restore_payload = serde_json::json!({
-            "node_name": node_name,
-            "deploy_path": deploy_path,
-            "snapshot_file": latest_snapshot_path,
-            "validator_backup_file": validator_backup_file,
-            "service_name": service_name,
-            "log_path": node_config.log_path
-        });
-
-        let result = self.http_manager.execute_operation(
-            &node_config.server_host,
-            "/snapshot/restore",
-            restore_payload
-        ).await?;
-
-        info!("Snapshot restore completed for {} via HTTP agent", node_name);
-
-        // Return snapshot info for the restored snapshot
-        let snapshot_info = SnapshotInfo {
-            node_name: node_name.to_string(),
-            network: node_config.network.clone(),
-            filename: snapshot_filename.to_string(),
-            created_at: Utc::now(), // We don't have the original creation time, so use current time
-            file_size_bytes: None, // Size is not relevant for restore operation
-            snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: if latest_snapshot_path.ends_with(".lz4") { "lz4".to_string() } else { "gzip".to_string() },
-        };
-
-        Ok(snapshot_info)
-    }
-
-    // NEW: Check if auto-restore should be triggered
+    /// NEW: Check if auto-restore should be triggered using HttpAgentManager
     pub async fn check_auto_restore_trigger(&self, node_name: &str) -> Result<bool> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -289,79 +150,10 @@ impl SnapshotManager {
             return Ok(false);
         }
 
-        let trigger_words = match &self.config.auto_restore_trigger_words {
-            Some(words) if !words.is_empty() => words,
-            _ => return Ok(false),
-        };
-
-        let log_path = match &node_config.log_path {
-            Some(path) => path,
-            None => return Ok(false),
-        };
-
-        // Check the main log file (out1.log) for trigger words
-        let log_file = format!("{}/out1.log", log_path);
-
-        let check_payload = serde_json::json!({
-            "log_file": log_file,
-            "trigger_words": trigger_words
-        });
-
-        match self.http_manager.execute_operation(
-            &node_config.server_host,
-            "/snapshot/check-triggers",
-            check_payload
-        ).await {
-            Ok(result) => {
-                // Parse the result to check if triggers were found
-                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
-                        return Ok(parsed.get("triggers_found").and_then(|v| v.as_bool()).unwrap_or(false));
-                    }
-                }
-                Ok(false)
-            }
-            Err(e) => {
-                warn!("Failed to check auto-restore triggers for {}: {}", node_name, e);
-                Ok(false)
-            }
-        }
+        self.http_manager.check_auto_restore_triggers(node_name).await
     }
 
-    async fn find_validator_backup_for_snapshot(
-        &self,
-        server_host: &str,
-        backup_path: &str,
-        snapshot_filename: &str,
-    ) -> Result<Option<String>> {
-        // Extract timestamp from snapshot filename (e.g., osmosis-1_20240828_134500.lz4)
-        let timestamp = self.extract_timestamp_from_filename(snapshot_filename)?;
-        let validator_backup_path = format!("{}/validator_state_backup_{}.json", backup_path, timestamp);
-
-        // Check if validator backup file exists
-        let check_cmd = format!("test -f '{}'", validator_backup_path);
-
-        match self.http_manager.execute_single_command(server_host, &check_cmd).await {
-            Ok(_) => Ok(Some(validator_backup_path)),
-            Err(_) => Ok(None),
-        }
-    }
-
-    fn extract_timestamp_from_filename(&self, filename: &str) -> Result<String> {
-        let basename = filename.split('/').last().unwrap_or(filename);
-
-        // Handle formats like: network_YYYYMMDD_HHMMSS.lz4
-        let parts: Vec<&str> = basename.split('_').collect();
-        if parts.len() >= 3 {
-            let date_part = parts[1];
-            let time_part = parts[2].split('.').next().unwrap_or(parts[2]);
-            Ok(format!("{}_{}", date_part, time_part))
-        } else {
-            Err(anyhow::anyhow!("Could not extract timestamp from filename: {}", filename))
-        }
-    }
-
-    /// List all snapshots for a node (now supports both .lz4 and legacy .tar.gz) via HTTP agent
+    /// List all snapshots for a node via HTTP agent
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -397,7 +189,6 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // Determine compression type from filename
                 let compression_type = if filename.ends_with(".lz4") {
                     "lz4"
                 } else if filename.ends_with(".tar.gz") {

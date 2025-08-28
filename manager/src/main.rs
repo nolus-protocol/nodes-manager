@@ -50,14 +50,14 @@ pub struct AlarmPayload {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging with reduced verbosity - NO DEBUG LOGS
+    // Initialize logging with reduced verbosity
     let env_filter = EnvFilter::from_default_env()
         .add_directive("manager=info".parse()?)
-        .add_directive("tower_http=warn".parse()?) // Changed from debug to warn
-        .add_directive("tokio_cron_scheduler=warn".parse()?) // Suppress scheduler debug
-        .add_directive("hyper=warn".parse()?) // Suppress HTTP client debug
-        .add_directive("reqwest=warn".parse()?) // Suppress HTTP client debug
-        .add_directive("sqlx=warn".parse()?); // Suppress database debug
+        .add_directive("tower_http=warn".parse()?)
+        .add_directive("tokio_cron_scheduler=warn".parse()?)
+        .add_directive("hyper=warn".parse()?)
+        .add_directive("reqwest=warn".parse()?)
+        .add_directive("sqlx=warn".parse()?);
 
     fmt()
         .with_env_filter(env_filter)
@@ -87,21 +87,22 @@ async fn main() -> Result<()> {
     let http_manager = Arc::new(HttpAgentManager::new(config.clone(), operation_tracker.clone()));
     info!("HTTP agent manager initialized");
 
-    // Initialize health monitor
-    let health_monitor = Arc::new(HealthMonitor::new(
-        config.clone(),
-        database.clone(),
-        maintenance_tracker.clone(),
-    ));
-    info!("Health monitor initialized");
-
-    // Initialize snapshot manager
+    // Initialize snapshot manager FIRST (before health monitor)
     let snapshot_manager = Arc::new(SnapshotManager::new(
         config.clone(),
         http_manager.clone(),
         maintenance_tracker.clone(),
     ));
     info!("Snapshot manager initialized");
+
+    // Initialize health monitor WITH snapshot manager (for auto-restore)
+    let health_monitor = Arc::new(HealthMonitor::new(
+        config.clone(),
+        database.clone(),
+        maintenance_tracker.clone(),
+        snapshot_manager.clone(), // NEW: Pass snapshot manager for auto-restore
+    ));
+    info!("Health monitor initialized with auto-restore capability");
 
     // Initialize scheduler
     let scheduler = Arc::new(MaintenanceScheduler::new(
@@ -116,7 +117,7 @@ async fn main() -> Result<()> {
     scheduler.start().await?;
     info!("Scheduler started");
 
-    // Start periodic health monitoring
+    // Start periodic health monitoring (now includes auto-restore checking)
     let health_monitor_clone = health_monitor.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(90));
@@ -154,7 +155,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started");
+    info!("Background tasks started (including auto-restore monitoring)");
 
     // Start web server
     start_web_server(
