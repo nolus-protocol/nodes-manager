@@ -116,26 +116,105 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
         source_dir, dirs, target_file
     );
 
-    debug!("Creating LZ4 archive: {}", command);
-    let output = execute_shell_command(&command).await?;
-    debug!("Archive creation output: {}", output);
-    Ok(())
+    info!("Creating LZ4 archive with streaming: {}", command);
+    info!("Source directory: {}", source_dir);
+    info!("Target file: {}", target_file);
+    info!("Directories to archive: {:?}", directories);
+
+    let mut child = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("Failed to spawn LZ4 archive creation: {}", e))?;
+
+    info!("LZ4 archive creation process started, monitoring progress...");
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stdout_reader.next_line().await {
+            info!("lz4-archive stdout: {}", line);
+        }
+    });
+
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
+            info!("lz4-archive stderr: {}", line);
+        }
+    });
+
+    let status = child.wait().await
+        .map_err(|e| anyhow!("Failed to wait for LZ4 archive creation: {}", e))?;
+
+    info!("LZ4 archive creation completed with status: {:?}", status);
+
+    if status.success() {
+        info!("LZ4 archive creation completed successfully: {}", target_file);
+        Ok(())
+    } else {
+        let error_msg = format!("LZ4 archive creation failed with exit code: {:?}", status.code());
+        Err(anyhow!(error_msg))
+    }
 }
 
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
-    info!("Extracting LZ4 archive: {} to: {}", archive_file, target_dir);
-
     let command = format!(
         "cd '{}' && lz4 -dc '{}' | tar -xf -",
         target_dir, archive_file
     );
 
-    debug!("Extraction command: {}", command);
-    let output = execute_shell_command(&command).await?;
-    debug!("Extraction output: {}", output);
+    info!("Extracting LZ4 archive with streaming: {}", command);
+    info!("Archive file: {}", archive_file);
+    info!("Target directory: {}", target_dir);
 
-    info!("LZ4 archive extracted successfully");
-    Ok(())
+    let mut child = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("Failed to spawn LZ4 archive extraction: {}", e))?;
+
+    info!("LZ4 archive extraction process started, monitoring progress...");
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stdout_reader.next_line().await {
+            info!("lz4-extract stdout: {}", line);
+        }
+    });
+
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
+            info!("lz4-extract stderr: {}", line);
+        }
+    });
+
+    let status = child.wait().await
+        .map_err(|e| anyhow!("Failed to wait for LZ4 archive extraction: {}", e))?;
+
+    info!("LZ4 archive extraction completed with status: {:?}", status);
+
+    if status.success() {
+        info!("LZ4 archive extraction completed successfully to: {}", target_dir);
+        Ok(())
+    } else {
+        let error_msg = format!("LZ4 archive extraction failed with exit code: {:?}", status.code());
+        Err(anyhow!(error_msg))
+    }
 }
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {

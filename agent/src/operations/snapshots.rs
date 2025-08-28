@@ -23,7 +23,7 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     info!("Step 2: Stopping service {}", request.service_name);
     systemctl::stop_service(&request.service_name).await?;
 
-    // Step 3: Truncate logs (if configured) - FIXED: Use truncate_log_path instead of truncate_log_file
+    // Step 3: Truncate logs (if configured)
     if let Some(log_path) = &request.log_path {
         info!("Step 3: Truncating logs at: {}", log_path);
         logs::truncate_log_path(log_path).await?;
@@ -33,20 +33,23 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
 
     // Step 4: Execute cosmos-pruner before snapshot (with default values)
     info!("Step 4: Executing cosmos-pruner before snapshot");
-    let _pruning_output = commands::execute_cosmos_pruner(&request.deploy_path, 50000, 100).await?;
+    let pruning_output = commands::execute_cosmos_pruner(&request.deploy_path, 50000, 100).await?;
+    info!("Pruning completed: {}", pruning_output.len());
 
     // Step 5: Backup validator state
     info!("Step 5: Backing up validator state");
     let validator_source = format!("{}/data/priv_validator_state.json", request.deploy_path);
     commands::copy_file_if_exists(&validator_source, &validator_backup_path).await?;
 
-    // Step 6: Create LZ4 compressed snapshot
-    info!("Step 6: Creating LZ4 compressed snapshot (this may take a long time)");
+    // Step 6: Create LZ4 compressed snapshot (now with streaming progress)
+    info!("Step 6: Creating LZ4 compressed snapshot (this will show real-time progress)");
+    info!("Starting LZ4 compression of data and wasm directories...");
     commands::create_lz4_archive(
         &request.deploy_path,
         &snapshot_path,
         &["data", "wasm"]
     ).await?;
+    info!("LZ4 compression completed successfully!");
 
     // Step 7: Get file size
     info!("Step 7: Getting snapshot file size");

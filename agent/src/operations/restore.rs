@@ -16,7 +16,7 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     systemctl::stop_service(&request.service_name).await?;
     operation_log.push(format!("✓ Stopped service: {}", request.service_name));
 
-    // Step 2: Truncate logs (if configured) - FIXED: Use truncate_log_path instead of truncate_log_file
+    // Step 2: Truncate logs (if configured)
     if let Some(log_path) = &request.log_path {
         info!("Step 2: Truncating logs at: {}", log_path);
         logs::truncate_log_path(log_path).await?;
@@ -35,9 +35,11 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     commands::delete_directory(&wasm_dir).await?;
     operation_log.push("✓ Deleted existing data and wasm directories".to_string());
 
-    // Step 4: Extract snapshot
-    info!("Step 4: Extracting snapshot to restore data and wasm directories");
+    // Step 4: Extract snapshot (now with streaming progress)
+    info!("Step 4: Extracting snapshot to restore data and wasm directories (this will show real-time progress)");
+    info!("Starting LZ4 decompression and extraction...");
     commands::extract_lz4_archive(&request.snapshot_file, &request.deploy_path).await?;
+    info!("LZ4 extraction completed successfully!");
     operation_log.push("✓ Extracted snapshot archive".to_string());
 
     // Step 5: Restore validator state (if available)
