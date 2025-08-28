@@ -64,10 +64,16 @@ impl Database {
                 block_height INTEGER,
                 is_syncing INTEGER,
                 is_catching_up INTEGER,
-                validator_address TEXT,
-                INDEX(node_name, timestamp)
+                validator_address TEXT
             )
             "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for health records as separate statements
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_health_node_timestamp ON health_records(node_name, timestamp)"
         )
         .execute(&self.pool)
         .await?;
@@ -83,11 +89,22 @@ impl Database {
                 started_at DATETIME NOT NULL,
                 completed_at DATETIME,
                 error_message TEXT,
-                details TEXT,
-                INDEX(target_name, started_at),
-                INDEX(status, started_at)
+                details TEXT
             )
             "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for maintenance operations as separate statements
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_maintenance_target ON maintenance_operations(target_name, started_at)"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_maintenance_status ON maintenance_operations(status, started_at)"
         )
         .execute(&self.pool)
         .await?;

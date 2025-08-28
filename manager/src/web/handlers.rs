@@ -469,5 +469,5 @@ pub async fn get_maintenance_schedule(
 // === STATIC FILE HANDLER ===
 
 pub async fn serve_index() -> Html<&'static str> {
-    Html(include_str!("../../static/index.html"))
+    Html(include_str!("../../../static/index.html"))
 }
