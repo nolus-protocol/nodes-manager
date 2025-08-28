@@ -163,6 +163,64 @@ impl HttpAgentManager {
 
     // === High-Level Operations with Proper Maintenance Coordination ===
 
+    pub async fn restart_node(&self, node_name: &str) -> Result<()> {
+        // 1. Check if operation is allowed (operation tracker)
+        self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
+
+        // 2. Get node config
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        // 3. Start maintenance tracking (maintenance tracker)
+        let maintenance_result = self.maintenance_tracker.start_maintenance(
+            node_name,
+            "node_restart",
+            15, // 15 minute estimated duration for restart
+            &node_config.server_host
+        ).await;
+
+        if let Err(e) = maintenance_result {
+            // If maintenance tracking fails, cleanup operation tracking
+            self.operation_tracker.finish_operation(node_name).await;
+            return Err(e);
+        }
+
+        // 4. Execute the actual operation
+        let result = self.restart_node_impl(node_name).await;
+
+        // 5. Always cleanup both trackers (even on error)
+        self.operation_tracker.finish_operation(node_name).await;
+        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+            info!("Failed to end maintenance for {}: {}", node_name, e);
+        }
+
+        result
+    }
+
+    async fn restart_node_impl(&self, node_name: &str) -> Result<()> {
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        let service_name = node_config.pruning_service_name.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+
+        info!("Restarting node {}", node_name);
+
+        // Simple sequential restart
+        self.stop_service(&node_config.server_host, service_name).await?;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await; // Brief pause
+        self.start_service(&node_config.server_host, service_name).await?;
+
+        // Verify it started
+        let status = self.check_service_status(&node_config.server_host, service_name).await?;
+        if !status.is_running() {
+            return Err(anyhow::anyhow!("Node {} failed to start after restart", node_name));
+        }
+
+        info!("Node {} restarted successfully", node_name);
+        Ok(())
+    }
+
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
         // 1. Check if operation is allowed (operation tracker)
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;

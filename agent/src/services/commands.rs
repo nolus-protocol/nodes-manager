@@ -1,6 +1,7 @@
 // File: agent/src/services/commands.rs
 use anyhow::{anyhow, Result};
-use tokio::process::{Command as AsyncCommand, Stdio};
+use tokio::process::Command as AsyncCommand;
+use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{debug, info};
 
@@ -50,9 +51,6 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
-
-    let mut stdout_output = String::new();
-    let mut stderr_output = String::new();
 
     // Read all output without blocking
     tokio::spawn(async move {

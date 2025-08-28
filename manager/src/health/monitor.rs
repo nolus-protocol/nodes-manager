@@ -329,7 +329,7 @@ impl HealthMonitor {
 
     // Check if auto-restore is allowed (cooldown mechanism)
     async fn is_auto_restore_allowed(&self, node_name: &str) -> bool {
-        let mut cooldowns = self.auto_restore_cooldowns.lock().await;
+        let cooldowns = self.auto_restore_cooldowns.lock().await;
         let now = Utc::now();
 
         match cooldowns.get(node_name) {
