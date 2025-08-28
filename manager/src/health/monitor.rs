@@ -77,6 +77,8 @@ pub struct HealthMonitor {
     maintenance_tracker: Arc<MaintenanceTracker>,
     client: HttpClient,
     last_alert_times: Arc<tokio::sync::Mutex<HashMap<String, DateTime<Utc>>>>,
+    // NEW: Track previous health states to detect transitions
+    previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
 }
 
 impl HealthMonitor {
@@ -96,6 +98,7 @@ impl HealthMonitor {
             maintenance_tracker,
             client,
             last_alert_times: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            previous_health_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -126,24 +129,15 @@ impl HealthMonitor {
             }
         }
 
-        // Store results in database
+        // Store results in database and handle state transitions
         for status in &health_statuses {
             if let Err(e) = self.store_health_record(status).await {
                 error!("Failed to store health record for {}: {}", status.node_name, e);
             }
 
-            // Send alert if needed
-            if !status.is_healthy && !status.in_maintenance {
-                if let Err(e) = self.send_alert_if_needed(status).await {
-                    error!("Failed to send alert for {}: {}", status.node_name, e);
-                }
-            }
-
-            // Check for health recovery
-            if status.is_healthy {
-                if let Err(e) = self.check_health_recovery(status).await {
-                    error!("Failed to check health recovery for {}: {}", status.node_name, e);
-                }
+            // FIXED: Check for state transitions instead of just healthy status
+            if let Err(e) = self.handle_health_state_change(status).await {
+                error!("Failed to handle health state change for {}: {}", status.node_name, e);
             }
         }
 
@@ -155,6 +149,97 @@ impl HealthMonitor {
         }
 
         Ok(health_statuses)
+    }
+
+    // NEW: Handle health state changes with proper transition detection
+    async fn handle_health_state_change(&self, status: &HealthStatus) -> Result<()> {
+        let mut previous_states = self.previous_health_states.lock().await;
+        let previous_health = previous_states.get(&status.node_name).copied();
+
+        // Update the current state
+        previous_states.insert(status.node_name.clone(), status.is_healthy);
+
+        // Detect state transitions
+        match (previous_health, status.is_healthy, status.in_maintenance) {
+            // Node became unhealthy (and not in maintenance) - send alert
+            (Some(true), false, false) | (None, false, false) => {
+                info!("Node {} became unhealthy - sending alert", status.node_name);
+                if let Err(e) = self.send_alert_if_needed(status).await {
+                    error!("Failed to send alert for {}: {}", status.node_name, e);
+                }
+            }
+
+            // Node recovered (was unhealthy, now healthy) - send recovery notification
+            (Some(false), true, _) => {
+                info!("Node {} recovered - sending recovery notification", status.node_name);
+                if let Err(e) = self.send_recovery_notification(status).await {
+                    error!("Failed to send recovery notification for {}: {}", status.node_name, e);
+                }
+            }
+
+            // Node is still unhealthy - check if we need to send repeated alerts
+            (Some(false), false, false) => {
+                if let Err(e) = self.send_alert_if_needed(status).await {
+                    error!("Failed to send alert for {}: {}", status.node_name, e);
+                }
+            }
+
+            // All other cases: no notification needed
+            // (Some(true), true, _) - Still healthy, no action
+            // (_, _, true) - In maintenance, handled above
+            _ => {
+                debug!("No health state change notification needed for {}", status.node_name);
+            }
+        }
+
+        Ok(())
+    }
+
+    // NEW: Separate recovery notification method
+    async fn send_recovery_notification(&self, status: &HealthStatus) -> Result<()> {
+        // Clear the alert timer since node recovered
+        let mut last_alerts = self.last_alert_times.lock().await;
+        last_alerts.remove(&status.node_name);
+        drop(last_alerts); // Release lock early
+
+        // Send recovery notification
+        let payload = serde_json::json!({
+            "node_name": status.node_name,
+            "network": status.network,
+            "server_host": status.server_host,
+            "message": "Node has recovered and is now healthy",
+            "rpc_url": status.rpc_url,
+            "timestamp": status.last_check,
+            "is_healthy": true,
+            "block_height": status.block_height,
+            "recovery": true
+        });
+
+        match timeout(
+            Duration::from_secs(10),
+            self.client.post(&self.config.alarm_webhook_url)
+                .json(&payload)
+                .send(),
+        )
+        .await
+        {
+            Ok(Ok(response)) => {
+                if response.status().is_success() {
+                    info!("Recovery notification sent for node: {}", status.node_name);
+                } else {
+                    warn!("Recovery notification webhook returned status: {} for {}",
+                          response.status(), status.node_name);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to send recovery notification for {}: {}", status.node_name, e);
+            }
+            Err(_) => {
+                warn!("Recovery notification timeout for {}", status.node_name);
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
@@ -273,6 +358,34 @@ impl HealthMonitor {
         }
     }
 
+    // NEW: Method to force check a single node (useful for API)
+    pub async fn force_check_node(&self, node_name: &str) -> Result<HealthStatus> {
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow!("Node {} not found in configuration", node_name))?;
+
+        let status = self.check_node_health(node_name, node_config).await?;
+
+        // Store the result
+        if let Err(e) = self.store_health_record(&status).await {
+            error!("Failed to store health record for {}: {}", status.node_name, e);
+        }
+
+        // Handle state transitions
+        if let Err(e) = self.handle_health_state_change(&status).await {
+            error!("Failed to handle health state change for {}: {}", status.node_name, e);
+        }
+
+        Ok(status)
+    }
+
+    // NEW: Get health history for a node
+    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<HealthRecord>> {
+        // This would require a new database method - for now return empty
+        // You'll need to implement get_health_history in database.rs if needed
+        let _ = (node_name, limit);
+        Ok(Vec::new())
+    }
+
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
         let record = HealthRecord {
             node_name: status.node_name.clone(),
@@ -344,39 +457,6 @@ impl HealthMonitor {
         }
 
         debug!("Alert sent for node: {}", status.node_name);
-        Ok(())
-    }
-
-    async fn check_health_recovery(&self, status: &HealthStatus) -> Result<()> {
-        // Clear the alert timer since node recovered
-        let mut last_alerts = self.last_alert_times.lock().await;
-        last_alerts.remove(&status.node_name);
-
-        // Send recovery notification
-        let payload = serde_json::json!({
-            "node_name": status.node_name,
-            "network": status.network,
-            "server_host": status.server_host,
-            "message": "Node has recovered and is now healthy",
-            "rpc_url": status.rpc_url,
-            "timestamp": status.last_check,
-            "is_healthy": true,
-            "block_height": status.block_height,
-            "recovery": true
-        });
-
-        if let Err(e) = timeout(
-            Duration::from_secs(10),
-            self.client.post(&self.config.alarm_webhook_url)
-                .json(&payload)
-                .send(),
-        )
-        .await
-        {
-            warn!("Failed to send recovery notification: {}", e);
-        }
-
-        info!("Node {} has recovered", status.node_name);
         Ok(())
     }
 
@@ -528,6 +608,7 @@ impl Clone for HealthMonitor {
             maintenance_tracker: self.maintenance_tracker.clone(),
             client: self.client.clone(),
             last_alert_times: self.last_alert_times.clone(),
+            previous_health_states: self.previous_health_states.clone(),
         }
     }
 }
