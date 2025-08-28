@@ -111,12 +111,14 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
 
 pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
+
+    // Use verbose tar with stderr redirection to capture output
     let command = format!(
-        "cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
+        "cd '{}' && tar -cvf - {} 2>&1 | lz4 -z -v -c > '{}' 2>&1",
         source_dir, dirs, target_file
     );
 
-    info!("Creating LZ4 archive with streaming: {}", command);
+    info!("Creating LZ4 archive with verbose output: {}", command);
     info!("Source directory: {}", source_dir);
     info!("Target file: {}", target_file);
     info!("Directories to archive: {:?}", directories);
@@ -130,7 +132,7 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn LZ4 archive creation: {}", e))?;
 
-    info!("LZ4 archive creation process started, monitoring progress...");
+    info!("LZ4 archive creation process started, monitoring verbose progress...");
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -165,12 +167,13 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
 }
 
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
+    // Use verbose lz4 and tar for progress output
     let command = format!(
-        "cd '{}' && lz4 -dc '{}' | tar -xf -",
+        "cd '{}' && lz4 -dc '{}' | tar -xvf - 2>&1",
         target_dir, archive_file
     );
 
-    info!("Extracting LZ4 archive with streaming: {}", command);
+    info!("Extracting LZ4 archive with verbose output: {}", command);
     info!("Archive file: {}", archive_file);
     info!("Target directory: {}", target_dir);
 
@@ -183,7 +186,7 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn LZ4 archive extraction: {}", e))?;
 
-    info!("LZ4 archive extraction process started, monitoring progress...");
+    info!("LZ4 archive extraction process started, monitoring verbose progress...");
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
