@@ -79,14 +79,14 @@ struct AlertState {
     alert_count: u32,
 }
 
-// NEW: Auto-restore cooldown tracking
+// Auto-restore cooldown tracking
 #[derive(Debug, Clone)]
 struct AutoRestoreCooldown {
     last_restore_attempt: DateTime<Utc>,
     restore_count: u32,
 }
 
-// NEW: Block height tracking for progression detection
+// Block height tracking for progression detection
 #[derive(Debug, Clone)]
 struct BlockHeightState {
     last_height: i64,
@@ -102,10 +102,12 @@ pub struct HealthMonitor {
     client: HttpClient,
     alert_states: Arc<tokio::sync::Mutex<HashMap<String, AlertState>>>,
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
-    // NEW: Auto-restore cooldown tracking (2 hour cooldown)
+    // Auto-restore cooldown tracking (2 hour cooldown)
     auto_restore_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, AutoRestoreCooldown>>>,
-    // NEW: Block height progression tracking
+    // Block height progression tracking
     block_height_states: Arc<tokio::sync::Mutex<HashMap<String, BlockHeightState>>>,
+    // NEW: Track which nodes have already been checked for auto-restore triggers in their current unhealthy state
+    auto_restore_checked_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
 }
 
 impl HealthMonitor {
@@ -130,6 +132,7 @@ impl HealthMonitor {
             previous_health_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             auto_restore_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             block_height_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            auto_restore_checked_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -178,7 +181,7 @@ impl HealthMonitor {
             }
         }
 
-        // CHANGED: Auto-restore monitoring - only check UNHEALTHY nodes
+        // FIXED: Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period
         if let Err(e) = self.monitor_auto_restore_triggers(&health_statuses).await {
             error!("Auto-restore monitoring failed: {}", e);
         }
@@ -186,7 +189,7 @@ impl HealthMonitor {
         Ok(health_statuses)
     }
 
-    // CHANGED: Only monitor auto-restore triggers for UNHEALTHY nodes
+    // FIXED: Only monitor auto-restore triggers for UNHEALTHY nodes and only ONCE per unhealthy period
     async fn monitor_auto_restore_triggers(&self, health_statuses: &[HealthStatus]) -> Result<()> {
         let trigger_words = match &self.config.auto_restore_trigger_words {
             Some(words) if !words.is_empty() => words,
@@ -208,6 +211,12 @@ impl HealthMonitor {
         let mut tasks = Vec::new();
 
         for status in unhealthy_nodes {
+            // FIXED: Check if we've already checked this node during its current unhealthy state
+            if self.has_already_checked_auto_restore(&status.node_name).await {
+                debug!("Auto-restore triggers already checked for {} during current unhealthy state", status.node_name);
+                continue;
+            }
+
             let node_config = match self.config.nodes.get(&status.node_name) {
                 Some(config) => config,
                 None => continue,
@@ -247,6 +256,27 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // NEW: Check if we've already checked auto-restore triggers for this node during its current unhealthy state
+    async fn has_already_checked_auto_restore(&self, node_name: &str) -> bool {
+        let checked_states = self.auto_restore_checked_states.lock().await;
+        checked_states.get(node_name).copied().unwrap_or(false)
+    }
+
+    // NEW: Mark a node as checked for auto-restore triggers during its current unhealthy state
+    async fn mark_auto_restore_checked(&self, node_name: &str) {
+        let mut checked_states = self.auto_restore_checked_states.lock().await;
+        checked_states.insert(node_name.to_string(), true);
+        debug!("Marked {} as checked for auto-restore triggers", node_name);
+    }
+
+    // NEW: Clear auto-restore checked flag when node becomes healthy (so it can be checked again if it becomes unhealthy later)
+    async fn clear_auto_restore_checked(&self, node_name: &str) {
+        let mut checked_states = self.auto_restore_checked_states.lock().await;
+        if checked_states.remove(node_name).is_some() {
+            debug!("Cleared auto-restore checked flag for {} (node recovered)", node_name);
+        }
+    }
+
     async fn check_auto_restore_triggers_for_node(
         &self,
         node_name: &str,
@@ -257,6 +287,8 @@ impl HealthMonitor {
         // Check cooldown first
         if !self.is_auto_restore_allowed(node_name).await {
             debug!("Auto-restore for {} is in cooldown period", node_name);
+            // FIXED: Still mark as checked even if in cooldown, so we don't keep trying
+            self.mark_auto_restore_checked(node_name).await;
             return Ok(());
         }
 
@@ -264,13 +296,16 @@ impl HealthMonitor {
         let server_config = self.config.servers.get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
-        // CHANGED: Check only latest 500 lines instead of 1000
+        // Check only latest 500 lines instead of 1000
         let log_file = format!("{}/out1.log", log_path);
         let command = format!(
             "tail -n 500 '{}' | grep -q -E '{}'",
             log_file,
             trigger_words.join("|")
         );
+
+        // FIXED: Mark as checked BEFORE performing the check to prevent duplicate checks
+        self.mark_auto_restore_checked(node_name).await;
 
         match self.execute_log_command(server_config, &command).await {
             Ok(_) => {
@@ -292,7 +327,7 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // NEW: Check if auto-restore is allowed (cooldown mechanism)
+    // Check if auto-restore is allowed (cooldown mechanism)
     async fn is_auto_restore_allowed(&self, node_name: &str) -> bool {
         let mut cooldowns = self.auto_restore_cooldowns.lock().await;
         let now = Utc::now();
@@ -313,7 +348,7 @@ impl HealthMonitor {
         }
     }
 
-    // NEW: Execute auto-restore with cooldown tracking
+    // Execute auto-restore with cooldown tracking
     async fn execute_auto_restore(&self, node_name: &str, trigger_words: &[String]) -> Result<()> {
         info!("Executing auto-restore for {} due to trigger words: {:?}", node_name, trigger_words);
 
@@ -347,7 +382,7 @@ impl HealthMonitor {
         }
     }
 
-    // NEW: Send auto-restore notifications
+    // Send auto-restore notifications
     async fn send_auto_restore_alert(&self, node_name: &str, status: &str, trigger_words: &[String]) -> Result<()> {
         if self.config.alarm_webhook_url.is_empty() {
             return Ok(());
@@ -444,6 +479,9 @@ impl HealthMonitor {
 
             (Some(false), true, _) => {
                 info!("Node {} recovered - sending recovery notification", status.node_name);
+                // FIXED: Clear auto-restore checked flag when node recovers
+                self.clear_auto_restore_checked(&status.node_name).await;
+
                 if let Err(e) = self.send_recovery_notification(status).await {
                     error!("Failed to send recovery notification for {}: {}", status.node_name, e);
                 }
@@ -553,7 +591,7 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // CHANGED: Enhanced health check with block progression tracking
+    // Enhanced health check with block progression tracking
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
         let is_in_maintenance = self.maintenance_tracker
             .is_in_maintenance(node_name)
@@ -591,7 +629,7 @@ impl HealthMonitor {
                     status.is_syncing = Some(is_catching_up);
                     status.validator_address = Some(result.validator_info.address);
 
-                    // CHANGED: Check block progression for health determination
+                    // Check block progression for health determination
                     let block_progression_healthy = self.check_block_progression(node_name, current_height).await;
 
                     // Node is healthy if:
@@ -618,7 +656,7 @@ impl HealthMonitor {
         Ok(status)
     }
 
-    // NEW: Check if block height is progressing
+    // Check if block height is progressing
     async fn check_block_progression(&self, node_name: &str, current_height: i64) -> bool {
         let mut block_states = self.block_height_states.lock().await;
         let now = Utc::now();
@@ -945,6 +983,7 @@ impl Clone for HealthMonitor {
             previous_health_states: self.previous_health_states.clone(),
             auto_restore_cooldowns: self.auto_restore_cooldowns.clone(),
             block_height_states: self.block_height_states.clone(),
+            auto_restore_checked_states: self.auto_restore_checked_states.clone(),
         }
     }
 }

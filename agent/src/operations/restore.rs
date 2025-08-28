@@ -16,7 +16,7 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     systemctl::stop_service(&request.service_name).await?;
     operation_log.push(format!("✓ Stopped service: {}", request.service_name));
 
-    // Step 2: Truncate logs (if configured)
+    // Step 2: Truncate logs (if configured) - FIXED: Use truncate_log_path instead of truncate_log_file
     if let Some(log_path) = &request.log_path {
         info!("Step 2: Truncating logs at: {}", log_path);
         logs::truncate_log_path(log_path).await?;
