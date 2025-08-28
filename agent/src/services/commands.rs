@@ -33,26 +33,23 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     info!("Executing cosmos-pruner: {}", command);
 
-    // FIXED: Use proper stdio handling to prevent hanging
     let mut child = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
-        .stdin(Stdio::null())  // Ensure no stdin input is expected
-        .stdout(Stdio::piped()) // Capture stdout
-        .stderr(Stdio::piped()) // Capture stderr
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
     info!("Cosmos-pruner process started, reading output...");
 
-    // Read stdout and stderr concurrently to prevent blocking
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    // Read all output without blocking
     tokio::spawn(async move {
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             info!("cosmos-pruner stdout: {}", line);
@@ -65,7 +62,6 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
         }
     });
 
-    // Wait for process to complete
     let status = child.wait().await
         .map_err(|e| anyhow!("Failed to wait for cosmos-pruner: {}", e))?;
 
@@ -86,7 +82,6 @@ pub async fn create_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-// NEW: Delete directory function for restore operations
 pub async fn delete_directory(path: &str) -> Result<()> {
     info!("Deleting directory: {}", path);
     let command = format!("rm -rf '{}'", path);
@@ -122,13 +117,11 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     );
 
     debug!("Creating LZ4 archive: {}", command);
-
     let output = execute_shell_command(&command).await?;
     debug!("Archive creation output: {}", output);
     Ok(())
 }
 
-// NEW: Extract LZ4 archive function for restore operations
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
     info!("Extracting LZ4 archive: {} to: {}", archive_file, target_dir);
 
@@ -138,7 +131,6 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     );
 
     debug!("Extraction command: {}", command);
-
     let output = execute_shell_command(&command).await?;
     debug!("Extraction output: {}", output);
 
@@ -146,62 +138,6 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     Ok(())
 }
 
-// NEW: Find latest snapshot file
-pub async fn find_latest_snapshot(backup_dir: &str, network: &str) -> Result<Option<String>> {
-    let command = format!(
-        "find '{}' -name '{}_*.lz4' -o -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-        backup_dir, network, network
-    );
-
-    debug!("Finding latest snapshot: {}", command);
-
-    let output = execute_shell_command(&command).await?;
-    let latest_file = output.trim();
-
-    if latest_file.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(latest_file.to_string()))
-    }
-}
-
-// NEW: Find validator backup file for a given snapshot
-pub async fn find_validator_backup_for_snapshot(backup_dir: &str, snapshot_filename: &str) -> Result<Option<String>> {
-    // Extract timestamp from snapshot filename
-    let timestamp = extract_timestamp_from_snapshot_filename(snapshot_filename)?;
-    let validator_backup_path = format!("{}/validator_state_backup_{}.json", backup_dir, timestamp);
-
-    // Check if the validator backup file exists
-    let check_command = format!("test -f '{}'", validator_backup_path);
-
-    match execute_shell_command(&check_command).await {
-        Ok(_) => Ok(Some(validator_backup_path)),
-        Err(_) => Ok(None),
-    }
-}
-
-// Helper function to extract timestamp from snapshot filename
-fn extract_timestamp_from_snapshot_filename(filename: &str) -> Result<String> {
-    let basename = filename.split('/').last().unwrap_or(filename);
-
-    // Handle different formats: network_YYYYMMDD_HHMMSS.lz4 or network_YYYYMMDD_HHMMSS.tar.gz
-    if let Some(timestamp_part) = basename.split('_').nth(1) {
-        if let Some(timestamp_with_ext) = basename.split('_').nth(2) {
-            let timestamp = timestamp_with_ext
-                .strip_suffix(".lz4")
-                .or_else(|| timestamp_with_ext.strip_suffix(".tar.gz"))
-                .unwrap_or(timestamp_with_ext);
-
-            Ok(format!("{}_{}", timestamp_part, timestamp))
-        } else {
-            Err(anyhow!("Could not extract timestamp from snapshot filename: {}", filename))
-        }
-    } else {
-        Err(anyhow!("Invalid snapshot filename format: {}", filename))
-    }
-}
-
-// NEW: Check if file contains trigger words (for auto-restore)
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
     if trigger_words.is_empty() {
         return Ok(false);

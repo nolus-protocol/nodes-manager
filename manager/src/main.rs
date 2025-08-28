@@ -83,8 +83,12 @@ async fn main() -> Result<()> {
     let maintenance_tracker = Arc::new(MaintenanceTracker::new());
     info!("Maintenance tracker initialized");
 
-    // Initialize HTTP agent manager with operation tracking
-    let http_manager = Arc::new(HttpAgentManager::new(config.clone(), operation_tracker.clone()));
+    // Initialize HTTP agent manager with operation tracking AND maintenance tracking
+    let http_manager = Arc::new(HttpAgentManager::new(
+        config.clone(),
+        operation_tracker.clone(),
+        maintenance_tracker.clone()
+    ));
     info!("HTTP agent manager initialized");
 
     // Initialize snapshot manager FIRST (before health monitor)

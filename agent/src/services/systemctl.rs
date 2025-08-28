@@ -54,26 +54,6 @@ pub async fn stop_service(service_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn restart_service(service_name: &str) -> Result<()> {
-    info!("Restarting service: {}", service_name);
-
-    stop_service(service_name).await?;
-
-    // Brief pause between stop and start
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    start_service(service_name).await?;
-
-    // Verify it started
-    let status = get_service_status(service_name).await?;
-    if status != "active" {
-        return Err(anyhow!("Service {} failed to start after restart (status: {})", service_name, status));
-    }
-
-    info!("Service {} restarted successfully", service_name);
-    Ok(())
-}
-
 pub async fn get_service_uptime(service_name: &str) -> Result<u64> {
     debug!("Getting service uptime: {}", service_name);
 
@@ -91,7 +71,6 @@ pub async fn get_service_uptime(service_name: &str) -> Result<u64> {
         return Ok(0);
     }
 
-    // Parse timestamp and calculate uptime
     let date_output = AsyncCommand::new("date")
         .arg("-d")
         .arg(&timestamp_str)

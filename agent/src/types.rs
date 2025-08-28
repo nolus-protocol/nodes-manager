@@ -24,8 +24,8 @@ pub struct PruningRequest {
     pub deploy_path: String,
     pub keep_blocks: u64,
     pub keep_versions: u64,
-    pub service_name: String,    // NEW: Need service name for full sequence
-    pub log_path: Option<String>, // NEW: Optional log path for truncation
+    pub service_name: String,
+    pub log_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,11 +33,10 @@ pub struct SnapshotRequest {
     pub node_name: String,
     pub deploy_path: String,
     pub backup_path: String,
-    pub service_name: String,    // NEW: Need service name for full sequence
-    pub log_path: Option<String>, // NEW: Optional log path for truncation
+    pub service_name: String,
+    pub log_path: Option<String>,
 }
 
-// NEW: Restore request structure
 #[derive(Debug, Deserialize)]
 pub struct RestoreRequest {
     pub node_name: String,
@@ -74,21 +73,6 @@ pub struct ApiResponse<T> {
 }
 
 impl<T> ApiResponse<T> {
-    pub fn success_with_data(data: T) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            output: None,
-            error: None,
-            status: None,
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-        }
-    }
-
     pub fn error(message: String) -> Self {
         Self {
             success: false,
