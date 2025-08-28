@@ -26,14 +26,13 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     // Step 3: Truncate logs (if configured)
     if let Some(log_path) = &request.log_path {
         info!("Step 3: Truncating logs at: {}", log_path);
-        logs::truncate_log_file(log_path).await?;
+        logs::truncate_log_path(log_path).await?;
     } else {
         info!("Step 3: No log path configured, skipping log truncation");
     }
 
-    // Step 4: Execute pruning BEFORE snapshot
+    // Step 4: Execute cosmos-pruner before snapshot (with default values)
     info!("Step 4: Executing cosmos-pruner before snapshot");
-    // Use default pruning values for snapshot preparation
     let _pruning_output = commands::execute_cosmos_pruner(&request.deploy_path, 50000, 100).await?;
 
     // Step 5: Backup validator state

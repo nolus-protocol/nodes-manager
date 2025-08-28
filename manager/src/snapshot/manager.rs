@@ -76,6 +76,10 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No deploy path configured for node {}", node_name))?;
 
+        let service_name = node_config.pruning_service_name
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured for node {}", node_name))?;
+
         info!("Starting LZ4 snapshot creation for node {} on server {} via HTTP agent", node_name, node_config.server_host);
 
         // Start maintenance tracking with 24-hour timeout for all snapshots
@@ -83,17 +87,31 @@ impl SnapshotManager {
             .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
             .await?;
 
-        let snapshot_result = self.execute_snapshot_creation(node_name, &node_config, deploy_path, backup_path).await;
+        let snapshot_result = self.execute_snapshot_creation(
+            node_name,
+            &node_config,
+            deploy_path,
+            backup_path,
+            service_name
+        ).await;
 
         // End maintenance tracking
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // Send notification
-        let status = if snapshot_result.is_ok() { "completed" } else { "failed" };
-        if let Err(e) = self.send_snapshot_notification(node_name, status, "snapshot_creation").await {
-            warn!("Failed to send snapshot notification: {}", e);
+        // FIXED: Send notification ONLY on completion or error, not on start
+        match &snapshot_result {
+            Ok(_) => {
+                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_creation").await {
+                    warn!("Failed to send completion notification: {}", e);
+                }
+            }
+            Err(_) => {
+                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "snapshot_creation").await {
+                    warn!("Failed to send error notification: {}", e);
+                }
+            }
         }
 
         snapshot_result
@@ -105,66 +123,32 @@ impl SnapshotManager {
         node_config: &NodeConfig,
         deploy_path: &str,
         backup_path: &str,
+        service_name: &str,
     ) -> Result<SnapshotInfo> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!("{}_{}.lz4", node_config.network, timestamp);
-        let snapshot_path = format!("{}/{}", backup_path, filename);
 
-        // Step 1: Stop service if configured
-        if let Some(service_name) = &node_config.pruning_service_name {
-            info!("Step 1: Stopping service {} via HTTP agent", service_name);
-            self.http_manager.stop_service(&node_config.server_host, service_name).await?;
-        } else {
-            warn!("No service name configured for {}, skipping service stop", node_name);
-        }
-
-        // Step 2: Backup validator state if it exists
-        let validator_state_backup_path = format!("{}/validator_state_backup_{}.json", backup_path, timestamp);
-        let backup_validator_state_cmd = format!(
-            "if [ -f '{}/data/priv_validator_state.json' ]; then cp '{}/data/priv_validator_state.json' '{}'; fi",
-            deploy_path, deploy_path, validator_state_backup_path
-        );
-
-        match self.http_manager.execute_single_command(&node_config.server_host, &backup_validator_state_cmd).await {
-            Ok(_) => info!("Step 2: Validator state backed up to {} via HTTP agent", validator_state_backup_path),
-            Err(e) => warn!("Step 2: Could not backup validator state via HTTP agent: {}", e),
-        }
-
-        // Step 3: Create LZ4-compressed snapshot via HTTP agent
-        info!("Step 3: Creating LZ4-compressed snapshot via HTTP agent (this may take several hours for archive nodes)");
-
-        let create_snapshot_cmd = format!(
-            "cd '{}' && tar -cf - data wasm 2>/dev/null | lz4 -z -c > '{}'",
-            deploy_path, snapshot_path
-        );
-
-        self.http_manager.execute_single_command(&node_config.server_host, &create_snapshot_cmd).await?;
-
-        // Step 4: Get snapshot file size via HTTP agent
-        let file_size_cmd = format!("stat -c%s '{}'", snapshot_path);
-        let file_size_bytes = self.http_manager
-            .execute_single_command(&node_config.server_host, &file_size_cmd)
-            .await
-            .ok()
-            .and_then(|size_str| size_str.trim().parse::<u64>().ok());
-
-        // Step 5: Start service if configured
-        if let Some(service_name) = &node_config.pruning_service_name {
-            info!("Step 5: Starting service {} via HTTP agent", service_name);
-            self.http_manager.start_service(&node_config.server_host, service_name).await?;
-        }
+        // Execute the full snapshot sequence via HTTP agent
+        let agent_snapshot = self.http_manager.create_snapshot(
+            &node_config.server_host,
+            deploy_path,
+            backup_path,
+            node_name,
+            service_name,
+            node_config.log_path.as_deref()
+        ).await?;
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
-            filename: filename.clone(),
-            created_at: Utc::now(),
-            file_size_bytes,
-            snapshot_path: snapshot_path.clone(),
-            compression_type: "lz4".to_string(),
+            filename: agent_snapshot.filename,
+            created_at: agent_snapshot.created_at,
+            file_size_bytes: Some(agent_snapshot.size_bytes),
+            snapshot_path: agent_snapshot.path,
+            compression_type: agent_snapshot.compression,
         };
 
-        info!("LZ4 snapshot creation completed for {} via HTTP agent: {}", node_name, filename);
+        info!("LZ4 snapshot creation completed for {} via HTTP agent: {}", node_name, snapshot_info.filename);
         Ok(snapshot_info)
     }
 
@@ -373,6 +357,7 @@ impl SnapshotManager {
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))
     }
 
+    // FIXED: Only send notifications on completion or error, not on start
     async fn send_snapshot_notification(&self, node_name: &str, status: &str, operation: &str) -> Result<()> {
         if self.config.alarm_webhook_url.is_empty() {
             return Ok(());
@@ -380,6 +365,11 @@ impl SnapshotManager {
 
         let server_host = self.get_server_for_node(node_name).await.unwrap_or_else(|| "unknown".to_string());
         let server_host_clone = server_host.clone();
+
+        // Only send notifications for completion or failure, not for start
+        if status != "completed" && status != "failed" {
+            return Ok(());
+        }
 
         let alarm = AlarmPayload {
             timestamp: Utc::now(),

@@ -71,12 +71,19 @@ pub struct RpcError {
     pub message: String,
 }
 
+#[derive(Debug, Clone)]
+struct AlertState {
+    first_unhealthy: DateTime<Utc>,
+    last_alert_sent: DateTime<Utc>,
+    alert_count: u32,
+}
+
 pub struct HealthMonitor {
     config: Arc<Config>,
     database: Arc<Database>,
     maintenance_tracker: Arc<MaintenanceTracker>,
     client: HttpClient,
-    last_alert_times: Arc<tokio::sync::Mutex<HashMap<String, DateTime<Utc>>>>,
+    alert_states: Arc<tokio::sync::Mutex<HashMap<String, AlertState>>>,
     // NEW: Track previous health states to detect transitions
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
 }
@@ -97,7 +104,7 @@ impl HealthMonitor {
             database,
             maintenance_tracker,
             client,
-            last_alert_times: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            alert_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             previous_health_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -151,25 +158,26 @@ impl HealthMonitor {
         Ok(health_statuses)
     }
 
-    // NEW: Handle health state changes with proper transition detection
+    // FIXED: Handle health state changes with proper transition detection and progressive alerts
     async fn handle_health_state_change(&self, status: &HealthStatus) -> Result<()> {
         let mut previous_states = self.previous_health_states.lock().await;
         let previous_health = previous_states.get(&status.node_name).copied();
 
         // Update the current state
         previous_states.insert(status.node_name.clone(), status.is_healthy);
+        drop(previous_states); // Release lock early
 
         // Detect state transitions
         match (previous_health, status.is_healthy, status.in_maintenance) {
             // Node became unhealthy (and not in maintenance) - send alert
             (Some(true), false, false) | (None, false, false) => {
                 info!("Node {} became unhealthy - sending alert", status.node_name);
-                if let Err(e) = self.send_alert_if_needed(status).await {
+                if let Err(e) = self.send_progressive_alert(status).await {
                     error!("Failed to send alert for {}: {}", status.node_name, e);
                 }
             }
 
-            // Node recovered (was unhealthy, now healthy) - send recovery notification
+            // Node recovered (was unhealthy, now healthy) - send recovery notification and reset alerts
             (Some(false), true, _) => {
                 info!("Node {} recovered - sending recovery notification", status.node_name);
                 if let Err(e) = self.send_recovery_notification(status).await {
@@ -179,14 +187,14 @@ impl HealthMonitor {
 
             // Node is still unhealthy - check if we need to send repeated alerts
             (Some(false), false, false) => {
-                if let Err(e) = self.send_alert_if_needed(status).await {
+                if let Err(e) = self.send_progressive_alert(status).await {
                     error!("Failed to send alert for {}: {}", status.node_name, e);
                 }
             }
 
             // All other cases: no notification needed
             // (Some(true), true, _) - Still healthy, no action
-            // (_, _, true) - In maintenance, handled above
+            // (_, _, true) - In maintenance, no health alerts
             _ => {
                 debug!("No health state change notification needed for {}", status.node_name);
             }
@@ -195,14 +203,63 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // NEW: Separate recovery notification method
-    async fn send_recovery_notification(&self, status: &HealthStatus) -> Result<()> {
-        // Clear the alert timer since node recovered
-        let mut last_alerts = self.last_alert_times.lock().await;
-        last_alerts.remove(&status.node_name);
-        drop(last_alerts); // Release lock early
+    // FIXED: Progressive alert system - immediate, 3h, 6h, 12h, 24h, 48h, etc.
+    async fn send_progressive_alert(&self, status: &HealthStatus) -> Result<()> {
+        let mut alert_states = self.alert_states.lock().await;
+        let now = Utc::now();
 
-        // Send recovery notification
+        let should_send_alert = match alert_states.get_mut(&status.node_name) {
+            // First time seeing this unhealthy node - send immediate alert
+            None => {
+                let alert_state = AlertState {
+                    first_unhealthy: now,
+                    last_alert_sent: now,
+                    alert_count: 1,
+                };
+                alert_states.insert(status.node_name.clone(), alert_state);
+                true
+            }
+
+            // Node has been unhealthy before - check progressive schedule
+            Some(alert_state) => {
+                let hours_since_first = (now - alert_state.first_unhealthy).num_hours();
+                let hours_since_last = (now - alert_state.last_alert_sent).num_hours();
+
+                // Progressive schedule: 0h (immediate), 3h, 6h, 12h, then every 24h
+                let should_alert = match alert_state.alert_count {
+                    1 => hours_since_first >= 3,  // Second alert after 3 hours
+                    2 => hours_since_first >= 6,  // Third alert after 6 hours
+                    3 => hours_since_first >= 12, // Fourth alert after 12 hours
+                    _ => hours_since_last >= 24,  // Subsequent alerts every 24 hours
+                };
+
+                if should_alert {
+                    alert_state.last_alert_sent = now;
+                    alert_state.alert_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        drop(alert_states); // Release lock early
+
+        if should_send_alert {
+            self.send_webhook_alert(status).await?;
+        }
+
+        Ok(())
+    }
+
+    // NEW: Separate recovery notification method that clears alert state
+    async fn send_recovery_notification(&self, status: &HealthStatus) -> Result<()> {
+        // Clear the alert state since node recovered
+        let mut alert_states = self.alert_states.lock().await;
+        alert_states.remove(&status.node_name);
+        drop(alert_states); // Release lock early
+
+        // Send recovery notification (these are not subject to rate limiting)
         let payload = serde_json::json!({
             "node_name": status.node_name,
             "network": status.network,
@@ -212,7 +269,8 @@ impl HealthMonitor {
             "timestamp": status.last_check,
             "is_healthy": true,
             "block_height": status.block_height,
-            "recovery": true
+            "recovery": true,
+            "alert_type": "node_recovery"
         });
 
         match timeout(
@@ -401,34 +459,6 @@ impl HealthMonitor {
         self.database.store_health_record(&record).await
     }
 
-    async fn send_alert_if_needed(&self, status: &HealthStatus) -> Result<()> {
-        let mut last_alerts = self.last_alert_times.lock().await;
-        let now = Utc::now();
-
-        let should_alert = match last_alerts.get(&status.node_name) {
-            None => true, // First alert
-            Some(last_alert) => {
-                let hours_since_last = (now - *last_alert).num_hours();
-
-                // Progressive delay: immediate, 6h, 12h, 24h, 48h, then every 48h
-                hours_since_last >= match hours_since_last {
-                    0..=5 => 0,      // Immediate
-                    6..=11 => 6,     // After 6 hours
-                    12..=23 => 12,   // After 12 hours
-                    24..=47 => 24,   // After 24 hours
-                    _ => 48,         // Every 48 hours after that
-                }
-            }
-        };
-
-        if should_alert {
-            self.send_webhook_alert(status).await?;
-            last_alerts.insert(status.node_name.clone(), now);
-        }
-
-        Ok(())
-    }
-
     async fn send_webhook_alert(&self, status: &HealthStatus) -> Result<()> {
         let payload = serde_json::json!({
             "node_name": status.node_name,
@@ -439,7 +469,8 @@ impl HealthMonitor {
             "timestamp": status.last_check,
             "is_healthy": status.is_healthy,
             "block_height": status.block_height,
-            "is_catching_up": status.is_catching_up
+            "is_catching_up": status.is_catching_up,
+            "alert_type": "node_unhealthy"
         });
 
         let response = timeout(
@@ -607,7 +638,7 @@ impl Clone for HealthMonitor {
             database: self.database.clone(),
             maintenance_tracker: self.maintenance_tracker.clone(),
             client: self.client.clone(),
-            last_alert_times: self.last_alert_times.clone(),
+            alert_states: self.alert_states.clone(),
             previous_health_states: self.previous_health_states.clone(),
         }
     }
