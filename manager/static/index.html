@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blockchain Infrastructure Management Console</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        :root {
+            --primary-color: #1a365d;
+            --secondary-color: #2d3748;
+            --accent-color: #3182ce;
+            --success-color: #38a169;
+            --warning-color: #d69e2e;
+            --error-color: #e53e3e;
+            --maintenance-color: #3182ce;
+            --hermes-color: #8b5cf6;
+            --snapshot-color: #9f7aea;
+            --cancel-color: #e53e3e;
+            --bg-primary: #f7fafc;
+            --bg-secondary: #ffffff;
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow-sm);
+        }
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .header-title h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin: 0;
+        }
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            font-size: 0.875rem;
+        }
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 0.375rem;
+            font-weight: 500;
+        }
+        .status-indicator.healthy {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+        .status-indicator.warning {
+            background-color: rgba(214, 158, 46, 0.1);
+            color: var(--warning-color);
+        }
+        .status-indicator.error {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+        .status-indicator.maintenance {
+            background-color: rgba(49, 130, 206, 0.1);
+            color: var(--maintenance-color);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .metric-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        .metric-title {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+        .metric-icon {
+            width: 1.25rem;
+            height: 1.25rem;
+            color: var(--text-muted);
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1;
+        }
+        .metric-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+        .progress-bar {
+            margin-top: 0.5rem;
+            height: 0.25rem;
+            background-color: var(--border-color);
+            border-radius: 0.125rem;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: var(--success-color);
+            transition: width 0.3s ease;
+        }
+        .panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: 2rem;
+        }
+        .panel-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: #f8fafc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .panel-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+        .panel-content {
+            padding: 0;
+        }
+        .infrastructure-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        .infrastructure-table th,
+        .infrastructure-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .infrastructure-table th {
+            background-color: #f8fafc;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .infrastructure-table tbody tr {
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .infrastructure-table tbody tr:hover {
+            background-color: #f8fafc;
+        }
+        .node-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        .node-network {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.125rem;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.625rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .status-healthy {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+        .status-unhealthy {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+        .status-maintenance {
+            background-color: rgba(49, 130, 206, 0.1);
+            color: var(--maintenance-color);
+        }
+        .status-unknown {
+            background-color: rgba(113, 128, 150, 0.1);
+            color: var(--text-muted);
+        }
+        .status-running {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+        .status-stopped {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+        .status-failed {
+            background-color: rgba(229, 62, 62, 0.1);
+            color: var(--error-color);
+        }
+        .status-dot-mini {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+        .uptime {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border: none;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+        }
+        .btn-icon {
+            padding: 0.375rem;
+            position: relative;
+        }
+        .btn-primary {
+            background-color: var(--accent-color);
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #2c5aa0;
+            transform: translateY(-1px);
+        }
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        .btn-success:hover {
+            background-color: #2f855a;
+            transform: translateY(-1px);
+        }
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+        .btn-warning:hover {
+            background-color: #b7791f;
+            transform: translateY(-1px);
+        }
+        .btn-hermes {
+            background-color: var(--hermes-color);
+            color: white;
+        }
+        .btn-hermes:hover {
+            background-color: #7c3aed;
+            transform: translateY(-1px);
+        }
+        .btn-snapshot {
+            background-color: var(--snapshot-color);
+            color: white;
+        }
+        .btn-snapshot:hover {
+            background-color: #805ad5;
+            transform: translateY(-1px);
+        }
+        .btn-cancel {
+            background-color: var(--cancel-color);
+            color: white;
+        }
+        .btn-cancel:hover {
+            background-color: #c53030;
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background-color: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+        .btn-secondary:hover {
+            background-color: #f8fafc;
+            transform: translateY(-1px);
+        }
+        .tooltip {
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--secondary-color);
+            color: white;
+            padding: 0.375rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 1000;
+        }
+        .tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-top-color: var(--secondary-color);
+        }
+        .btn-icon:hover .tooltip {
+            opacity: 1;
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+        .spinner {
+            width: 1.5rem;
+            height: 1.5rem;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.75rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .alert {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.875rem 1rem;
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-lg);
+            z-index: 1000;
+            max-width: 400px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+        .alert.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .alert-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        .alert-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+        .alert-error {
+            background-color: var(--error-color);
+            color: white;
+        }
+        .schedule-info {
+            font-size: 0.75rem;
+        }
+        .schedule-readable {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .schedule-cron {
+            color: var(--text-muted);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            margin-top: 0.125rem;
+        }
+        .next-run {
+            font-size: 0.75rem;
+        }
+        .next-run-time {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .next-run-countdown {
+            color: var(--accent-color);
+            margin-top: 0.125rem;
+        }
+        .no-schedule {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        .snapshot-info {
+            font-size: 0.75rem;
+        }
+        .snapshot-count {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .snapshot-size {
+            color: var(--text-muted);
+            margin-top: 0.125rem;
+        }
+        .no-snapshots {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        .expandable-row {
+            background-color: #f8fafc;
+            border-top: none !important;
+        }
+        .details-content {
+            padding: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        .detail-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .detail-label {
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.25rem;
+        }
+        .detail-value {
+            font-size: 0.75rem;
+            color: var(--text-primary);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="header-title">
+                <h1>Infrastructure Management Console</h1>
+            </div>
+            <div class="header-status">
+                <div class="status-indicator healthy" id="system-status">
+                    <div class="status-dot"></div>
+                    <span>All Systems Operational</span>
+                </div>
+                <div id="last-updated" style="color: var(--text-muted); font-size: 0.75rem;">
+                    Last updated: Never
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Total Components</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="total-components">-</div>
+                <div class="metric-subtitle" id="components-breakdown">Nodes & Relayers</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Healthy Components</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="healthy-components">-</div>
+                <div class="metric-subtitle" id="health-percentage">-% operational</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="health-progress" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Scheduled Operations</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="scheduled-operations">-</div>
+                <div class="metric-subtitle" id="next-scheduled">Next in -</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-title">Active Maintenance</div>
+                    <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/>
+                    </svg>
+                </div>
+                <div class="metric-value" id="active-maintenance">-</div>
+                <div class="metric-subtitle" id="maintenance-subtitle">Operations running</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                    </svg>
+                    Blockchain Nodes
+                </div>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshNodes()">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                        </svg>
+                        Refresh All
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <div id="nodes-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading blockchain nodes...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"/>
+                    </svg>
+                    Hermes Relayers
+                </div>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshHermes()">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                        </svg>
+                        Refresh All
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <div id="hermes-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading Hermes relayers...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let refreshInterval;
+        let nodeConfigs = {};
+        let hermesConfigs = {};
+        let scheduledOperations = {};
+        let snapshotStats = {};
+        let isLoadingData = false;
+        let expandedRows = new Set();
+
+        // Store data globally to calculate metrics correctly
+        let currentNodesData = null;
+        let currentHermesData = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAllData();
+            startAutoRefresh();
+        });
+
+        function startAutoRefresh() {
+            refreshInterval = setInterval(loadAllData, 30000);
+        }
+
+        async function loadAllData() {
+            // Prevent overlapping load operations to reduce flickering
+            if (isLoadingData) return;
+            isLoadingData = true;
+
+            try {
+                // Load configs and scheduled operations first
+                await Promise.all([
+                    loadNodeConfigs(),
+                    loadHermesConfigs(),
+                    loadScheduledOperations()
+                ]);
+
+                // Load snapshot stats completely before proceeding
+                await loadSnapshotStats();
+
+                // Then load UI data that depends on the configs
+                await Promise.all([
+                    loadNodes(),
+                    loadHermesInstances()
+                ]);
+
+                // Calculate metrics after both datasets are loaded
+                updateAllMetrics();
+                updateLastUpdated();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showAlert('Failed to load data: ' + error.message, 'error');
+            } finally {
+                isLoadingData = false;
+            }
+        }
+
+        async function loadNodeConfigs() {
+            try {
+                const response = await fetch('/api/config/nodes');
+                const data = await response.json();
+                if (data.success) {
+                    nodeConfigs = data.data.nodes || {};
+                }
+            } catch (error) {
+                console.error('Failed to load node configs:', error);
+            }
+        }
+
+        async function loadHermesConfigs() {
+            try {
+                const response = await fetch('/api/config/hermes');
+                const data = await response.json();
+                if (data.success) {
+                    hermesConfigs = data.data.hermes || {};
+                }
+            } catch (error) {
+                console.error('Failed to load hermes configs:', error);
+            }
+        }
+
+        async function loadScheduledOperations() {
+            try {
+                const response = await fetch('/api/maintenance/schedule');
+                const data = await response.json();
+                if (data.success) {
+                    // Simple stub - no complex scheduling in simplified version
+                    scheduledOperations = {};
+                    updateScheduleMetrics(data.data);
+                }
+            } catch (error) {
+                console.error('Failed to load scheduled operations:', error);
+            }
+        }
+
+        async function loadSnapshotStats() {
+            try {
+                const newSnapshotStats = {};
+                const statPromises = [];
+
+                // Load stats for snapshot-enabled nodes in parallel but wait for all
+                for (const [nodeName, nodeConfig] of Object.entries(nodeConfigs)) {
+                    if (nodeConfig.snapshots_enabled) {
+                        const promise = fetch(`/api/snapshots/${nodeName}/stats`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    newSnapshotStats[nodeName] = data.data;
+                                }
+                            })
+                            .catch(error => {
+                                console.warn(`Failed to load snapshot stats for ${nodeName}:`, error);
+                            });
+                        statPromises.push(promise);
+                    }
+                }
+
+                // Wait for all snapshot stats to complete
+                await Promise.all(statPromises);
+                snapshotStats = newSnapshotStats;
+            } catch (error) {
+                console.error('Failed to load snapshot stats:', error);
+            }
+        }
+
+        async function loadNodes() {
+            try {
+                const response = await fetch('/api/health/nodes?include_disabled=true');
+                const data = await response.json();
+                if (data.success) {
+                    currentNodesData = data.data;
+                    renderNodes(data.data);
+                }
+            } catch (error) {
+                console.error('Failed to load nodes:', error);
+                const container = document.getElementById('nodes-container');
+                container.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: var(--error-color);">
+                        Failed to load nodes: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function loadHermesInstances() {
+            try {
+                const response = await fetch('/api/health/hermes');
+                const data = await response.json();
+                if (data.success) {
+                    currentHermesData = data.data;
+                    renderHermesInstances(data.data);
+                }
+            } catch (error) {
+                console.error('Failed to load hermes instances:', error);
+                const container = document.getElementById('hermes-container');
+                container.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: var(--error-color);">
+                        Failed to load hermes instances: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function renderNodes(nodes) {
+            const container = document.getElementById('nodes-container');
+
+            if (!nodes || nodes.length === 0) {
+                container.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
+                        No blockchain nodes configured
+                    </div>
+                `;
+                return;
+            }
+
+            const tableHtml = `
+                <table class="infrastructure-table">
+                    <thead>
+                        <tr>
+                            <th>Node</th>
+                            <th>Status</th>
+                            <th>Block Height</th>
+                            <th>Snapshots</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${nodes.map(node => {
+                            const nodeConfig = nodeConfigs[node.node_name] || {};
+                            const snapStats = snapshotStats[node.node_name];
+                            const rowId = `node-${node.node_name}`;
+                            const detailsId = `details-${node.node_name}`;
+                            const isExpanded = expandedRows.has(rowId);
+
+                            return `
+                                <tr id="${rowId}" onclick="toggleNodeDetails('${node.node_name}')" style="cursor: pointer;">
+                                    <td>
+                                        <div class="node-name">${formatNodeName(node.node_name)}</div>
+                                        <div class="node-network">${nodeConfig.network || 'Unknown'}</div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="status-badge status-${node.status.toLowerCase()}">
+                                            <div class="status-dot-mini"></div>
+                                            ${formatStatusText(node.status)}
+                                        </div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div>${node.latest_block_height ? node.latest_block_height.toLocaleString() : 'N/A'}</div>
+                                        ${node.catching_up ? '<div class="uptime">Syncing</div>' : ''}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        ${nodeConfig.snapshots_enabled ? renderSnapshotInfo(snapStats) : '<div class="no-snapshots">Disabled</div>'}
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="action-buttons">
+                                            <button class="btn btn-icon btn-primary"
+                                                    onclick="executeManualNodeRestart('${node.node_name}')"
+                                                    title="Restart node service">
+                                                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                                                </svg>
+                                                <div class="tooltip">Restart Node</div>
+                                            </button>
+                                            ${nodeConfig.pruning_enabled ? `
+                                                <button class="btn btn-icon btn-warning"
+                                                        onclick="executeManualNodePruning('${node.node_name}')"
+                                                        title="Execute pruning">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                                                        <path fill-rule="evenodd" d="M4 5a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 3a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z"/>
+                                                    </svg>
+                                                    <div class="tooltip">Prune Database</div>
+                                                </button>
+                                            ` : ''}
+                                            ${nodeConfig.snapshots_enabled ? `
+                                                <button class="btn btn-icon btn-snapshot"
+                                                        onclick="executeCreateSnapshot('${node.node_name}')"
+                                                        title="Create LZ4 snapshot">
+                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm12 12V8l-2 2-2-2v8h4z"/>
+                                                    </svg>
+                                                    <div class="tooltip">Create Snapshot</div>
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    </td>
+                                </tr>
+                                ${isExpanded ? `
+                                    <tr id="${detailsId}" class="expandable-row">
+                                        <td colspan="5">
+                                            <div class="details-content">
+                                                ${renderNodeDetails(node, nodeConfig)}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ` : ''}
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = tableHtml;
+        }
+
+        function renderHermesInstances(instances) {
+            const container = document.getElementById('hermes-container');
+
+            if (!instances || instances.length === 0) {
+                container.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
+                        No Hermes relayers configured
+                    </div>
+                `;
+                return;
+            }
+
+            const tableHtml = `
+                <table class="infrastructure-table">
+                    <thead>
+                        <tr>
+                            <th>Hermes Instance</th>
+                            <th>Status</th>
+                            <th>Uptime</th>
+                            <th>Server</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${instances.map(hermes => {
+                            return `
+                                <tr onclick="toggleHermesDetails('${hermes.name}')" style="cursor: pointer;">
+                                    <td>
+                                        <div class="node-name">${formatHermesName(hermes.name)}</div>
+                                        <div class="node-network">${hermes.service_name}</div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="status-badge ${getHermesStatusClass(hermes.status)}">
+                                            <div class="status-dot-mini"></div>
+                                            ${formatHermesStatus(hermes.status)}
+                                        </div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="uptime">${hermes.uptime_formatted || 'N/A'}</div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div>${hermes.server_host}</div>
+                                    </td>
+                                    <td onclick="event.stopPropagation();">
+                                        <div class="action-buttons">
+                                            <button class="btn btn-icon btn-hermes"
+                                                    onclick="executeManualHermesRestart('${hermes.name}')"
+                                                    title="Restart Hermes now">
+                                                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                                                </svg>
+                                                <div class="tooltip">Restart Hermes</div>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = tableHtml;
+        }
+
+        function toggleNodeDetails(nodeName) {
+            const rowId = `node-${nodeName}`;
+            const detailsId = `details-${nodeName}`;
+
+            if (expandedRows.has(rowId)) {
+                expandedRows.delete(rowId);
+                const detailsRow = document.getElementById(detailsId);
+                if (detailsRow) detailsRow.remove();
+            } else {
+                expandedRows.add(rowId);
+                const nodeRow = document.getElementById(rowId);
+                const node = currentNodesData.find(n => n.node_name === nodeName);
+                const nodeConfig = nodeConfigs[nodeName] || {};
+
+                const detailsRow = document.createElement('tr');
+                detailsRow.id = detailsId;
+                detailsRow.className = 'expandable-row';
+                detailsRow.innerHTML = `
+                    <td colspan="5">
+                        <div class="details-content">
+                            ${renderNodeDetails(node, nodeConfig)}
+                        </div>
+                    </td>
+                `;
+
+                nodeRow.insertAdjacentElement('afterend', detailsRow);
+            }
+        }
+
+        function renderNodeDetails(node, nodeConfig) {
+            return `
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Server Host</div>
+                        <div class="detail-value">${node.server_host || 'N/A'}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Network</div>
+                        <div class="detail-value">${nodeConfig.network || 'N/A'}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Last Check</div>
+                        <div class="detail-value">${new Date(node.last_check).toLocaleString()}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Pruning Enabled</div>
+                        <div class="detail-value">${nodeConfig.pruning_enabled ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Snapshots Enabled</div>
+                        <div class="detail-value">${nodeConfig.snapshots_enabled ? 'Yes' : 'No'}</div>
+                    </div>
+                    ${node.error_message ? `
+                        <div class="detail-item">
+                            <div class="detail-label">Error</div>
+                            <div class="detail-value" style="color: var(--error-color);">${node.error_message}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Action functions
+        async function executeCreateSnapshot(nodeName) {
+            const nodeDisplayName = formatNodeName(nodeName);
+
+            if (!confirm(`Create LZ4 Snapshot Confirmation\n\nCreate snapshot for ${nodeDisplayName}?\n\nThis will stop the node service\nData will be compressed with LZ4\nService will be restarted\nThis may take 30-120 minutes\n\nProceed with snapshot creation?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Creating LZ4 snapshot for ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/snapshots/${nodeName}/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`LZ4 snapshot created successfully for ${nodeDisplayName}`, 'success');
+                    await loadAllData(); // Refresh data
+                } else {
+                    throw new Error(data.message || 'Snapshot creation failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to create snapshot for ${nodeDisplayName}: ${error.message}`, 'error');
+            }
+        }
+
+        async function executeManualNodeRestart(nodeName) {
+            const nodeDisplayName = formatNodeName(nodeName);
+
+            if (!confirm(`Restart Node Confirmation\n\nRestart ${nodeDisplayName}?\n\nThis will stop and start the node service\nThe node will be temporarily unavailable\n\nProceed with restart?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Restarting ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/maintenance/nodes/${nodeName}/restart`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`${nodeDisplayName} restarted successfully`, 'success');
+                    await loadAllData(); // Refresh data
+                } else {
+                    throw new Error(data.message || 'Node restart failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to restart ${nodeDisplayName}: ${error.message}`, 'error');
+            }
+        }
+
+        async function executeManualNodePruning(nodeName) {
+            const nodeDisplayName = formatNodeName(nodeName);
+
+            if (!confirm(`Execute Pruning Confirmation\n\nStart pruning for ${nodeDisplayName}?\n\nThis will:\n- Stop the node service\n- Run the cosmos-pruner tool\n- Start the service after completion\n- May take several hours\n\nProceed with pruning?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Starting pruning for ${nodeDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/maintenance/nodes/${nodeName}/prune`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Pruning started for ${nodeDisplayName}`, 'success');
+                    await loadAllData(); // Refresh data
+                } else {
+                    throw new Error(data.message || 'Pruning failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to start pruning for ${nodeDisplayName}: ${error.message}`, 'error');
+            }
+        }
+
+        async function executeManualHermesRestart(hermesName) {
+            const hermesDisplayName = formatHermesName(hermesName);
+
+            if (!confirm(`Restart Hermes Confirmation\n\nRestart ${hermesDisplayName}?\n\nThis will stop and start the Hermes relayer\nThe relayer will be temporarily unavailable\n\nProceed with restart?`)) {
+                return;
+            }
+
+            try {
+                showAlert(`Restarting ${hermesDisplayName}...`, 'warning');
+
+                const response = await fetch(`/api/maintenance/hermes/${hermesName}/restart`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`${hermesDisplayName} restarted successfully`, 'success');
+                    await loadAllData(); // Refresh data
+                } else {
+                    throw new Error(data.message || 'Hermes restart failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to restart ${hermesDisplayName}: ${error.message}`, 'error');
+            }
+        }
+
+        async function refreshNodes() {
+            try {
+                showAlert('Refreshing nodes status...', 'warning');
+                await loadNodes();
+                showAlert('Nodes status refreshed', 'success');
+            } catch (error) {
+                showAlert('Nodes refresh failed: ' + error.message, 'error');
+            }
+        }
+
+        async function refreshHermes() {
+            try {
+                showAlert('Refreshing Hermes status...', 'warning');
+                await loadHermesInstances();
+                showAlert('Hermes status refreshed', 'success');
+            } catch (error) {
+                showAlert('Hermes refresh failed: ' + error.message, 'error');
+            }
+        }
+
+        // Helper functions
+        function getHermesStatusClass(status) {
+            const cleanStatus = status.replace(/[()]/g, '').toLowerCase();
+            if (cleanStatus.includes('running')) return 'status-running';
+            if (cleanStatus.includes('stopped') || cleanStatus.includes('failed')) return 'status-stopped';
+            return 'status-unknown';
+        }
+
+        function formatHermesStatus(status) {
+            if (!status) return 'Unknown';
+            return status.replace(/[()]/g, '');
+        }
+
+        function formatHermesName(technicalName) {
+            if (!technicalName) return technicalName;
+
+            const parts = technicalName.split('-');
+            if (parts.length < 2) return technicalName;
+
+            const serverName = parts[0];
+            const serviceName = parts[1];
+
+            const formatPart = (part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+
+            return `${formatPart(serverName)} ${formatPart(serviceName)}`;
+        }
+
+        function renderSnapshotInfo(snapStats) {
+            if (!snapStats) {
+                return '<div class="no-snapshots">No data</div>';
+            }
+
+            return `
+                <div class="snapshot-info">
+                    <div class="snapshot-count">${snapStats.total_snapshots} snapshots</div>
+                    <div class="snapshot-size">${formatBytes(snapStats.total_size_bytes)}</div>
+                </div>
+            `;
+        }
+
+        function formatNodeName(technicalName) {
+            if (!technicalName) return technicalName;
+
+            return technicalName
+                .split('-')
+                .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+                .join(' ');
+        }
+
+        function formatStatusText(status) {
+            return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            const size = (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1);
+
+            return `${size} ${sizes[i]}`;
+        }
+
+        function updateAllMetrics() {
+            updateHealthMetrics();
+        }
+
+        function updateHealthMetrics() {
+            const totalNodes = currentNodesData ? currentNodesData.length : 0;
+            const totalHermes = currentHermesData ? currentHermesData.length : 0;
+            const totalComponents = totalNodes + totalHermes;
+
+            const healthyNodes = currentNodesData ? currentNodesData.filter(n => n.status.toLowerCase() === 'healthy').length : 0;
+            const healthyHermes = currentHermesData ? currentHermesData.filter(h => getHermesStatusClass(h.status) === 'status-running').length : 0;
+            const healthyComponents = healthyNodes + healthyHermes;
+
+            const healthPercentage = totalComponents > 0 ? Math.round((healthyComponents / totalComponents) * 100) : 0;
+
+            // Update DOM elements safely
+            const totalEl = document.getElementById('total-components');
+            const healthyEl = document.getElementById('healthy-components');
+            const breakdownEl = document.getElementById('components-breakdown');
+            const percentageEl = document.getElementById('health-percentage');
+            const progressEl = document.getElementById('health-progress');
+            const systemStatusEl = document.getElementById('system-status');
+
+            if (totalEl) totalEl.textContent = totalComponents;
+            if (healthyEl) healthyEl.textContent = healthyComponents;
+            if (breakdownEl) breakdownEl.textContent = `${totalNodes} Nodes & ${totalHermes} Relayers`;
+            if (percentageEl) percentageEl.textContent = `${healthPercentage}% operational`;
+            if (progressEl) progressEl.style.width = `${healthPercentage}%`;
+
+            // Update system status indicator
+            if (systemStatusEl) {
+                if (healthPercentage === 100) {
+                    systemStatusEl.className = 'status-indicator healthy';
+                    systemStatusEl.querySelector('span').textContent = 'All Systems Operational';
+                } else if (healthPercentage >= 80) {
+                    systemStatusEl.className = 'status-indicator warning';
+                    systemStatusEl.querySelector('span').textContent = 'Minor Issues Detected';
+                } else {
+                    systemStatusEl.className = 'status-indicator error';
+                    systemStatusEl.querySelector('span').textContent = 'System Issues Detected';
+                }
+            }
+        }
+
+        function updateScheduleMetrics(scheduleData) {
+            const scheduledCount = scheduleData.scheduled ? scheduleData.scheduled.length : 0;
+            const activeCount = scheduleData.active ? scheduleData.active.length : 0;
+
+            // Update DOM elements safely
+            const scheduledEl = document.getElementById('scheduled-operations');
+            const nextScheduledEl = document.getElementById('next-scheduled');
+            const activeMaintenanceEl = document.getElementById('active-maintenance');
+            const maintenanceSubtitleEl = document.getElementById('maintenance-subtitle');
+
+            if (scheduledEl) scheduledEl.textContent = scheduledCount;
+            if (activeMaintenanceEl) activeMaintenanceEl.textContent = activeCount;
+            if (maintenanceSubtitleEl) {
+                maintenanceSubtitleEl.textContent = activeCount === 1 ? 'Operation running' : 'Operations running';
+            }
+            if (nextScheduledEl) nextScheduledEl.textContent = 'None scheduled';
+        }
+
+        function updateLastUpdated() {
+            const lastUpdatedEl = document.getElementById('last-updated');
+            if (lastUpdatedEl) {
+                lastUpdatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+            }
+        }
+
+        function showAlert(message, type = 'success') {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+
+            document.body.appendChild(alert);
+
+            // Trigger the animation
+            setTimeout(() => alert.classList.add('show'), 100);
+
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                alert.classList.remove('show');
+                setTimeout(() => {
+                    if (alert.parentNode) {
+                        alert.parentNode.removeChild(alert);
+                    }
+                }, 300);
+            }, 5000);
+        }
+
+        // Placeholder functions for missing features
+        function toggleHermesDetails(hermesName) {
+            // Simple placeholder - could be extended
+            console.log('Toggle hermes details for:', hermesName);
+        }
+    </script>
+</body>
+</html>

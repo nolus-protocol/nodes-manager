@@ -1,0 +1,105 @@
+// File: manager/src/web/server.rs
+use crate::config::{Config, ConfigManager};
+use crate::database::Database;
+use crate::health::HealthMonitor;
+use crate::http::HttpAgentManager;
+use crate::snapshot::SnapshotManager;
+use crate::operation_tracker::SimpleOperationTracker;
+use crate::web::{AppState, handlers};
+use anyhow::Result;
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+
+pub async fn start_web_server(
+    config: Arc<Config>,
+    database: Arc<Database>,
+    health_monitor: Arc<HealthMonitor>,
+    http_manager: Arc<HttpAgentManager>,
+    config_manager: Arc<ConfigManager>,
+    snapshot_manager: Arc<SnapshotManager>,
+    operation_tracker: Arc<SimpleOperationTracker>, // NEW: Operation tracker parameter
+) -> Result<()> {
+    let state = AppState::new(
+        config.clone(),
+        database,
+        health_monitor,
+        http_manager,
+        config_manager,
+        snapshot_manager,
+        operation_tracker, // NEW: Pass operation tracker
+    );
+
+    if state.config.host == "0.0.0.0" && state.config.port == 8095 {
+        start_simple_server(state).await
+    } else {
+        start_custom_server(state).await
+    }
+}
+
+async fn start_simple_server(state: AppState) -> Result<()> {
+    let app = create_router(state);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8095").await?;
+    tracing::info!("Server running on http://0.0.0.0:8095");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn start_custom_server(state: AppState) -> Result<()> {
+    let app = create_router(state.clone());
+    let addr = format!("{}:{}", state.config.host, state.config.port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Server running on http://{}", addr);
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+fn create_router(state: AppState) -> Router {
+    Router::new()
+        // === ROOT ROUTE ===
+        .route("/", get(handlers::serve_index))
+
+        // === HEALTH MONITORING ROUTES ===
+        .route("/api/health/nodes", get(handlers::get_all_nodes_health))
+        .route("/api/health/nodes/:node_name", get(handlers::get_node_health))
+        .route("/api/health/hermes", get(handlers::get_all_hermes_health))
+        .route("/api/health/hermes/:hermes_name", get(handlers::get_hermes_health))
+
+        // === CONFIGURATION ROUTES ===
+        .route("/api/config/nodes", get(handlers::get_all_node_configs))
+        .route("/api/config/hermes", get(handlers::get_all_hermes_configs))
+
+        // === MANUAL OPERATION ROUTES (WITH OPERATION TRACKING) ===
+        .route("/api/maintenance/nodes/:node_name/restart", post(handlers::execute_manual_node_restart))
+        .route("/api/maintenance/nodes/:node_name/prune", post(handlers::execute_manual_node_pruning))
+        .route("/api/maintenance/hermes/:hermes_name/restart", post(handlers::execute_manual_hermes_restart))
+
+        // === SNAPSHOT MANAGEMENT ROUTES ===
+        .route("/api/snapshots/:node_name/create", post(handlers::create_snapshot))
+        .route("/api/snapshots/:node_name/list", get(handlers::list_snapshots))
+        .route("/api/snapshots/:node_name/stats", get(handlers::get_snapshot_stats))
+        .route("/api/snapshots/:node_name/:filename", delete(handlers::delete_snapshot))
+        .route("/api/snapshots/:node_name/cleanup", post(handlers::cleanup_old_snapshots))
+
+        // === OPERATION MANAGEMENT ROUTES (NEW) ===
+        .route("/api/operations/active", get(handlers::get_active_operations))
+        .route("/api/operations/:target_name/cancel", post(handlers::cancel_operation))
+        .route("/api/operations/:target_name/status", get(handlers::check_target_status))
+        .route("/api/operations/emergency-cleanup", post(handlers::emergency_cleanup_operations))
+
+        // === MAINTENANCE SCHEDULE ROUTES (SIMPLIFIED STUB) ===
+        .route("/api/maintenance/schedule", get(handlers::get_maintenance_schedule))
+
+        // === STATIC FILES ===
+        .nest_service("/static", ServeDir::new("static"))
+
+        // Add middleware
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
