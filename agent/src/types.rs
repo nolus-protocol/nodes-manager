@@ -37,6 +37,17 @@ pub struct SnapshotRequest {
     pub log_path: Option<String>, // NEW: Optional log path for truncation
 }
 
+// NEW: Restore request structure
+#[derive(Debug, Deserialize)]
+pub struct RestoreRequest {
+    pub node_name: String,
+    pub deploy_path: String,
+    pub snapshot_file: String,
+    pub validator_backup_file: Option<String>,
+    pub service_name: String,
+    pub log_path: Option<String>,
+}
+
 // === RESPONSE STRUCTURES ===
 
 #[derive(Debug, Serialize)]

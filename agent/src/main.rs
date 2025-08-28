@@ -15,7 +15,7 @@ mod operations;
 mod services;
 mod types;
 
-use operations::{pruning, snapshots};
+use operations::{pruning, snapshots, restore};
 use services::{commands, systemctl};
 use types::*;
 
@@ -49,6 +49,8 @@ async fn main() -> Result<()> {
         .route("/logs/truncate", post(truncate_logs))
         .route("/pruning/execute", post(execute_pruning))
         .route("/snapshot/create", post(create_snapshot))
+        .route("/snapshot/restore", post(restore_snapshot)) // NEW: Restore endpoint
+        .route("/snapshot/check-triggers", post(check_restore_triggers)) // NEW: Check triggers endpoint
         .with_state(Arc::new(app_state));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8745").await?;
@@ -197,6 +199,55 @@ async fn create_snapshot(
             snapshot_info.size_bytes,
             snapshot_info.path,
         ))),
+        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+    }
+}
+
+// === NEW: RESTORE OPERATIONS ===
+
+async fn restore_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<RestoreRequest>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    match restore::execute_full_restore_sequence(&request).await {
+        Ok(output) => Ok(ResponseJson(ApiResponse::success_with_output(output))),
+        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+    }
+}
+
+// NEW: Check for auto-restore trigger words
+async fn check_restore_triggers(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<serde_json::Value>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let log_file = request.get("log_file")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let trigger_words: Vec<String> = request.get("trigger_words")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    match commands::check_log_for_trigger_words(log_file, &trigger_words).await {
+        Ok(found) => {
+            let response = serde_json::json!({
+                "triggers_found": found,
+                "log_file": log_file,
+                "trigger_words": trigger_words
+            });
+            Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
+        }
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
 }
