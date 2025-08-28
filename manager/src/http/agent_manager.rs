@@ -142,16 +142,18 @@ impl HttpAgentManager {
         Ok(uptime_seconds)
     }
 
-    pub async fn execute_pruning(&self, server_name: &str, deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<()> {
+    pub async fn execute_pruning(&self, server_name: &str, deploy_path: &str, keep_blocks: u64, keep_versions: u64, service_name: &str, log_path: Option<&str>) -> Result<()> {
         let payload = json!({
             "deploy_path": deploy_path,
             "keep_blocks": keep_blocks,
-            "keep_versions": keep_versions
+            "keep_versions": keep_versions,
+            "service_name": service_name,
+            "log_path": log_path
         });
 
-        info!("Starting pruning on {} - agent will complete synchronously", server_name);
+        info!("Starting FULL pruning sequence on {} - agent will complete synchronously", server_name);
         self.execute_operation(server_name, "/pruning/execute", payload).await?;
-        info!("Pruning completed successfully on {}", server_name);
+        info!("Full pruning sequence completed successfully on {}", server_name);
         Ok(())
     }
 
@@ -176,10 +178,21 @@ impl HttpAgentManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No deploy path configured"))?;
 
+        let service_name = node_config.pruning_service_name
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured"))?;
+
         let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
         let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
 
-        self.execute_pruning(&node_config.server_host, deploy_path, keep_blocks as u64, keep_versions as u64).await
+        self.execute_pruning(
+            &node_config.server_host,
+            deploy_path,
+            keep_blocks as u64,
+            keep_versions as u64,
+            service_name,
+            node_config.log_path.as_deref()
+        ).await
     }
 
     pub async fn restart_hermes(&self, hermes_config: &HermesConfig) -> Result<()> {
@@ -263,13 +276,24 @@ impl HttpAgentManager {
         let deploy_path = node_config.pruning_deploy_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
 
+        let service_name = node_config.pruning_service_name.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+
         let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
         let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
 
-        info!("Starting pruning for node {}", node_name);
-        self.execute_pruning(&node_config.server_host, deploy_path, keep_blocks as u64, keep_versions as u64).await?;
-        info!("Pruning completed for node {}", node_name);
+        info!("Starting full pruning sequence for node {}", node_name);
 
+        self.execute_pruning(
+            &node_config.server_host,
+            deploy_path,
+            keep_blocks as u64,
+            keep_versions as u64,
+            service_name,
+            node_config.log_path.as_deref()
+        ).await?;
+
+        info!("Full pruning sequence completed for node {}", node_name);
         Ok(())
     }
 
@@ -300,7 +324,17 @@ impl HttpAgentManager {
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
-        let agent_snapshot = self.create_snapshot(&node_config.server_host, deploy_path, backup_path, node_name).await?;
+        let service_name = node_config.pruning_service_name.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+
+        let agent_snapshot = self.create_snapshot(
+            &node_config.server_host,
+            deploy_path,
+            backup_path,
+            node_name,
+            service_name,
+            node_config.log_path.as_deref()
+        ).await?;
 
         // Convert to manager's SnapshotInfo type
         Ok(crate::snapshot::SnapshotInfo {
@@ -314,14 +348,16 @@ impl HttpAgentManager {
         })
     }
 
-    pub async fn create_snapshot(&self, server_name: &str, deploy_path: &str, backup_path: &str, node_name: &str) -> Result<SnapshotInfo> {
+    pub async fn create_snapshot(&self, server_name: &str, deploy_path: &str, backup_path: &str, node_name: &str, service_name: &str, log_path: Option<&str>) -> Result<SnapshotInfo> {
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
-            "backup_path": backup_path
+            "backup_path": backup_path,
+            "service_name": service_name,
+            "log_path": log_path
         });
 
-        info!("Starting snapshot creation for {} - agent will complete synchronously (may take hours)", node_name);
+        info!("Starting full snapshot sequence for {} - agent will complete synchronously (may take hours)", node_name);
         let result = self.execute_operation(server_name, "/snapshot/create", payload).await?;
 
         let snapshot_info = SnapshotInfo {
@@ -332,7 +368,7 @@ impl HttpAgentManager {
             compression: result["compression"].as_str().unwrap_or("lz4").to_string(),
         };
 
-        info!("Snapshot created successfully: {} ({} bytes)", snapshot_info.filename, snapshot_info.size_bytes);
+        info!("Full snapshot sequence completed successfully: {} ({} bytes)", snapshot_info.filename, snapshot_info.size_bytes);
         Ok(snapshot_info)
     }
 
