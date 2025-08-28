@@ -86,6 +86,14 @@ struct AutoRestoreCooldown {
     restore_count: u32,
 }
 
+// NEW: Block height tracking for progression detection
+#[derive(Debug, Clone)]
+struct BlockHeightState {
+    last_height: i64,
+    last_updated: DateTime<Utc>,
+    consecutive_no_progress: u32,
+}
+
 pub struct HealthMonitor {
     config: Arc<Config>,
     database: Arc<Database>,
@@ -96,6 +104,8 @@ pub struct HealthMonitor {
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
     // NEW: Auto-restore cooldown tracking (2 hour cooldown)
     auto_restore_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, AutoRestoreCooldown>>>,
+    // NEW: Block height progression tracking
+    block_height_states: Arc<tokio::sync::Mutex<HashMap<String, BlockHeightState>>>,
 }
 
 impl HealthMonitor {
@@ -119,6 +129,7 @@ impl HealthMonitor {
             alert_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             previous_health_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             auto_restore_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            block_height_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -160,14 +171,14 @@ impl HealthMonitor {
             }
         }
 
-        // Log monitoring if enabled
+        // Log monitoring if enabled (only for healthy nodes)
         if self.config.log_monitoring_enabled.unwrap_or(false) {
             if let Err(e) = self.monitor_logs(&health_statuses).await {
                 error!("Log monitoring failed: {}", e);
             }
         }
 
-        // NEW: Auto-restore monitoring - check for trigger words
+        // CHANGED: Auto-restore monitoring - only check UNHEALTHY nodes
         if let Err(e) = self.monitor_auto_restore_triggers(&health_statuses).await {
             error!("Auto-restore monitoring failed: {}", e);
         }
@@ -175,24 +186,28 @@ impl HealthMonitor {
         Ok(health_statuses)
     }
 
-    // NEW: Monitor auto-restore triggers for healthy nodes
+    // CHANGED: Only monitor auto-restore triggers for UNHEALTHY nodes
     async fn monitor_auto_restore_triggers(&self, health_statuses: &[HealthStatus]) -> Result<()> {
         let trigger_words = match &self.config.auto_restore_trigger_words {
             Some(words) if !words.is_empty() => words,
             _ => return Ok(()), // No trigger words configured
         };
 
-        info!("Checking auto-restore triggers for {} nodes", health_statuses.len());
+        // Only check UNHEALTHY nodes for auto-restore triggers
+        let unhealthy_nodes: Vec<_> = health_statuses.iter()
+            .filter(|status| !status.is_healthy && status.enabled && !status.in_maintenance)
+            .collect();
+
+        if unhealthy_nodes.is_empty() {
+            debug!("No unhealthy nodes to check for auto-restore triggers");
+            return Ok(());
+        }
+
+        info!("Checking auto-restore triggers for {} unhealthy nodes", unhealthy_nodes.len());
 
         let mut tasks = Vec::new();
 
-        for status in health_statuses {
-            // Only check healthy nodes (corrupted nodes might not be responding to health checks)
-            // Actually, let's check all enabled nodes since corruption might make them appear unhealthy
-            if !status.enabled {
-                continue;
-            }
-
+        for status in unhealthy_nodes {
             let node_config = match self.config.nodes.get(&status.node_name) {
                 Some(config) => config,
                 None => continue,
@@ -249,10 +264,10 @@ impl HealthMonitor {
         let server_config = self.config.servers.get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
-        // Check the main log file (out1.log) for trigger words
+        // CHANGED: Check only latest 500 lines instead of 1000
         let log_file = format!("{}/out1.log", log_path);
         let command = format!(
-            "tail -n 1000 '{}' | grep -q -E '{}'",
+            "tail -n 500 '{}' | grep -q -E '{}'",
             log_file,
             trigger_words.join("|")
         );
@@ -538,6 +553,7 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // CHANGED: Enhanced health check with block progression tracking
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
         let is_in_maintenance = self.maintenance_tracker
             .is_in_maintenance(node_name)
@@ -567,13 +583,27 @@ impl HealthMonitor {
         match self.fetch_node_status(&node_config.rpc_url).await {
             Ok(rpc_response) => {
                 if let Some(result) = rpc_response.result {
-                    status.is_healthy = true;
-                    if let Ok(height) = result.sync_info.latest_block_height.parse::<i64>() {
-                        status.block_height = Some(height);
-                    }
-                    status.is_catching_up = result.sync_info.catching_up;
-                    status.is_syncing = Some(result.sync_info.catching_up);
+                    let current_height = result.sync_info.latest_block_height.parse::<i64>().unwrap_or(0);
+                    let is_catching_up = result.sync_info.catching_up;
+
+                    status.block_height = Some(current_height);
+                    status.is_catching_up = is_catching_up;
+                    status.is_syncing = Some(is_catching_up);
                     status.validator_address = Some(result.validator_info.address);
+
+                    // CHANGED: Check block progression for health determination
+                    let block_progression_healthy = self.check_block_progression(node_name, current_height).await;
+
+                    // Node is healthy if:
+                    // 1. RPC responds successfully
+                    // 2. Block height is progressing (or node is catching up, which is normal)
+                    status.is_healthy = block_progression_healthy || is_catching_up;
+
+                    // Set appropriate error message if not healthy
+                    if !status.is_healthy && !is_catching_up {
+                        status.error_message = Some("Block height not progressing".to_string());
+                    }
+
                 } else if let Some(error) = rpc_response.error {
                     status.error_message = Some(format!("RPC Error: {}", error.message));
                 } else {
@@ -586,6 +616,54 @@ impl HealthMonitor {
         }
 
         Ok(status)
+    }
+
+    // NEW: Check if block height is progressing
+    async fn check_block_progression(&self, node_name: &str, current_height: i64) -> bool {
+        let mut block_states = self.block_height_states.lock().await;
+        let now = Utc::now();
+
+        match block_states.get_mut(node_name) {
+            None => {
+                // First check for this node
+                block_states.insert(node_name.to_string(), BlockHeightState {
+                    last_height: current_height,
+                    last_updated: now,
+                    consecutive_no_progress: 0,
+                });
+                true // Assume healthy on first check
+            }
+            Some(state) => {
+                let minutes_since_update = (now - state.last_updated).num_minutes();
+
+                // Only check progression if enough time has passed (at least 2 minutes)
+                if minutes_since_update < 2 {
+                    return true; // Too soon to judge, assume healthy
+                }
+
+                if current_height > state.last_height {
+                    // Block height increased - healthy
+                    state.last_height = current_height;
+                    state.last_updated = now;
+                    state.consecutive_no_progress = 0;
+                    true
+                } else if current_height == state.last_height {
+                    // Block height stayed the same
+                    state.consecutive_no_progress += 1;
+                    state.last_updated = now;
+
+                    // Allow up to 3 consecutive checks without progress (about 6 minutes)
+                    // before marking as unhealthy
+                    state.consecutive_no_progress < 3
+                } else {
+                    // Block height decreased - this shouldn't happen, mark as unhealthy
+                    state.last_height = current_height;
+                    state.last_updated = now;
+                    state.consecutive_no_progress += 1;
+                    false
+                }
+            }
+        }
     }
 
     async fn fetch_node_status(&self, rpc_url: &str) -> Result<RpcResponse> {
@@ -866,6 +944,7 @@ impl Clone for HealthMonitor {
             alert_states: self.alert_states.clone(),
             previous_health_states: self.previous_health_states.clone(),
             auto_restore_cooldowns: self.auto_restore_cooldowns.clone(),
+            block_height_states: self.block_height_states.clone(),
         }
     }
 }

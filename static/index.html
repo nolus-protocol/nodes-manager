@@ -22,6 +22,7 @@
             --snapshot-color: #9f7aea;
             --restore-color: #0891b2;
             --cancel-color: #e53e3e;
+            --syncing-color: #0891b2;
             --bg-primary: #f7fafc;
             --bg-secondary: #ffffff;
             --text-primary: #1a202c;
@@ -251,6 +252,14 @@
         .status-healthy {
             background-color: rgba(56, 161, 105, 0.1);
             color: var(--success-color);
+        }
+        .status-synced {
+            background-color: rgba(56, 161, 105, 0.1);
+            color: var(--success-color);
+        }
+        .status-catching.up {
+            background-color: rgba(8, 145, 178, 0.1);
+            color: var(--syncing-color);
         }
         .status-unhealthy {
             background-color: rgba(229, 62, 62, 0.1);
@@ -551,7 +560,7 @@
 
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Healthy Components</div>
+                    <div class="metric-title">Operational Components</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/>
                     </svg>
@@ -826,7 +835,7 @@
                                     </td>
                                     <td style="width: 20%;">
                                         <div class="status-info">
-                                            <div class="status-badge status-${node.status.toLowerCase()}">
+                                            <div class="status-badge ${getNodeStatusClass(node.status)}">
                                                 <div class="status-dot-mini"></div>
                                                 ${formatStatusText(node.status)}
                                             </div>
@@ -1215,6 +1224,17 @@
             }
         }
 
+        // CHANGED: Enhanced status class determination with new status types
+        function getNodeStatusClass(status) {
+            const cleanStatus = status.toLowerCase().replace(/\s+/g, '');
+            if (cleanStatus === 'synced') return 'status-synced';
+            if (cleanStatus === 'catchingup') return 'status-catching up';
+            if (cleanStatus === 'healthy') return 'status-healthy';
+            if (cleanStatus === 'unhealthy') return 'status-unhealthy';
+            if (cleanStatus === 'maintenance') return 'status-maintenance';
+            return 'status-unknown';
+        }
+
         // Helper functions
         function getHermesStatusClass(status) {
             const cleanStatus = status.replace(/[()]/g, '').toLowerCase();
@@ -1269,16 +1289,22 @@
             updateHealthMetrics();
         }
 
+        // CHANGED: Enhanced metrics calculation with new status types
         function updateHealthMetrics() {
             const totalNodes = currentNodesData ? currentNodesData.length : 0;
             const totalHermes = currentHermesData ? currentHermesData.length : 0;
             const totalComponents = totalNodes + totalHermes;
 
-            const healthyNodes = currentNodesData ? currentNodesData.filter(n => n.status.toLowerCase() === 'healthy').length : 0;
-            const healthyHermes = currentHermesData ? currentHermesData.filter(h => getHermesStatusClass(h.status) === 'status-running').length : 0;
-            const healthyComponents = healthyNodes + healthyHermes;
+            // CHANGED: Both "Synced" and "Catching Up" are considered operational
+            const operationalNodes = currentNodesData ? currentNodesData.filter(n => {
+                const status = n.status.toLowerCase();
+                return status === 'synced' || status === 'catching up' || status === 'healthy';
+            }).length : 0;
 
-            const healthPercentage = totalComponents > 0 ? Math.round((healthyComponents / totalComponents) * 100) : 0;
+            const operationalHermes = currentHermesData ? currentHermesData.filter(h => getHermesStatusClass(h.status) === 'status-running').length : 0;
+            const operationalComponents = operationalNodes + operationalHermes;
+
+            const healthPercentage = totalComponents > 0 ? Math.round((operationalComponents / totalComponents) * 100) : 0;
 
             const totalEl = document.getElementById('total-components');
             const healthyEl = document.getElementById('healthy-components');
@@ -1288,7 +1314,7 @@
             const systemStatusEl = document.getElementById('system-status');
 
             if (totalEl) totalEl.textContent = totalComponents;
-            if (healthyEl) healthyEl.textContent = healthyComponents;
+            if (healthyEl) healthyEl.textContent = operationalComponents;
             if (breakdownEl) breakdownEl.textContent = `${totalNodes} Nodes & ${totalHermes} Relayers`;
             if (percentageEl) percentageEl.textContent = `${healthPercentage}% operational`;
             if (progressEl) progressEl.style.width = `${healthPercentage}%`;

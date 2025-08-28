@@ -66,7 +66,7 @@ pub struct EmergencyCleanupQuery {
 
 fn default_max_hours() -> i64 { 12 }
 
-// Helper functions to convert health status to summary
+// CHANGED: Enhanced health status conversion with better catching up detection
 async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus, config: &crate::config::Config) -> NodeHealthSummary {
     let node_config = config.nodes.get(&health.node_name);
 
@@ -81,15 +81,20 @@ async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus
         None
     };
 
+    // CHANGED: Enhanced status determination with clear catching up vs synced distinction
+    let status = if health.in_maintenance {
+        "Maintenance".to_string()
+    } else if !health.is_healthy {
+        "Unhealthy".to_string()
+    } else if health.is_catching_up {
+        "Catching Up".to_string()  // NEW: Clear catching up status
+    } else {
+        "Synced".to_string()  // CHANGED: More precise "Synced" instead of "Healthy"
+    };
+
     NodeHealthSummary {
         node_name: health.node_name.clone(),
-        status: if health.is_healthy {
-            "Healthy".to_string()
-        } else if health.in_maintenance {
-            "Maintenance".to_string()
-        } else {
-            "Unhealthy".to_string()
-        },
+        status,
         latest_block_height: health.block_height.map(|h| h as u64),
         catching_up: health.is_syncing,
         last_check: health.last_check.to_rfc3339(),
