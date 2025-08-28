@@ -1,6 +1,7 @@
 // File: agent/src/services/commands.rs
 use anyhow::{anyhow, Result};
-use tokio::process::Command as AsyncCommand;
+use tokio::process::{Command as AsyncCommand, Stdio};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{debug, info};
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
@@ -29,22 +30,55 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
         deploy_path, keep_blocks, keep_versions
     );
 
-    debug!("Executing cosmos-pruner: {}", command);
+    info!("Executing cosmos-pruner: {}", command);
 
-    let output = AsyncCommand::new("sh")
+    // FIXED: Use proper stdio handling to prevent hanging
+    let mut child = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
-        .output()
-        .await?;
+        .stdin(Stdio::null())  // Ensure no stdin input is expected
+        .stdout(Stdio::piped()) // Capture stdout
+        .stderr(Stdio::piped()) // Capture stderr
+        .spawn()
+        .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    info!("Cosmos-pruner process started, reading output...");
 
-    if output.status.success() {
-        Ok(stdout)
+    // Read stdout and stderr concurrently to prevent blocking
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    let mut stdout_output = String::new();
+    let mut stderr_output = String::new();
+
+    // Read all output without blocking
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stdout_reader.next_line().await {
+            info!("cosmos-pruner stdout: {}", line);
+        }
+    });
+
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
+            info!("cosmos-pruner stderr: {}", line);
+        }
+    });
+
+    // Wait for process to complete
+    let status = child.wait().await
+        .map_err(|e| anyhow!("Failed to wait for cosmos-pruner: {}", e))?;
+
+    info!("Cosmos-pruner completed with status: {:?}", status);
+
+    if status.success() {
+        info!("Cosmos-pruner execution completed successfully");
+        Ok("Cosmos-pruner completed successfully".to_string())
     } else {
-        let error_msg = if !stderr.is_empty() { stderr } else { stdout };
-        Err(anyhow!("Cosmos pruner failed: {}", error_msg))
+        let error_msg = format!("Cosmos-pruner failed with exit code: {:?}", status.code());
+        Err(anyhow!(error_msg))
     }
 }
 
