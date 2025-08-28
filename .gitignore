@@ -44,8 +44,14 @@ Thumbs.db
 *.pfx
 !*.pub
 
-# Configuration directory (contains sensitive data) - ONLY root config directory
+# Configuration directories (contains sensitive data)
 /config/
+manager/config/
+manager/data/
+
+# Manager deployment directories (for production deployment)
+manager/target/
+manager/static/
 
 # Environment files
 .env
