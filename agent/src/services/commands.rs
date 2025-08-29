@@ -2,7 +2,20 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
 use std::process::Stdio;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+// ========================================================================
+// WARNING: DO NOT MODIFY THE LZ4 FUNCTIONS BELOW (create_lz4_archive, extract_lz4_archive)
+//
+// These functions use the working approach:
+// - Pipeline commands (tar | lz4)
+// - .status() instead of .output()
+// - Stdio::null() for all streams
+//
+// This combination works reliably. Any changes to this approach will cause
+// workflow hanging issues. If modifications are needed, test thoroughly
+// on a separate branch first.
+// ========================================================================
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -83,6 +96,10 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
+// ========================================================================
+// WORKING LZ4 ARCHIVE FUNCTION - DO NOT MODIFY
+// Uses pipeline approach with .status() + Stdio::null() - this works!
+// ========================================================================
 pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
@@ -101,14 +118,14 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     info!("Creating LZ4 archive: cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
           source_dir, dirs, target_file);
 
-    // REVERTED: Back to the working approach - just get status, don't capture streams
+    // CRITICAL: This approach works - do not change to .output()
     let status = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .status()  // Use .status() NOT .output()
         .await?;
 
     if status.success() {
@@ -133,6 +150,10 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     }
 }
 
+// ========================================================================
+// WORKING LZ4 EXTRACT FUNCTION - DO NOT MODIFY
+// Uses pipeline approach with .status() + Stdio::null() - this works!
+// ========================================================================
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
     // Verify archive file exists first
     let verify_command = format!("test -f '{}'", archive_file);
@@ -150,14 +171,14 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     info!("Extracting LZ4 archive: cd '{}' && lz4 -dc '{}' | tar -xf -",
           target_dir, archive_file);
 
-    // REVERTED: Back to the working approach - just get status, don't capture streams
+    // CRITICAL: This approach works - do not change to .output()
     let status = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .status()  // Use .status() NOT .output()
         .await?;
 
     if status.success() {
@@ -179,6 +200,10 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
         Err(anyhow!("LZ4 archive extraction failed"))
     }
 }
+
+// ========================================================================
+// END OF CRITICAL WORKING FUNCTIONS
+// ========================================================================
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
     if trigger_words.is_empty() {
