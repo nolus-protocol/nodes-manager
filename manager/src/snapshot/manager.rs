@@ -60,7 +60,7 @@ impl SnapshotManager {
         }
     }
 
-    /// Create snapshot for a node using gzip compression via HTTP agent
+    /// Create snapshot for a node using LZ4 compression via HTTP agent
     pub async fn create_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -68,7 +68,7 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
-        info!("Starting gzip snapshot creation for node {} via HTTP agent", node_name);
+        info!("Starting LZ4 snapshot creation for node {} via HTTP agent", node_name);
 
         // Start maintenance tracking with 24-hour timeout for all snapshots
         self.maintenance_tracker
@@ -153,7 +153,7 @@ impl SnapshotManager {
         self.http_manager.check_auto_restore_triggers(node_name).await
     }
 
-    /// List all snapshots for a node via HTTP agent - CHANGED: now handles both .tar.gz and legacy .lz4
+    /// List all snapshots for a node via HTTP agent
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -165,10 +165,10 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // List both new .tar.gz and legacy .lz4/.tar.gz snapshots via HTTP agent
+        // List LZ4 snapshots via HTTP agent
         let list_cmd = format!(
-            "find '{}' -name '{}_*.tar.gz' -o -name '{}_*.lz4' -o -name '{}_*.tar.lz4' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
-            backup_path, node_config.network, node_config.network, node_config.network
+            "find '{}' -name '{}_*.lz4' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
+            backup_path, node_config.network
         );
 
         let output = self.http_manager
@@ -189,22 +189,9 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // CHANGED: Detect compression type from file extension
-                let compression_type = if filename.ends_with(".tar.gz") {
-                    "gzip"
-                } else if filename.ends_with(".lz4") || filename.ends_with(".tar.lz4") {
-                    "lz4"
-                } else {
-                    "unknown"
-                };
-
                 // Parse timestamp from filename if possible, fallback to file mtime
                 let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_config.network)) {
-                    let ts_clean = ts_part
-                        .strip_suffix(".tar.gz")
-                        .or_else(|| ts_part.strip_suffix(".lz4"))
-                        .or_else(|| ts_part.strip_suffix(".tar.lz4"))
-                        .unwrap_or(ts_part);
+                    let ts_clean = ts_part.strip_suffix(".lz4").unwrap_or(ts_part);
 
                     chrono::NaiveDateTime::parse_from_str(ts_clean, "%Y%m%d_%H%M%S")
                         .ok()
@@ -227,7 +214,7 @@ impl SnapshotManager {
                     created_at,
                     file_size_bytes,
                     snapshot_path: full_path.to_string(),
-                    compression_type: compression_type.to_string(),
+                    compression_type: "lz4".to_string(),
                 });
             }
         }
@@ -279,11 +266,7 @@ impl SnapshotManager {
             if let Some(backup_path) = &node_config.snapshot_backup_path {
                 let timestamp_from_filename = snapshot.filename
                     .strip_prefix(&format!("{}_", node_config.network))
-                    .and_then(|s| {
-                        s.strip_suffix(".tar.gz")
-                            .or_else(|| s.strip_suffix(".lz4"))
-                            .or_else(|| s.strip_suffix(".tar.lz4"))
-                    });
+                    .and_then(|s| s.strip_suffix(".lz4"));
 
                 if let Some(timestamp) = timestamp_from_filename {
                     let validator_backup_file = format!("{}/validator_state_backup_{}.json", backup_path, timestamp);
@@ -341,10 +324,8 @@ impl SnapshotManager {
             *by_network.entry(snapshot.network.clone()).or_insert(0) += 1;
         }
 
-        // CHANGED: Determine primary compression type (most recent) - prefer gzip for new snapshots
-        let compression_type = snapshots.first()
-            .map(|s| s.compression_type.clone())
-            .unwrap_or_else(|| "gzip".to_string());
+        // All snapshots are LZ4 now
+        let compression_type = "lz4".to_string();
 
         Ok(SnapshotStats {
             total_snapshots,
@@ -388,7 +369,7 @@ impl SnapshotManager {
                 "operation_status": status,
                 "operation_type": operation,
                 "server_host": server_host_clone,
-                "compression_type": "gzip",
+                "compression_type": "lz4", // CHANGED: Always LZ4 now
                 "connection_type": "http_agent",
                 "timestamp": Utc::now().to_rfc3339()
             })),
