@@ -24,9 +24,8 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 }
 
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
-    // Use explicit error handling pattern like archives
     let command = format!(
-        "((cosmos-pruner prune '{}' --blocks={} --versions={} && echo 'PRUNING_SUCCESS') || echo 'PRUNING_FAILED')",
+        "if cosmos-pruner prune '{}' --blocks={} --versions={}; then echo 'PRUNING_SUCCESS'; else echo 'PRUNING_FAILED'; fi",
         deploy_path, keep_blocks, keep_versions
     );
 
