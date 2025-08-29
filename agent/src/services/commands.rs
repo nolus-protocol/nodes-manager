@@ -47,25 +47,38 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
+    // Create readers but don't spawn separate tasks
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    tokio::spawn(async move {
+    // Read output in a way that doesn't block child.wait()
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             info!("cosmos-pruner stdout: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
-    tokio::spawn(async move {
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stderr_reader.next_line().await {
             info!("cosmos-pruner stderr: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
+    // Wait for process completion
     let status = child.wait().await
         .map_err(|e| anyhow!("Failed to wait for cosmos-pruner: {}", e))?;
 
     info!("Cosmos-pruner completed with status: {:?}", status);
+
+    // Collect any remaining output
+    let _stdout_output = stdout_task.await.unwrap_or_default();
+    let _stderr_output = stderr_task.await.unwrap_or_default();
 
     if status.success() {
         info!("Cosmos-pruner execution completed successfully");
@@ -140,22 +153,33 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    tokio::spawn(async move {
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             info!("lz4-archive stdout: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
-    tokio::spawn(async move {
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stderr_reader.next_line().await {
             info!("lz4-archive stderr: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
+    // Wait for process completion
     let status = child.wait().await
         .map_err(|e| anyhow!("Failed to wait for LZ4 archive creation: {}", e))?;
 
     info!("LZ4 archive creation completed with status: {:?}", status);
+
+    // Collect any remaining output
+    let _stdout_output = stdout_task.await.unwrap_or_default();
+    let _stderr_output = stderr_task.await.unwrap_or_default();
 
     if status.success() {
         info!("LZ4 archive creation completed successfully: {}", target_file);
@@ -194,22 +218,33 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    tokio::spawn(async move {
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             info!("lz4-extract stdout: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
-    tokio::spawn(async move {
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = stderr_reader.next_line().await {
             info!("lz4-extract stderr: {}", line);
+            lines.push(line);
         }
+        lines.join("\n")
     });
 
+    // Wait for process completion
     let status = child.wait().await
         .map_err(|e| anyhow!("Failed to wait for LZ4 archive extraction: {}", e))?;
 
     info!("LZ4 archive extraction completed with status: {:?}", status);
+
+    // Collect any remaining output
+    let _stdout_output = stdout_task.await.unwrap_or_default();
+    let _stderr_output = stderr_task.await.unwrap_or_default();
 
     if status.success() {
         info!("LZ4 archive extraction completed successfully to: {}", target_dir);
