@@ -37,6 +37,10 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
     }
 }
 
+// ========================================================================
+// FIXED: Apply same working approach as LZ4 functions
+// Use .status() + Stdio::null() to prevent stream capture blocking
+// ========================================================================
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     let command = format!(
         "cosmos-pruner prune {} --blocks={} --versions={}",
@@ -45,20 +49,21 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     info!("Executing cosmos-pruner: {}", command);
 
-    let output = AsyncCommand::new("sh")
+    // FIXED: Use same approach as working LZ4 functions
+    let status = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()  // Use .status() NOT .output()
         .await?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if output.status.success() {
+    if status.success() {
         info!("Cosmos-pruner completed successfully");
-        Ok(format!("Cosmos-pruner output:\n{}\n{}", stdout, stderr))
+        Ok("Cosmos-pruner completed successfully".to_string())
     } else {
-        let error_msg = format!("Cosmos-pruner failed:\nstdout: {}\nstderr: {}", stdout, stderr);
+        let error_msg = "Cosmos-pruner execution failed";
         Err(anyhow!(error_msg))
     }
 }
