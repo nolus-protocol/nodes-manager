@@ -297,11 +297,11 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
+        // 3. Start maintenance tracking (maintenance tracker) - CHANGED: Reduced to 2 hours since no pruning
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_creation",
-            1440, // 24 hour estimated duration for snapshots
+            120, // 2 hour estimated duration for snapshots (no pruning)
             &node_config.server_host
         ).await;
 
@@ -340,15 +340,13 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // FIXED: Pass the actual pruning configuration to the agent
+        // CHANGED: Removed pruning configuration from snapshot payload - snapshots are now separate
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
             "backup_path": backup_path,
             "service_name": service_name,
-            "log_path": node_config.log_path,
-            "pruning_keep_blocks": node_config.pruning_keep_blocks,
-            "pruning_keep_versions": node_config.pruning_keep_versions
+            "log_path": node_config.log_path
         });
 
         let result = self.execute_operation(&node_config.server_host, "/snapshot/create", payload).await?;
@@ -360,7 +358,7 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: result["compression"].as_str().unwrap_or("lz4").to_string(),
+            compression_type: result["compression"].as_str().unwrap_or("gzip").to_string(),
         };
 
         Ok(snapshot_info)
@@ -378,7 +376,7 @@ impl HttpAgentManager {
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_restore",
-            1440, // 24 hour estimated duration for restore
+            120, // 2 hour estimated duration for restore
             &node_config.server_host
         ).await;
 
@@ -408,13 +406,13 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
         }
 
-        // Find latest snapshot file
+        // Find latest snapshot file - look for both .tar.gz and legacy formats
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
         let find_latest_cmd = format!(
-            "find '{}' -name '{}_*.lz4' -o -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-            backup_path, node_config.network, node_config.network
+            "find '{}' -name '{}_*.tar.gz' -o -name '{}_*.lz4' -o -name '{}_*.tar.lz4' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
+            backup_path, node_config.network, node_config.network, node_config.network
         );
 
         let latest_snapshot_path = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
@@ -440,6 +438,15 @@ impl HttpAgentManager {
 
         let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
 
+        // Detect compression type from filename
+        let compression_type = if latest_snapshot_path.ends_with(".tar.gz") {
+            "gzip".to_string()
+        } else if latest_snapshot_path.ends_with(".lz4") || latest_snapshot_path.ends_with(".tar.lz4") {
+            "lz4".to_string()
+        } else {
+            "gzip".to_string()
+        };
+
         let snapshot_info = crate::snapshot::SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
@@ -447,7 +454,7 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: if latest_snapshot_path.ends_with(".lz4") { "lz4".to_string() } else { "gzip".to_string() },
+            compression_type,
         };
 
         Ok(snapshot_info)

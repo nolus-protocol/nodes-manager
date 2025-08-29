@@ -28,7 +28,7 @@ pub struct PruningRequest {
     pub log_path: Option<String>,
 }
 
-// FIXED: Added pruning configuration to SnapshotRequest
+// CHANGED: Removed pruning configuration from SnapshotRequest - snapshots are now separate from pruning
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
@@ -36,9 +36,6 @@ pub struct SnapshotRequest {
     pub backup_path: String,
     pub service_name: String,
     pub log_path: Option<String>,
-    // FIXED: Add pruning configuration instead of hardcoding
-    pub pruning_keep_blocks: Option<u64>,
-    pub pruning_keep_versions: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +162,7 @@ impl ApiResponse<()> {
             filename: Some(filename),
             size_bytes: Some(size_bytes),
             path: Some(path),
-            compression: Some("lz4".to_string()),
+            compression: Some("gzip".to_string()),
         }
     }
 }

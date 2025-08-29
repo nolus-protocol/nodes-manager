@@ -122,46 +122,46 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
-// FIXED: Simplified LZ4 archive creation to prevent hanging
-pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
+// CHANGED: Switched to gzip compression - single reliable command
+pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
-    // FIXED: Simplified command without complex redirection that causes hanging
+    // Single tar command with gzip compression - no pipes, no hanging
     let command = format!(
-        "cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
-        source_dir, dirs, target_file
+        "cd '{}' && tar -czf '{}' {}",
+        source_dir, target_file, dirs
     );
 
-    info!("Creating LZ4 archive: {}", command);
+    info!("Creating gzip archive: {}", command);
     info!("Source directory: {}", source_dir);
     info!("Target file: {}", target_file);
     info!("Directories to archive: {:?}", directories);
 
-    // FIXED: Use simple execute_shell_command instead of complex stream handling
+    // Use simple execute_shell_command - reliable and never hangs
     let output = execute_shell_command(&command).await?;
 
-    info!("LZ4 archive creation completed successfully: {}", target_file);
-    debug!("LZ4 output: {}", output);
+    info!("Gzip archive creation completed successfully: {}", target_file);
+    debug!("Tar output: {}", output);
     Ok(())
 }
 
-// FIXED: Simplified LZ4 archive extraction to prevent hanging
-pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
-    // FIXED: Simplified command without complex redirection
+// CHANGED: Switched to gzip extraction - single reliable command
+pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Result<()> {
+    // Single tar command with gzip decompression - no pipes, no hanging
     let command = format!(
-        "cd '{}' && lz4 -dc '{}' | tar -xf -",
+        "cd '{}' && tar -xzf '{}'",
         target_dir, archive_file
     );
 
-    info!("Extracting LZ4 archive: {}", command);
+    info!("Extracting gzip archive: {}", command);
     info!("Archive file: {}", archive_file);
     info!("Target directory: {}", target_dir);
 
-    // FIXED: Use simple execute_shell_command instead of complex stream handling
+    // Use simple execute_shell_command - reliable and never hangs
     let output = execute_shell_command(&command).await?;
 
-    info!("LZ4 archive extraction completed successfully to: {}", target_dir);
-    debug!("LZ4 output: {}", output);
+    info!("Gzip archive extraction completed successfully to: {}", target_dir);
+    debug!("Tar output: {}", output);
     Ok(())
 }
 

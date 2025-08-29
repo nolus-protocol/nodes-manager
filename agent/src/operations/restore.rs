@@ -35,12 +35,12 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     commands::delete_directory(&wasm_dir).await?;
     operation_log.push("✓ Deleted existing data and wasm directories".to_string());
 
-    // Step 4: Extract snapshot (now with streaming progress)
-    info!("Step 4: Extracting snapshot to restore data and wasm directories (this will show real-time progress)");
-    info!("Starting LZ4 decompression and extraction...");
-    commands::extract_lz4_archive(&request.snapshot_file, &request.deploy_path).await?;
-    info!("LZ4 extraction completed successfully!");
-    operation_log.push("✓ Extracted snapshot archive".to_string());
+    // Step 4: Extract snapshot - CHANGED: now uses reliable gzip extraction
+    info!("Step 4: Extracting gzip snapshot to restore data and wasm directories");
+    info!("Starting gzip decompression and extraction...");
+    commands::extract_gzip_archive(&request.snapshot_file, &request.deploy_path).await?;
+    info!("Gzip extraction completed successfully!");
+    operation_log.push("✓ Extracted gzip snapshot archive".to_string());
 
     // Step 5: Restore validator state (if available)
     if let Some(validator_backup_file) = &request.validator_backup_file {
@@ -84,6 +84,7 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
         Deploy Path: {}\n\
         Snapshot File: {}\n\
         Validator Backup: {}\n\
+        Compression: gzip\n\
         \n\
         Operation Steps:\n\
         {}\n\
