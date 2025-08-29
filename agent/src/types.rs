@@ -162,7 +162,7 @@ impl ApiResponse<()> {
             filename: Some(filename),
             size_bytes: Some(size_bytes),
             path: Some(path),
-            compression: Some("gzip".to_string()),
+            compression: Some("lz4".to_string()), // FIXED: Return lz4 instead of gzip
         }
     }
 }

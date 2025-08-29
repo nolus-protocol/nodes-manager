@@ -62,23 +62,37 @@ impl ConfigManager {
             // Store server configuration
             server_configs.insert(server_name.to_string(), server_config_file.server);
 
-            // Collect nodes from this server
+            // FIXED: Collect nodes from this server with smart naming
             for (node_name, mut node_config) in server_config_file.nodes {
                 node_config.server_host = server_name.to_string();
-                all_nodes.insert(
-                    format!("{}-{}", server_name, node_name),
-                    node_config
-                );
+
+                // FIXED: Smart node naming - don't double-prefix if already prefixed
+                let final_node_name = if node_name.starts_with(&format!("{}-", server_name)) {
+                    // Node name already includes server prefix, use as-is
+                    node_name
+                } else {
+                    // Node name doesn't include server prefix, add it
+                    format!("{}-{}", server_name, node_name)
+                };
+
+                all_nodes.insert(final_node_name, node_config);
             }
 
-            // Collect Hermes instances from this server
+            // FIXED: Collect Hermes instances from this server with smart naming
             if let Some(hermes_configs) = server_config_file.hermes {
                 for (hermes_name, mut hermes_config) in hermes_configs {
                     hermes_config.server_host = server_name.to_string();
-                    all_hermes.insert(
-                        format!("{}-{}", server_name, hermes_name),
-                        hermes_config
-                    );
+
+                    // FIXED: Smart hermes naming - don't double-prefix if already prefixed
+                    let final_hermes_name = if hermes_name.starts_with(&format!("{}-", server_name)) {
+                        // Hermes name already includes server prefix, use as-is
+                        hermes_name
+                    } else {
+                        // Hermes name doesn't include server prefix, add it
+                        format!("{}-{}", server_name, hermes_name)
+                    };
+
+                    all_hermes.insert(final_hermes_name, hermes_config);
                 }
             }
         }

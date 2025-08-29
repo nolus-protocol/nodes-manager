@@ -8,7 +8,7 @@ use crate::types::{SnapshotInfo, SnapshotRequest};
 pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result<SnapshotInfo> {
     info!("Starting snapshot creation for: {}", request.node_name);
 
-    // Generate timestamp and filenames
+    // Generate timestamp and filenames using the node_name from request
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let snapshot_filename = format!("{}_{}.lz4", request.node_name, timestamp);
     let snapshot_path = format!("{}/{}", request.backup_path, snapshot_filename);

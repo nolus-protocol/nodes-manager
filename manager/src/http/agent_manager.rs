@@ -406,13 +406,13 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
         }
 
-        // Find latest snapshot file - looking for .lz4 files
+        // FIXED: Use node_name instead of network to find snapshots
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
         let find_latest_cmd = format!(
             "find '{}' -name '{}_*.lz4' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-            backup_path, node_config.network
+            backup_path, node_name
         );
 
         let latest_snapshot_path = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;

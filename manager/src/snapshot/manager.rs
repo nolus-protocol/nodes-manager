@@ -165,10 +165,10 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // List LZ4 snapshots via HTTP agent
+        // FIXED: List LZ4 snapshots using node_name instead of network
         let list_cmd = format!(
             "find '{}' -name '{}_*.lz4' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
-            backup_path, node_config.network
+            backup_path, node_name
         );
 
         let output = self.http_manager
@@ -189,8 +189,8 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // Parse timestamp from filename if possible, fallback to file mtime
-                let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_config.network)) {
+                // FIXED: Parse timestamp from filename using node_name as prefix
+                let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_name)) {
                     let ts_clean = ts_part.strip_suffix(".lz4").unwrap_or(ts_part);
 
                     chrono::NaiveDateTime::parse_from_str(ts_clean, "%Y%m%d_%H%M%S")
@@ -262,10 +262,10 @@ impl SnapshotManager {
                 }
             }
 
-            // Also clean up associated validator state backup files via HTTP agent
+            // FIXED: Also clean up associated validator state backup files using node_name
             if let Some(backup_path) = &node_config.snapshot_backup_path {
                 let timestamp_from_filename = snapshot.filename
-                    .strip_prefix(&format!("{}_", node_config.network))
+                    .strip_prefix(&format!("{}_", node_name))
                     .and_then(|s| s.strip_suffix(".lz4"));
 
                 if let Some(timestamp) = timestamp_from_filename {
