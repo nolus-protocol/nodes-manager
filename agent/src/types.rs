@@ -47,6 +47,17 @@ pub struct RestoreRequest {
     pub log_path: Option<String>,
 }
 
+// NEW: Busy status and cleanup requests
+#[derive(Debug, Deserialize)]
+pub struct BusyStatusRequest {
+    // Empty - just needs API key validation
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CleanupRequest {
+    pub max_hours: Option<i64>,
+}
+
 // === RESPONSE STRUCTURES ===
 
 #[derive(Debug, Serialize)]
@@ -161,7 +172,7 @@ impl ApiResponse<()> {
             filename: Some(filename),
             size_bytes: Some(size_bytes),
             path: Some(path),
-            compression: Some("gzip".to_string()), // CHANGED: From lz4 to gzip
+            compression: Some("gzip".to_string()),
         }
     }
 }
@@ -173,4 +184,27 @@ pub struct SnapshotInfo {
     pub filename: String,
     pub size_bytes: u64,
     pub path: String,
+}
+
+// NEW: Busy status tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusyStatus {
+    pub node_name: String,
+    pub operation_type: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub duration_minutes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusyStatusResponse {
+    pub busy_nodes: std::collections::HashMap<String, String>,
+    pub total_busy: usize,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupResponse {
+    pub cleaned_count: u32,
+    pub max_hours: i64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }

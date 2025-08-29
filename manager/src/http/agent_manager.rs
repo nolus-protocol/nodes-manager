@@ -3,7 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn, error};
 use chrono::{DateTime, Utc};
 
 use crate::config::{Config, HermesConfig, NodeConfig};
@@ -51,6 +51,13 @@ pub struct OperationResult {
     pub details: Option<serde_json::Value>,
 }
 
+// NEW: Agent busy status structures
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentBusyStatus {
+    pub busy_nodes: std::collections::HashMap<String, String>,
+    pub total_busy: usize,
+}
+
 pub struct HttpAgentManager {
     pub config: Arc<Config>,
     pub client: Client,
@@ -74,21 +81,28 @@ impl HttpAgentManager {
         }
     }
 
-    /// Execute command - Agent handles everything synchronously until done
+    /// Execute operation with improved error handling and logging
     async fn execute_operation(&self, server_name: &str, endpoint: &str, payload: Value) -> Result<Value> {
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
 
         let agent_url = format!("http://{}:{}{}", server_config.host, server_config.agent_port, endpoint);
 
-        info!("Starting operation on {}: {}", server_name, endpoint);
+        info!("Starting operation on {}: {} (timeout: {}s)", server_name, endpoint, server_config.request_timeout_seconds);
 
         let response = self.client.post(&agent_url)
             .header("Authorization", format!("Bearer {}", server_config.api_key))
             .json(&payload)
+            .timeout(std::time::Duration::from_secs(server_config.request_timeout_seconds))
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("HTTP request failed on {}: {}", server_name, e))?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    anyhow::anyhow!("Operation timeout on {} after {}s: {}", server_name, server_config.request_timeout_seconds, endpoint)
+                } else {
+                    anyhow::anyhow!("HTTP request failed on {}: {}", server_name, e)
+                }
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -104,7 +118,111 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Operation failed on {}: {}", server_name, error_msg));
         }
 
+        info!("Operation completed successfully on {}: {}", server_name, endpoint);
         Ok(result)
+    }
+
+    // === NEW: Agent Busy Status Operations ===
+
+    pub async fn get_agent_busy_status(&self, server_name: &str) -> Result<AgentBusyStatus> {
+        let payload = json!({});
+        let result = self.execute_operation(server_name, "/status/busy", payload).await?;
+
+        if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+            let status: AgentBusyStatus = serde_json::from_str(output)
+                .map_err(|e| anyhow::anyhow!("Failed to parse busy status: {}", e))?;
+            Ok(status)
+        } else {
+            Ok(AgentBusyStatus {
+                busy_nodes: std::collections::HashMap::new(),
+                total_busy: 0,
+            })
+        }
+    }
+
+    pub async fn cleanup_agent_operations(&self, server_name: &str, max_hours: i64) -> Result<u32> {
+        let payload = json!({"max_hours": max_hours});
+        let result = self.execute_operation(server_name, "/status/cleanup", payload).await?;
+
+        if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+            let cleanup_result: serde_json::Value = serde_json::from_str(output)
+                .map_err(|e| anyhow::anyhow!("Failed to parse cleanup result: {}", e))?;
+
+            Ok(cleanup_result.get("cleaned_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn get_all_agents_busy_status(&self) -> Result<std::collections::HashMap<String, AgentBusyStatus>> {
+        let mut all_status = std::collections::HashMap::new();
+        let mut tasks = Vec::new();
+
+        for (server_name, _) in &self.config.servers {
+            let server_name = server_name.clone();
+            let manager = self.clone();
+
+            let task = tokio::spawn(async move {
+                let status = manager.get_agent_busy_status(&server_name).await;
+                (server_name, status)
+            });
+
+            tasks.push(task);
+        }
+
+        let results = futures::future::join_all(tasks).await;
+
+        for result in results {
+            match result {
+                Ok((server_name, Ok(status))) => {
+                    all_status.insert(server_name, status);
+                }
+                Ok((server_name, Err(e))) => {
+                    warn!("Failed to get busy status from {}: {}", server_name, e);
+                }
+                Err(e) => {
+                    error!("Task failed: {}", e);
+                }
+            }
+        }
+
+        Ok(all_status)
+    }
+
+    pub async fn cleanup_all_agent_operations(&self, max_hours: i64) -> Result<std::collections::HashMap<String, u32>> {
+        let mut cleanup_results = std::collections::HashMap::new();
+        let mut tasks = Vec::new();
+
+        for (server_name, _) in &self.config.servers {
+            let server_name = server_name.clone();
+            let manager = self.clone();
+
+            let task = tokio::spawn(async move {
+                let result = manager.cleanup_agent_operations(&server_name, max_hours).await;
+                (server_name, result)
+            });
+
+            tasks.push(task);
+        }
+
+        let results = futures::future::join_all(tasks).await;
+
+        for result in results {
+            match result {
+                Ok((server_name, Ok(cleaned_count))) => {
+                    cleanup_results.insert(server_name, cleaned_count);
+                }
+                Ok((server_name, Err(e))) => {
+                    warn!("Failed to cleanup operations on {}: {}", server_name, e);
+                    cleanup_results.insert(server_name, 0);
+                }
+                Err(e) => {
+                    error!("Cleanup task failed: {}", e);
+                }
+            }
+        }
+
+        Ok(cleanup_results)
     }
 
     // === Basic Service Operations ===
@@ -340,6 +458,8 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
+        info!("Starting gzip snapshot creation for {} via HTTP agent", node_name);
+
         // Execute snapshot creation via agent
         let payload = json!({
             "node_name": node_name,
@@ -358,9 +478,10 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: result["compression"].as_str().unwrap_or("gzip").to_string(), // CHANGED: Default to gzip
+            compression_type: "gzip".to_string(),
         };
 
+        info!("Gzip snapshot created successfully: {}", snapshot_info.filename);
         Ok(snapshot_info)
     }
 
@@ -419,12 +540,14 @@ impl HttpAgentManager {
         let latest_snapshot_path = latest_snapshot_path.trim();
 
         if latest_snapshot_path.is_empty() {
-            return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
+            return Err(anyhow::anyhow!("No gzip snapshots found for node {}", node_name));
         }
 
         // Extract filename from path
         let snapshot_filename = latest_snapshot_path.split('/').last()
             .ok_or_else(|| anyhow::anyhow!("Invalid snapshot path"))?;
+
+        info!("Starting gzip snapshot restore for {} from {}", node_name, snapshot_filename);
 
         // Execute restore via agent
         let payload = json!({
@@ -445,9 +568,10 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: "gzip".to_string(), // CHANGED: gzip format
+            compression_type: "gzip".to_string(),
         };
 
+        info!("Gzip snapshot restore completed successfully: {}", snapshot_filename);
         Ok(snapshot_info)
     }
 

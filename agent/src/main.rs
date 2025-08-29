@@ -7,8 +7,10 @@ use axum::{
     routing::post,
     Router,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tokio::sync::RwLock;
+use tracing::{info, warn, error};
 
 mod operations;
 mod services;
@@ -18,17 +20,82 @@ use operations::{pruning, snapshots, restore};
 use services::{commands, systemctl};
 use types::*;
 
-// Application state
+// Application state with busy tracking
 #[derive(Clone)]
 pub struct AppState {
     pub api_key: String,
+    pub busy_nodes: Arc<RwLock<HashMap<String, BusyState>>>,
+}
+
+#[derive(Clone, Debug)]
+struct BusyState {
+    operation_type: String,
+    started_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl AppState {
+    async fn try_start_operation(&self, node_name: &str, operation_type: &str) -> Result<(), String> {
+        let mut busy = self.busy_nodes.write().await;
+
+        if let Some(existing) = busy.get(node_name) {
+            let duration = chrono::Utc::now().signed_duration_since(existing.started_at);
+            return Err(format!(
+                "Node {} is busy with {} (started {}m ago)",
+                node_name, existing.operation_type, duration.num_minutes()
+            ));
+        }
+
+        busy.insert(node_name.to_string(), BusyState {
+            operation_type: operation_type.to_string(),
+            started_at: chrono::Utc::now(),
+        });
+
+        info!("Node {} marked as busy with {}", node_name, operation_type);
+        Ok(())
+    }
+
+    async fn finish_operation(&self, node_name: &str) {
+        let mut busy = self.busy_nodes.write().await;
+        if let Some(state) = busy.remove(node_name) {
+            let duration = chrono::Utc::now().signed_duration_since(state.started_at);
+            info!("Node {} operation {} completed after {}m",
+                  node_name, state.operation_type, duration.num_minutes());
+        }
+    }
+
+    async fn cleanup_old_operations(&self, max_hours: i64) -> u32 {
+        let mut busy = self.busy_nodes.write().await;
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(max_hours);
+        let initial_count = busy.len();
+
+        busy.retain(|node_name, state| {
+            let should_keep = state.started_at > cutoff;
+            if !should_keep {
+                warn!("Cleaned up stuck operation on {} ({})", node_name, state.operation_type);
+            }
+            should_keep
+        });
+
+        let cleaned = initial_count - busy.len();
+        if cleaned > 0 {
+            warn!("Cleaned up {} stuck operations older than {}h", cleaned, max_hours);
+        }
+        cleaned as u32
+    }
+
+    async fn get_busy_status(&self) -> HashMap<String, String> {
+        let busy = self.busy_nodes.read().await;
+        busy.iter().map(|(node, state)| {
+            (node.clone(), state.operation_type.clone())
+        }).collect()
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    info!("Starting Blockchain Server Agent on 0.0.0.0:8745");
+    info!("Starting Blockchain Server Agent on 0.0.0.0:8745 with concurrency control");
 
     let api_key = std::env::var("AGENT_API_KEY")
         .unwrap_or_else(|_| "default-development-key".to_string());
@@ -37,7 +104,20 @@ async fn main() -> Result<()> {
         warn!("Using default development API key - set AGENT_API_KEY environment variable for production");
     }
 
-    let app_state = AppState { api_key };
+    let app_state = AppState {
+        api_key,
+        busy_nodes: Arc::new(RwLock::new(HashMap::new())),
+    };
+
+    // Start cleanup task (every hour)
+    let cleanup_state = app_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            cleanup_state.cleanup_old_operations(24).await;
+        }
+    });
 
     let app = Router::new()
         .route("/command/execute", post(execute_command))
@@ -48,8 +128,11 @@ async fn main() -> Result<()> {
         .route("/logs/truncate", post(truncate_logs))
         .route("/pruning/execute", post(execute_pruning))
         .route("/snapshot/create", post(create_snapshot))
-        .route("/snapshot/restore", post(restore_snapshot)) // NEW: Restore endpoint
-        .route("/snapshot/check-triggers", post(check_restore_triggers)) // NEW: Check triggers endpoint
+        .route("/snapshot/restore", post(restore_snapshot))
+        .route("/snapshot/check-triggers", post(check_restore_triggers))
+        // NEW: Status and cleanup endpoints
+        .route("/status/busy", post(get_busy_status))
+        .route("/status/cleanup", post(cleanup_operations))
         .with_state(Arc::new(app_state));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8745").await?;
@@ -68,6 +151,18 @@ fn validate_api_key(headers: &axum::http::HeaderMap, expected_key: &str) -> bool
         }
     }
     false
+}
+
+// Extract node name from request (different operations have different request structures)
+fn extract_node_name_from_request(request: &serde_json::Value) -> Option<String> {
+    // Try different possible node name fields
+    if let Some(node_name) = request.get("node_name").and_then(|v| v.as_str()) {
+        return Some(node_name.to_string());
+    }
+    if let Some(service_name) = request.get("service_name").and_then(|v| v.as_str()) {
+        return Some(service_name.to_string());
+    }
+    None
 }
 
 // === BASIC COMMAND OPERATIONS ===
@@ -160,13 +255,21 @@ async fn truncate_logs(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    match services::logs::truncate_service_logs(&request.service_name, &request.log_path).await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.service_name, "log_truncation").await {
+        return Ok(ResponseJson(ApiResponse::error(err)));
+    }
+
+    let result = services::logs::truncate_service_logs(&request.service_name, &request.log_path).await;
+    state.finish_operation(&request.service_name).await;
+
+    match result {
         Ok(_) => Ok(ResponseJson(ApiResponse::success())),
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
 }
 
-// === COMPLEX OPERATIONS ===
+// === COMPLEX OPERATIONS WITH CONCURRENCY CONTROL ===
 
 async fn execute_pruning(
     State(state): State<Arc<AppState>>,
@@ -177,9 +280,20 @@ async fn execute_pruning(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    match pruning::execute_full_pruning_sequence(&request).await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.service_name, "pruning").await {
+        return Ok(ResponseJson(ApiResponse::error(err)));
+    }
+
+    let result = pruning::execute_full_pruning_sequence(&request).await;
+    state.finish_operation(&request.service_name).await;
+
+    match result {
         Ok(output) => Ok(ResponseJson(ApiResponse::success_with_output(output))),
-        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+        Err(e) => {
+            error!("Pruning failed for {}: {}", request.service_name, e);
+            Ok(ResponseJson(ApiResponse::error(e.to_string())))
+        }
     }
 }
 
@@ -192,17 +306,26 @@ async fn create_snapshot(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    match snapshots::execute_full_snapshot_sequence(&request).await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_creation").await {
+        return Ok(ResponseJson(ApiResponse::error(err)));
+    }
+
+    let result = snapshots::execute_full_snapshot_sequence(&request).await;
+    state.finish_operation(&request.node_name).await;
+
+    match result {
         Ok(snapshot_info) => Ok(ResponseJson(ApiResponse::success_with_snapshot(
             snapshot_info.filename,
             snapshot_info.size_bytes,
             snapshot_info.path,
         ))),
-        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+        Err(e) => {
+            error!("Snapshot creation failed for {}: {}", request.node_name, e);
+            Ok(ResponseJson(ApiResponse::error(e.to_string())))
+        }
     }
 }
-
-// === NEW: RESTORE OPERATIONS ===
 
 async fn restore_snapshot(
     State(state): State<Arc<AppState>>,
@@ -213,13 +336,23 @@ async fn restore_snapshot(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    match restore::execute_full_restore_sequence(&request).await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_restore").await {
+        return Ok(ResponseJson(ApiResponse::error(err)));
+    }
+
+    let result = restore::execute_full_restore_sequence(&request).await;
+    state.finish_operation(&request.node_name).await;
+
+    match result {
         Ok(output) => Ok(ResponseJson(ApiResponse::success_with_output(output))),
-        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+        Err(e) => {
+            error!("Snapshot restore failed for {}: {}", request.node_name, e);
+            Ok(ResponseJson(ApiResponse::error(e.to_string())))
+        }
     }
 }
 
-// NEW: Check for auto-restore trigger words
 async fn check_restore_triggers(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -249,4 +382,46 @@ async fn check_restore_triggers(
         }
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
+}
+
+// === NEW: STATUS AND CLEANUP ENDPOINTS ===
+
+async fn get_busy_status(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(_request): Json<serde_json::Value>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let busy_status = state.get_busy_status().await;
+    let response = serde_json::json!({
+        "busy_nodes": busy_status,
+        "total_busy": busy_status.len()
+    });
+
+    Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
+}
+
+async fn cleanup_operations(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<serde_json::Value>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let max_hours = request.get("max_hours")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(12);
+
+    let cleaned_count = state.cleanup_old_operations(max_hours).await;
+    let response = serde_json::json!({
+        "cleaned_count": cleaned_count,
+        "max_hours": max_hours
+    });
+
+    Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
 }
