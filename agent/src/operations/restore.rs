@@ -17,7 +17,8 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
             .and_then(|s| s.strip_suffix(".tar"))
             .unwrap_or("");
 
-        format!("{}/{}_backup",
+        // UNIFIED: Removed _backup suffix from directory name
+        format!("{}/{}",
                 std::path::Path::new(&request.snapshot_file).parent().unwrap().to_str().unwrap(),
                 filename)
     } else {

@@ -12,7 +12,7 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let snapshot_filename = format!("{}_{}.tar.gz", request.node_name, timestamp);
     let compressed_path = format!("{}/{}", request.backup_path, snapshot_filename);
-    let backup_dir = format!("{}/{}_{}_backup", request.backup_path, request.node_name, timestamp);
+    let backup_dir = format!("{}/{}_{}", request.backup_path, request.node_name, timestamp); // UNIFIED: Removed _backup suffix
     let validator_backup_path = format!("{}/validator_state_backup_{}.json", request.backup_path, timestamp);
 
     // Step 1: Create backup directory
