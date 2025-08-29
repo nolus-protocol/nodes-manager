@@ -84,19 +84,20 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
 pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
+    // Ensure parent directory exists
     if let Some(parent_dir) = std::path::Path::new(target_file).parent() {
         if let Some(parent_str) = parent_dir.to_str() {
             create_directory(parent_str).await?;
         }
     }
 
-    // Use tar with built-in gzip compression and explicit error handling
+    // Use tar with -C flag to avoid cd command and complex shell logic
     let command = format!(
-        "(cd '{}' || (echo 'ARCHIVE_CD_FAIL'; exit 1)) && ((tar -czf '{}' {} && echo 'ARCHIVE_SUCCESS') || echo 'ARCHIVE_FAILED')",
-        source_dir, target_file, dirs
+        "tar -czf '{}' -C '{}' {} && echo 'ARCHIVE_SUCCESS'",
+        target_file, source_dir, dirs
     );
 
-    info!("Creating gzip archive: {}", command);
+    info!("Creating gzip archive with tar -czf: {}", command);
 
     let output = AsyncCommand::new("sh")
         .arg("-c")
@@ -108,27 +109,43 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if stdout.contains("ARCHIVE_SUCCESS") {
-        info!("Archive created successfully");
-        Ok(())
-    } else if stdout.contains("ARCHIVE_CD_FAIL") {
-        Err(anyhow!("Failed to change to source directory: {}", source_dir))
-    } else if stdout.contains("ARCHIVE_FAILED") {
-        Err(anyhow!("Archive creation failed\nStderr: {}", stderr))
+        info!("Gzip archive created successfully");
+
+        // Verify archive was created and has reasonable size
+        match get_file_size(target_file).await {
+            Ok(size) => {
+                if size > 1024 {
+                    info!("Archive verified: {} bytes", size);
+                    Ok(())
+                } else {
+                    Err(anyhow!("Archive file too small ({} bytes), likely corrupt or empty", size))
+                }
+            },
+            Err(e) => {
+                Err(anyhow!("Archive file not found or inaccessible after creation: {}", e))
+            }
+        }
     } else {
-        Err(anyhow!("Archive operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
+        Err(anyhow!("Archive creation failed or did not complete properly\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()))
     }
 }
 
 pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Result<()> {
+    // Verify archive file exists
+    let verify_command = format!("test -f '{}'", archive_file);
+    execute_shell_command(&verify_command).await
+        .map_err(|_| anyhow!("Archive file does not exist: {}", archive_file))?;
+
+    // Create target directory
     create_directory(target_dir).await?;
 
-    // Use tar with built-in gzip decompression and explicit error handling
+    // Use tar with -C flag to avoid cd command
     let command = format!(
-        "(cd '{}' || (echo 'EXTRACT_CD_FAIL'; exit 1)) && ((tar -xzf '{}' && echo 'EXTRACT_SUCCESS') || echo 'EXTRACT_FAILED')",
-        target_dir, archive_file
+        "tar -xzf '{}' -C '{}' && echo 'EXTRACT_SUCCESS'",
+        archive_file, target_dir
     );
 
-    info!("Extracting gzip archive: {}", command);
+    info!("Extracting gzip archive with tar -xzf: {}", command);
 
     let output = AsyncCommand::new("sh")
         .arg("-c")
@@ -140,14 +157,22 @@ pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Resul
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if stdout.contains("EXTRACT_SUCCESS") {
-        info!("Archive extracted successfully");
-        Ok(())
-    } else if stdout.contains("EXTRACT_CD_FAIL") {
-        Err(anyhow!("Failed to change to target directory: {}", target_dir))
-    } else if stdout.contains("EXTRACT_FAILED") {
-        Err(anyhow!("Archive extraction failed\nStderr: {}", stderr))
+        info!("Gzip archive extracted successfully");
+
+        // Verify extraction results
+        let verify_command = format!("test -d '{}/data'", target_dir);
+        match execute_shell_command(&verify_command).await {
+            Ok(_) => {
+                info!("Extraction verified: data directory found");
+                Ok(())
+            },
+            Err(_) => {
+                info!("Warning: data directory not found after extraction, but extraction reported success");
+                Ok(())
+            }
+        }
     } else {
-        Err(anyhow!("Extract operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
+        Err(anyhow!("Archive extraction failed or did not complete properly\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()))
     }
 }
 
