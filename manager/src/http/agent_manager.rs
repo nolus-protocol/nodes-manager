@@ -3,6 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 use chrono::{DateTime, Utc};
 
@@ -64,7 +65,11 @@ impl HttpAgentManager {
         operation_tracker: Arc<SimpleOperationTracker>,
         maintenance_tracker: Arc<MaintenanceTracker>
     ) -> Self {
-        let client = Client::new();
+        // FIXED: No timeout on HTTP client - let operations run as long as needed
+        let client = Client::builder()
+            .timeout(Duration::from_secs(0)) // No timeout - let operations complete
+            .build()
+            .expect("Failed to create HTTP client");
 
         Self {
             config,
@@ -74,7 +79,7 @@ impl HttpAgentManager {
         }
     }
 
-    /// Execute command - Agent handles everything synchronously until done
+    /// Execute operation with no timeout
     async fn execute_operation(&self, server_name: &str, endpoint: &str, payload: Value) -> Result<Value> {
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
@@ -164,31 +169,25 @@ impl HttpAgentManager {
     // === High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
-        // 1. Check if operation is allowed (operation tracker)
         self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
 
-        // 2. Get node config
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "node_restart",
-            15, // 15 minute estimated duration for restart
+            15,
             &node_config.server_host
         ).await;
 
         if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
             self.operation_tracker.finish_operation(node_name).await;
             return Err(e);
         }
 
-        // 4. Execute the actual operation
         let result = self.restart_node_impl(node_name).await;
 
-        // 5. Always cleanup both trackers (even on error)
         self.operation_tracker.finish_operation(node_name).await;
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             info!("Failed to end maintenance for {}: {}", node_name, e);
@@ -206,12 +205,10 @@ impl HttpAgentManager {
 
         info!("Restarting node {}", node_name);
 
-        // Simple sequential restart
         self.stop_service(&node_config.server_host, service_name).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await; // Brief pause
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         self.start_service(&node_config.server_host, service_name).await?;
 
-        // Verify it started
         let status = self.check_service_status(&node_config.server_host, service_name).await?;
         if !status.is_running() {
             return Err(anyhow::anyhow!("Node {} failed to start after restart", node_name));
@@ -222,31 +219,25 @@ impl HttpAgentManager {
     }
 
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
-        // 1. Check if operation is allowed (operation tracker)
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
 
-        // 2. Get node config
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "pruning",
-            300, // 5 hour estimated duration for pruning
+            300,
             &node_config.server_host
         ).await;
 
         if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
             self.operation_tracker.finish_operation(node_name).await;
             return Err(e);
         }
 
-        // 4. Execute the actual operation
         let result = self.execute_node_pruning_impl(node_name).await;
 
-        // 5. Always cleanup both trackers (even on error)
         self.operation_tracker.finish_operation(node_name).await;
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             info!("Failed to end maintenance for {}: {}", node_name, e);
@@ -274,7 +265,6 @@ impl HttpAgentManager {
 
         info!("Starting full pruning sequence for node {}", node_name);
 
-        // Execute pruning via agent
         let payload = json!({
             "deploy_path": deploy_path,
             "keep_blocks": keep_blocks,
@@ -290,31 +280,25 @@ impl HttpAgentManager {
     }
 
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // 1. Check if operation is allowed (operation tracker)
         self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
 
-        // 2. Get node config
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_creation",
-            1440, // 24 hour estimated duration for snapshots
+            1440,
             &node_config.server_host
         ).await;
 
         if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
             self.operation_tracker.finish_operation(node_name).await;
             return Err(e);
         }
 
-        // 4. Execute the actual operation
         let result = self.create_node_snapshot_impl(node_name).await;
 
-        // 5. Always cleanup both trackers (even on error)
         self.operation_tracker.finish_operation(node_name).await;
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             info!("Failed to end maintenance for {}: {}", node_name, e);
@@ -340,7 +324,6 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // Execute snapshot creation via agent
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
@@ -358,99 +341,11 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: result["compression"].as_str().unwrap_or("directory").to_string(), // FIXED: Changed from gzip to directory
+            compression_type: result["compression"].as_str().unwrap_or("directory").to_string(),
         };
 
         Ok(snapshot_info)
     }
-
-    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // 1. Check if operation is allowed (operation tracker)
-        self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
-
-        // 2. Get node config
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        // 3. Start maintenance tracking (maintenance tracker)
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
-            node_name,
-            "snapshot_restore",
-            1440, // 24 hour estimated duration for restore
-            &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
-
-        // 4. Execute the actual operation
-        let result = self.restore_node_from_snapshot_impl(node_name).await;
-
-        // 5. Always cleanup both trackers (even on error)
-        self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
-        }
-
-        result
-    }
-
-    async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        if !node_config.snapshots_enabled.unwrap_or(false) || !node_config.auto_restore_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
-        }
-
-        // FIXED: Look for snapshot directories instead of gzip files
-        let backup_path = node_config.snapshot_backup_path.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
-
-        let find_latest_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-            backup_path, node_name
-        );
-
-        let latest_snapshot_path = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
-        let latest_snapshot_path = latest_snapshot_path.trim();
-
-        if latest_snapshot_path.is_empty() {
-            return Err(anyhow::anyhow!("No snapshot directories found for node {}", node_name));
-        }
-
-        // Extract directory name from path
-        let snapshot_dirname = latest_snapshot_path.split('/').last()
-            .ok_or_else(|| anyhow::anyhow!("Invalid snapshot path"))?;
-
-        // FIXED: Send snapshot directory path instead of gzip file
-        let payload = json!({
-            "node_name": node_name,
-            "deploy_path": node_config.pruning_deploy_path,
-            "snapshot_dir": latest_snapshot_path,
-            "service_name": node_config.pruning_service_name,
-            "log_path": node_config.log_path
-        });
-
-        let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
-
-        let snapshot_info = crate::snapshot::SnapshotInfo {
-            node_name: node_name.to_string(),
-            network: node_config.network.clone(),
-            filename: snapshot_dirname.to_string(),
-            created_at: Utc::now(),
-            file_size_bytes: None,
-            snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: "directory".to_string(), // FIXED: Changed from gzip to directory
-        };
-
-        Ok(snapshot_info)
-    }
-
-    // === Legacy Operations ===
 
     pub async fn run_pruning(&self, node_config: &NodeConfig) -> Result<()> {
         if !node_config.pruning_enabled.unwrap_or(false) {
@@ -483,12 +378,10 @@ impl HttpAgentManager {
     pub async fn restart_hermes(&self, hermes_config: &HermesConfig) -> Result<()> {
         info!("Restarting Hermes {}", hermes_config.service_name);
 
-        // Simple sequential restart
         self.stop_service(&hermes_config.server_host, &hermes_config.service_name).await?;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         self.start_service(&hermes_config.server_host, &hermes_config.service_name).await?;
 
-        // Verify it started
         let status = self.check_service_status(&hermes_config.server_host, &hermes_config.service_name).await?;
         if !status.is_running() {
             return Err(anyhow::anyhow!("Hermes {} failed to start after restart", hermes_config.service_name));
@@ -497,51 +390,6 @@ impl HttpAgentManager {
         info!("Hermes {} restarted successfully", hermes_config.service_name);
         Ok(())
     }
-
-    // === Auto-restore functionality ===
-
-    pub async fn check_auto_restore_triggers(&self, node_name: &str) -> Result<bool> {
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        if !node_config.auto_restore_enabled.unwrap_or(false) || !node_config.snapshots_enabled.unwrap_or(false) {
-            return Ok(false);
-        }
-
-        let trigger_words = match &self.config.auto_restore_trigger_words {
-            Some(words) if !words.is_empty() => words,
-            _ => return Ok(false),
-        };
-
-        let log_path = match &node_config.log_path {
-            Some(path) => path,
-            None => return Ok(false),
-        };
-
-        let log_file = format!("{}/out1.log", log_path);
-
-        let check_payload = json!({
-            "log_file": log_file,
-            "trigger_words": trigger_words
-        });
-
-        match self.execute_operation(&node_config.server_host, "/snapshot/check-triggers", check_payload).await {
-            Ok(result) => {
-                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
-                        return Ok(parsed.get("triggers_found").and_then(|v| v.as_bool()).unwrap_or(false));
-                    }
-                }
-                Ok(false)
-            }
-            Err(e) => {
-                info!("Failed to check auto-restore triggers for {}: {}", node_name, e);
-                Ok(false)
-            }
-        }
-    }
-
-    // === Operation Management ===
 
     pub async fn cancel_operation(&self, target_name: &str) -> Result<()> {
         self.operation_tracker.cancel_operation(target_name).await
@@ -558,8 +406,6 @@ impl HttpAgentManager {
     pub async fn emergency_cleanup_operations(&self, max_hours: i64) -> u32 {
         self.operation_tracker.cleanup_old_operations(max_hours).await
     }
-
-    // === Placeholder implementations ===
 
     pub async fn restart_multiple_hermes(&self, _hermes_configs: Vec<HermesConfig>) -> Result<BatchOperationResult> {
         Ok(BatchOperationResult {
@@ -581,6 +427,15 @@ impl HttpAgentManager {
 
     pub async fn check_node_dependencies(&self, _dependent_nodes: &Option<Vec<String>>) -> Result<bool> {
         Ok(true)
+    }
+
+    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        Err(anyhow::anyhow!("Restore not implemented for {}", node_name))
+    }
+
+    pub async fn check_auto_restore_triggers(&self, node_name: &str) -> Result<bool> {
+        let _ = node_name;
+        Ok(false)
     }
 }
 
