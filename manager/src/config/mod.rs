@@ -1,4 +1,4 @@
-// File: nodes-manager/src/config/mod.rs
+// File: manager/src/config/mod.rs
 pub mod manager;
 
 use serde::{Deserialize, Serialize};
@@ -34,8 +34,13 @@ pub struct ServerConfig {
     pub host: String,
     pub agent_port: u16,
     pub api_key: String,
+    #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
     pub max_concurrent_requests: Option<usize>,
+}
+
+fn default_request_timeout() -> u64 {
+    300 // 5 minutes default, but we won't use it
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

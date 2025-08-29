@@ -3,7 +3,6 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::info;
 use chrono::{DateTime, Utc};
 
@@ -65,11 +64,8 @@ impl HttpAgentManager {
         operation_tracker: Arc<SimpleOperationTracker>,
         maintenance_tracker: Arc<MaintenanceTracker>
     ) -> Self {
-        // FIXED: No timeout on HTTP client - let operations run as long as needed
-        let client = Client::builder()
-            .timeout(Duration::from_secs(0)) // No timeout - let operations complete
-            .build()
-            .expect("Failed to create HTTP client");
+        // No timeout - let operations run as long as needed
+        let client = Client::new();
 
         Self {
             config,
