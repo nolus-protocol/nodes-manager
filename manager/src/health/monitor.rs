@@ -145,6 +145,31 @@ impl HealthMonitor {
                 continue;
             }
 
+            // CRITICAL FIX: Skip health checks entirely for nodes in maintenance
+            if self.maintenance_tracker.is_in_maintenance(node_name).await {
+                info!("Skipping health check for {} - node in maintenance mode", node_name);
+
+                // Return a maintenance status without doing any health checks
+                let maintenance_status = HealthStatus {
+                    node_name: node_name.clone(),
+                    rpc_url: node_config.rpc_url.clone(),
+                    is_healthy: false, // Set to false so it shows as maintenance, not healthy
+                    error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
+                    last_check: Utc::now(),
+                    block_height: None,
+                    is_syncing: None,
+                    is_catching_up: false,
+                    validator_address: None,
+                    network: node_config.network.clone(),
+                    server_host: node_config.server_host.clone(),
+                    enabled: node_config.enabled,
+                    in_maintenance: true,
+                };
+
+                health_statuses.push(maintenance_status);
+                continue; // Skip to next node
+            }
+
             let task = {
                 let node_name = node_name.clone();
                 let node_config = node_config.clone();
@@ -174,16 +199,29 @@ impl HealthMonitor {
             }
         }
 
-        // Log monitoring if enabled (only for healthy nodes)
+        // Log monitoring if enabled (only for healthy nodes NOT in maintenance)
         if self.config.log_monitoring_enabled.unwrap_or(false) {
-            if let Err(e) = self.monitor_logs(&health_statuses).await {
-                error!("Log monitoring failed: {}", e);
+            let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+                .filter(|status| !status.in_maintenance)
+                .collect();
+
+            if !non_maintenance_statuses.is_empty() {
+                if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
+                    error!("Log monitoring failed: {}", e);
+                }
             }
         }
 
-        // FIXED: Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period
-        if let Err(e) = self.monitor_auto_restore_triggers(&health_statuses).await {
-            error!("Auto-restore monitoring failed: {}", e);
+        // FIXED: Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period (exclude maintenance nodes)
+        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+            .filter(|status| !status.in_maintenance)
+            .cloned()
+            .collect();
+
+        if !non_maintenance_statuses.is_empty() {
+            if let Err(e) = self.monitor_auto_restore_triggers(&non_maintenance_statuses).await {
+                error!("Auto-restore monitoring failed: {}", e);
+            }
         }
 
         Ok(health_statuses)
@@ -196,7 +234,7 @@ impl HealthMonitor {
             _ => return Ok(()), // No trigger words configured
         };
 
-        // Only check UNHEALTHY nodes for auto-restore triggers
+        // Only check UNHEALTHY nodes for auto-restore triggers (maintenance nodes already filtered out)
         let unhealthy_nodes: Vec<_> = health_statuses.iter()
             .filter(|status| !status.is_healthy && status.enabled && !status.in_maintenance)
             .collect();
@@ -493,6 +531,11 @@ impl HealthMonitor {
                 }
             }
 
+            // IMPORTANT: Skip alerts for maintenance nodes
+            (_, _, true) => {
+                debug!("Skipping health state change handling for {} - node in maintenance", status.node_name);
+            }
+
             _ => {
                 debug!("No health state change notification needed for {}", status.node_name);
             }
@@ -593,9 +636,7 @@ impl HealthMonitor {
 
     // Enhanced health check with block progression tracking
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
-        let is_in_maintenance = self.maintenance_tracker
-            .is_in_maintenance(node_name)
-            .await;
+        // REMOVED: In-function maintenance check since we now skip maintenance nodes entirely in check_all_nodes()
 
         let mut status = HealthStatus {
             node_name: node_name.to_string(),
@@ -610,13 +651,8 @@ impl HealthMonitor {
             network: node_config.network.clone(),
             server_host: node_config.server_host.clone(),
             enabled: node_config.enabled,
-            in_maintenance: is_in_maintenance,
+            in_maintenance: false, // This should never be true here since maintenance nodes are filtered out
         };
-
-        if is_in_maintenance {
-            status.error_message = Some("Node is in maintenance mode".to_string());
-            return Ok(status);
-        }
 
         match self.fetch_node_status(&node_config.rpc_url).await {
             Ok(rpc_response) => {
@@ -774,6 +810,27 @@ impl HealthMonitor {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow!("Node {} not found in configuration", node_name))?;
 
+        // Check if node is in maintenance before doing health check
+        if self.maintenance_tracker.is_in_maintenance(node_name).await {
+            info!("Force health check requested for {} - node in maintenance mode, returning maintenance status", node_name);
+
+            return Ok(HealthStatus {
+                node_name: node_name.to_string(),
+                rpc_url: node_config.rpc_url.clone(),
+                is_healthy: false,
+                error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
+                last_check: Utc::now(),
+                block_height: None,
+                is_syncing: None,
+                is_catching_up: false,
+                validator_address: None,
+                network: node_config.network.clone(),
+                server_host: node_config.server_host.clone(),
+                enabled: node_config.enabled,
+                in_maintenance: true,
+            });
+        }
+
         let status = self.check_node_health(node_name, node_config).await?;
 
         if let Err(e) = self.store_health_record(&status).await {
@@ -839,7 +896,7 @@ impl HealthMonitor {
         Ok(())
     }
 
-    async fn monitor_logs(&self, health_statuses: &[HealthStatus]) -> Result<()> {
+    async fn monitor_logs(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
         let patterns = match &self.config.log_monitoring_patterns {
             Some(patterns) if !patterns.is_empty() => patterns,
             _ => return Ok(()),

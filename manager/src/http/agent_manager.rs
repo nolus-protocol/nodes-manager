@@ -3,7 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, warn, debug};
 use chrono::{DateTime, Utc};
 
 use crate::config::{Config, HermesConfig, NodeConfig};
@@ -51,13 +51,6 @@ pub struct OperationResult {
     pub details: Option<serde_json::Value>,
 }
 
-// NEW: Agent busy status structures
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AgentBusyStatus {
-    pub busy_nodes: std::collections::HashMap<String, String>,
-    pub total_busy: usize,
-}
-
 pub struct HttpAgentManager {
     pub config: Arc<Config>,
     pub client: Client,
@@ -81,28 +74,21 @@ impl HttpAgentManager {
         }
     }
 
-    /// Execute operation with improved error handling and logging
+    /// Execute command - Agent handles everything synchronously until done
     async fn execute_operation(&self, server_name: &str, endpoint: &str, payload: Value) -> Result<Value> {
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
 
         let agent_url = format!("http://{}:{}{}", server_config.host, server_config.agent_port, endpoint);
 
-        info!("Starting operation on {}: {} (timeout: {}s)", server_name, endpoint, server_config.request_timeout_seconds);
+        info!("Starting operation on {}: {}", server_name, endpoint);
 
         let response = self.client.post(&agent_url)
             .header("Authorization", format!("Bearer {}", server_config.api_key))
             .json(&payload)
-            .timeout(std::time::Duration::from_secs(server_config.request_timeout_seconds))
             .send()
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    anyhow::anyhow!("Operation timeout on {} after {}s: {}", server_name, server_config.request_timeout_seconds, endpoint)
-                } else {
-                    anyhow::anyhow!("HTTP request failed on {}: {}", server_name, e)
-                }
-            })?;
+            .map_err(|e| anyhow::anyhow!("HTTP request failed on {}: {}", server_name, e))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -118,111 +104,7 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Operation failed on {}: {}", server_name, error_msg));
         }
 
-        info!("Operation completed successfully on {}: {}", server_name, endpoint);
         Ok(result)
-    }
-
-    // === NEW: Agent Busy Status Operations ===
-
-    pub async fn get_agent_busy_status(&self, server_name: &str) -> Result<AgentBusyStatus> {
-        let payload = json!({});
-        let result = self.execute_operation(server_name, "/status/busy", payload).await?;
-
-        if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
-            let status: AgentBusyStatus = serde_json::from_str(output)
-                .map_err(|e| anyhow::anyhow!("Failed to parse busy status: {}", e))?;
-            Ok(status)
-        } else {
-            Ok(AgentBusyStatus {
-                busy_nodes: std::collections::HashMap::new(),
-                total_busy: 0,
-            })
-        }
-    }
-
-    pub async fn cleanup_agent_operations(&self, server_name: &str, max_hours: i64) -> Result<u32> {
-        let payload = json!({"max_hours": max_hours});
-        let result = self.execute_operation(server_name, "/status/cleanup", payload).await?;
-
-        if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
-            let cleanup_result: serde_json::Value = serde_json::from_str(output)
-                .map_err(|e| anyhow::anyhow!("Failed to parse cleanup result: {}", e))?;
-
-            Ok(cleanup_result.get("cleaned_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
-        } else {
-            Ok(0)
-        }
-    }
-
-    pub async fn get_all_agents_busy_status(&self) -> Result<std::collections::HashMap<String, AgentBusyStatus>> {
-        let mut all_status = std::collections::HashMap::new();
-        let mut tasks = Vec::new();
-
-        for (server_name, _) in &self.config.servers {
-            let server_name = server_name.clone();
-            let manager = self.clone();
-
-            let task = tokio::spawn(async move {
-                let status = manager.get_agent_busy_status(&server_name).await;
-                (server_name, status)
-            });
-
-            tasks.push(task);
-        }
-
-        let results = futures::future::join_all(tasks).await;
-
-        for result in results {
-            match result {
-                Ok((server_name, Ok(status))) => {
-                    all_status.insert(server_name, status);
-                }
-                Ok((server_name, Err(e))) => {
-                    warn!("Failed to get busy status from {}: {}", server_name, e);
-                }
-                Err(e) => {
-                    error!("Task failed: {}", e);
-                }
-            }
-        }
-
-        Ok(all_status)
-    }
-
-    pub async fn cleanup_all_agent_operations(&self, max_hours: i64) -> Result<std::collections::HashMap<String, u32>> {
-        let mut cleanup_results = std::collections::HashMap::new();
-        let mut tasks = Vec::new();
-
-        for (server_name, _) in &self.config.servers {
-            let server_name = server_name.clone();
-            let manager = self.clone();
-
-            let task = tokio::spawn(async move {
-                let result = manager.cleanup_agent_operations(&server_name, max_hours).await;
-                (server_name, result)
-            });
-
-            tasks.push(task);
-        }
-
-        let results = futures::future::join_all(tasks).await;
-
-        for result in results {
-            match result {
-                Ok((server_name, Ok(cleaned_count))) => {
-                    cleanup_results.insert(server_name, cleaned_count);
-                }
-                Ok((server_name, Err(e))) => {
-                    warn!("Failed to cleanup operations on {}: {}", server_name, e);
-                    cleanup_results.insert(server_name, 0);
-                }
-                Err(e) => {
-                    error!("Cleanup task failed: {}", e);
-                }
-            }
-        }
-
-        Ok(cleanup_results)
     }
 
     // === Basic Service Operations ===
@@ -279,17 +161,19 @@ impl HttpAgentManager {
         Ok(output)
     }
 
-    // === High-Level Operations with Proper Maintenance Coordination ===
+    // === FIXED: High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
-        // 1. Check if operation is allowed (operation tracker)
-        self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
+        info!("Starting node restart operation for: {}", node_name);
 
-        // 2. Get node config
+        // CRITICAL FIX: Start both tracking BEFORE any actual work begins
+        self.operation_tracker.try_start_operation(node_name, "node_restart", None).await
+            .map_err(|e| anyhow::anyhow!("Failed to start operation tracking for {}: {}", node_name, e))?;
+
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
+        // Start maintenance tracking IMMEDIATELY after operation tracking succeeds
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
             "node_restart",
@@ -299,22 +183,139 @@ impl HttpAgentManager {
 
         if let Err(e) = maintenance_result {
             // If maintenance tracking fails, cleanup operation tracking
+            warn!("Failed to start maintenance tracking for {}: {}", node_name, e);
             self.operation_tracker.finish_operation(node_name).await;
             return Err(e);
         }
 
-        // 4. Execute the actual operation
-        let result = self.restart_node_impl(node_name).await;
+        info!("✓ Node {} is now in maintenance mode for restart", node_name);
 
-        // 5. Always cleanup both trackers (even on error)
-        self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
-        }
+        // Execute the actual operation with proper cleanup
+        let result = self.restart_node_impl(node_name).await;
+        self.cleanup_tracking(node_name, "node_restart", &result).await;
 
         result
     }
 
+    pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
+        info!("Starting node pruning operation for: {}", node_name);
+
+        // CRITICAL FIX: Start both tracking BEFORE any actual work begins
+        self.operation_tracker.try_start_operation(node_name, "pruning", None).await
+            .map_err(|e| anyhow::anyhow!("Failed to start operation tracking for {}: {}", node_name, e))?;
+
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        // Start maintenance tracking IMMEDIATELY after operation tracking succeeds
+        let maintenance_result = self.maintenance_tracker.start_maintenance(
+            node_name,
+            "pruning",
+            300, // 5 hour estimated duration for pruning
+            &node_config.server_host
+        ).await;
+
+        if let Err(e) = maintenance_result {
+            // If maintenance tracking fails, cleanup operation tracking
+            warn!("Failed to start maintenance tracking for {}: {}", node_name, e);
+            self.operation_tracker.finish_operation(node_name).await;
+            return Err(e);
+        }
+
+        info!("✓ Node {} is now in maintenance mode for pruning (estimated 5h)", node_name);
+
+        // Execute the actual operation with proper cleanup
+        let result = self.execute_node_pruning_impl(node_name).await;
+        self.cleanup_tracking(node_name, "pruning", &result).await;
+
+        result
+    }
+
+    pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        info!("Starting snapshot creation operation for: {}", node_name);
+
+        // CRITICAL FIX: Start both tracking BEFORE any actual work begins
+        self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await
+            .map_err(|e| anyhow::anyhow!("Failed to start operation tracking for {}: {}", node_name, e))?;
+
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        // Start maintenance tracking IMMEDIATELY after operation tracking succeeds
+        let maintenance_result = self.maintenance_tracker.start_maintenance(
+            node_name,
+            "snapshot_creation",
+            1440, // 24 hour estimated duration for snapshots
+            &node_config.server_host
+        ).await;
+
+        if let Err(e) = maintenance_result {
+            // If maintenance tracking fails, cleanup operation tracking
+            warn!("Failed to start maintenance tracking for {}: {}", node_name, e);
+            self.operation_tracker.finish_operation(node_name).await;
+            return Err(e);
+        }
+
+        info!("✓ Node {} is now in maintenance mode for snapshot creation (estimated 24h)", node_name);
+
+        // Execute the actual operation with proper cleanup
+        let result = self.create_node_snapshot_impl(node_name).await;
+        self.cleanup_tracking(node_name, "snapshot_creation", &result).await;
+
+        result
+    }
+
+    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        info!("Starting snapshot restore operation for: {}", node_name);
+
+        // CRITICAL FIX: Start both tracking BEFORE any actual work begins
+        self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await
+            .map_err(|e| anyhow::anyhow!("Failed to start operation tracking for {}: {}", node_name, e))?;
+
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        // Start maintenance tracking IMMEDIATELY after operation tracking succeeds
+        let maintenance_result = self.maintenance_tracker.start_maintenance(
+            node_name,
+            "snapshot_restore",
+            1440, // 24 hour estimated duration for restore
+            &node_config.server_host
+        ).await;
+
+        if let Err(e) = maintenance_result {
+            // If maintenance tracking fails, cleanup operation tracking
+            warn!("Failed to start maintenance tracking for {}: {}", node_name, e);
+            self.operation_tracker.finish_operation(node_name).await;
+            return Err(e);
+        }
+
+        info!("✓ Node {} is now in maintenance mode for snapshot restore (estimated 24h)", node_name);
+
+        // Execute the actual operation with proper cleanup
+        let result = self.restore_node_from_snapshot_impl(node_name).await;
+        self.cleanup_tracking(node_name, "snapshot_restore", &result).await;
+
+        result
+    }
+
+    // CRITICAL: Centralized cleanup function to ensure proper maintenance tracking cleanup
+    async fn cleanup_tracking<T>(&self, node_name: &str, operation_type: &str, result: &Result<T>) {
+        // Always cleanup operation tracker
+        self.operation_tracker.finish_operation(node_name).await;
+
+        // Always cleanup maintenance tracker
+        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+            warn!("Failed to end maintenance tracking for {} after {}: {}", node_name, operation_type, e);
+        } else {
+            match result {
+                Ok(_) => info!("✓ Maintenance mode ended for {} after successful {}", node_name, operation_type),
+                Err(_) => info!("✓ Maintenance mode ended for {} after failed {}", node_name, operation_type),
+            }
+        }
+    }
+
+    // Implementation methods remain the same but with better logging
     async fn restart_node_impl(&self, node_name: &str) -> Result<()> {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
@@ -322,7 +323,7 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        info!("Restarting node {}", node_name);
+        info!("Executing node restart for {} (service: {})", node_name, service_name);
 
         // Simple sequential restart
         self.stop_service(&node_config.server_host, service_name).await?;
@@ -335,42 +336,8 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Node {} failed to start after restart", node_name));
         }
 
-        info!("Node {} restarted successfully", node_name);
+        info!("✓ Node {} restarted successfully", node_name);
         Ok(())
-    }
-
-    pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
-        // 1. Check if operation is allowed (operation tracker)
-        self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
-
-        // 2. Get node config
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        // 3. Start maintenance tracking (maintenance tracker)
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
-            node_name,
-            "pruning",
-            300, // 5 hour estimated duration for pruning
-            &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
-
-        // 4. Execute the actual operation
-        let result = self.execute_node_pruning_impl(node_name).await;
-
-        // 5. Always cleanup both trackers (even on error)
-        self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
-        }
-
-        result
     }
 
     async fn execute_node_pruning_impl(&self, node_name: &str) -> Result<()> {
@@ -390,7 +357,7 @@ impl HttpAgentManager {
         let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
         let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
 
-        info!("Starting full pruning sequence for node {}", node_name);
+        info!("Executing full pruning sequence for node {} (blocks: {}, versions: {})", node_name, keep_blocks, keep_versions);
 
         // Execute pruning via agent
         let payload = json!({
@@ -403,42 +370,8 @@ impl HttpAgentManager {
 
         self.execute_operation(&node_config.server_host, "/pruning/execute", payload).await?;
 
-        info!("Full pruning sequence completed for node {}", node_name);
+        info!("✓ Full pruning sequence completed for node {}", node_name);
         Ok(())
-    }
-
-    pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // 1. Check if operation is allowed (operation tracker)
-        self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
-
-        // 2. Get node config
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        // 3. Start maintenance tracking (REDUCED timeout for fast copy)
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
-            node_name,
-            "fast_copy_snapshot",
-            60, // 1 hour for fast copy (much faster than compression)
-            &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
-
-        // 4. Execute the actual operation
-        let result = self.create_node_snapshot_impl(node_name).await;
-
-        // 5. Always cleanup both trackers (even on error)
-        self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
-        }
-
-        result
     }
 
     async fn create_node_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
@@ -458,9 +391,9 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        info!("Starting FAST COPY snapshot creation for {} via HTTP agent", node_name);
+        info!("Executing optimized snapshot creation for node {}", node_name);
 
-        // Execute snapshot creation via agent (now using fast copy method)
+        // Execute snapshot creation via agent
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
@@ -478,45 +411,11 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: "directory".to_string(), // NEW: Fast copy creates directories
+            compression_type: result["compression"].as_str().unwrap_or("gzip").to_string(),
         };
 
-        info!("FAST COPY snapshot created successfully: {} (background compression may be running)", snapshot_info.filename);
+        info!("✓ Optimized snapshot creation completed for node {}: {}", node_name, snapshot_info.filename);
         Ok(snapshot_info)
-    }
-
-    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // 1. Check if operation is allowed (operation tracker)
-        self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
-
-        // 2. Get node config
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
-
-        // 3. Start maintenance tracking (REDUCED timeout for fast copy)
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
-            node_name,
-            "fast_copy_restore",
-            60, // 1 hour for fast copy restore
-            &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            // If maintenance tracking fails, cleanup operation tracking
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
-
-        // 4. Execute the actual operation
-        let result = self.restore_node_from_snapshot_impl(node_name).await;
-
-        // 5. Always cleanup both trackers (even on error)
-        self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
-        }
-
-        result
     }
 
     async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
@@ -527,29 +426,17 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
         }
 
+        // Use node_name instead of network to find snapshots
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
-        // NEW: Look for both directory-based snapshots AND compressed files
         let find_latest_cmd = format!(
-            r#"
-            (
-                find '{}' -maxdepth 1 -type d -name '{}_*' -exec stat -c '%Y %n DIR' {{}} \;
-                find '{}' -maxdepth 1 -type f -name '{}_*.tar.gz' -exec stat -c '%Y %n FILE' {{}} \;
-            ) | sort -nr | head -1 | cut -d' ' -f2-
-            "#,
-            backup_path, node_name, backup_path, node_name
+            "find '{}' -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
+            backup_path, node_name
         );
 
-        let latest_snapshot_output = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
-        let latest_snapshot_parts: Vec<&str> = latest_snapshot_output.trim().split_whitespace().collect();
-
-        if latest_snapshot_parts.len() < 2 {
-            return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
-        }
-
-        let latest_snapshot_path = latest_snapshot_parts[0];
-        let snapshot_type = latest_snapshot_parts[1]; // "DIR" or "FILE"
+        let latest_snapshot_path = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
+        let latest_snapshot_path = latest_snapshot_path.trim();
 
         if latest_snapshot_path.is_empty() {
             return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
@@ -559,14 +446,14 @@ impl HttpAgentManager {
         let snapshot_filename = latest_snapshot_path.split('/').last()
             .ok_or_else(|| anyhow::anyhow!("Invalid snapshot path"))?;
 
-        info!("Starting FAST COPY snapshot restore for {} from {} ({})", node_name, snapshot_filename, snapshot_type);
+        info!("Executing optimized snapshot restore for node {} from: {}", node_name, snapshot_filename);
 
-        // Execute restore via agent (supports both directory and file restore)
+        // Execute restore via agent
         let payload = json!({
             "node_name": node_name,
             "deploy_path": node_config.pruning_deploy_path,
-            "snapshot_file": latest_snapshot_path, // This is now the backup directory or file path
-            "validator_backup_file": null, // Will be handled automatically by agent
+            "snapshot_file": latest_snapshot_path,
+            "validator_backup_file": null, // Will be handled by agent
             "service_name": node_config.pruning_service_name,
             "log_path": node_config.log_path
         });
@@ -580,10 +467,10 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: if snapshot_type == "DIR" { "directory".to_string() } else { "gzip".to_string() },
+            compression_type: "gzip".to_string(),
         };
 
-        info!("FAST COPY snapshot restore completed successfully: {} ({})", snapshot_filename, snapshot_type);
+        info!("✓ Optimized snapshot restore completed for node {}: {}", node_name, snapshot_filename);
         Ok(snapshot_info)
     }
 
@@ -672,7 +559,7 @@ impl HttpAgentManager {
                 Ok(false)
             }
             Err(e) => {
-                info!("Failed to check auto-restore triggers for {}: {}", node_name, e);
+                debug!("Failed to check auto-restore triggers for {}: {}", node_name, e);
                 Ok(false)
             }
         }
