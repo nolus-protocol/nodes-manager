@@ -358,7 +358,7 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: result["compression"].as_str().unwrap_or("lz4").to_string(), // CHANGED: Default to lz4
+            compression_type: result["compression"].as_str().unwrap_or("gzip").to_string(), // CHANGED: Default to gzip
         };
 
         Ok(snapshot_info)
@@ -406,12 +406,12 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
         }
 
-        // FIXED: Use node_name instead of network to find snapshots
+        // Use node_name instead of network to find snapshots
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
         let find_latest_cmd = format!(
-            "find '{}' -name '{}_*.lz4' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
+            "find '{}' -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
             backup_path, node_name
         );
 
@@ -445,7 +445,7 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: "lz4".to_string(), // CHANGED: LZ4 format
+            compression_type: "gzip".to_string(), // CHANGED: gzip format
         };
 
         Ok(snapshot_info)

@@ -28,7 +28,6 @@ pub struct PruningRequest {
     pub log_path: Option<String>,
 }
 
-// CHANGED: Removed pruning configuration from SnapshotRequest - snapshots are now separate from pruning
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
@@ -162,7 +161,7 @@ impl ApiResponse<()> {
             filename: Some(filename),
             size_bytes: Some(size_bytes),
             path: Some(path),
-            compression: Some("lz4".to_string()), // FIXED: Return lz4 instead of gzip
+            compression: Some("gzip".to_string()), // CHANGED: From lz4 to gzip
         }
     }
 }

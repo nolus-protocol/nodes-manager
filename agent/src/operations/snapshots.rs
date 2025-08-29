@@ -10,7 +10,7 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
 
     // Generate timestamp and filenames using the node_name from request
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let snapshot_filename = format!("{}_{}.lz4", request.node_name, timestamp);
+    let snapshot_filename = format!("{}_{}.tar.gz", request.node_name, timestamp);
     let snapshot_path = format!("{}/{}", request.backup_path, snapshot_filename);
     let validator_backup_path = format!("{}/validator_state_backup_{}.json", request.backup_path, timestamp);
 
@@ -29,9 +29,9 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     let validator_source = format!("{}/data/priv_validator_state.json", request.deploy_path);
     commands::copy_file_if_exists(&validator_source, &validator_backup_path).await?;
 
-    // Step 5: Create LZ4 compressed snapshot
-    info!("Creating LZ4 compressed snapshot...");
-    commands::create_lz4_archive(
+    // Step 5: Create gzip compressed snapshot using tar built-in compression
+    info!("Creating gzip compressed snapshot...");
+    commands::create_gzip_archive(
         &request.deploy_path,
         &snapshot_path,
         &["data", "wasm"]

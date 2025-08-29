@@ -37,9 +37,9 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
         commands::delete_directory(&wasm_dir).await?;
     }
 
-    // Step 5: Extract snapshot using LZ4
-    info!("Extracting LZ4 snapshot ({:.1} MB)...", file_size as f64 / 1024.0 / 1024.0);
-    commands::extract_lz4_archive(&request.snapshot_file, &request.deploy_path).await?;
+    // Step 5: Extract snapshot using gzip decompression
+    info!("Extracting gzip snapshot ({:.1} MB)...", file_size as f64 / 1024.0 / 1024.0);
+    commands::extract_gzip_archive(&request.snapshot_file, &request.deploy_path).await?;
 
     // Step 6: Verify extraction results
     let verify_data_cmd = format!("test -d '{}/data'", request.deploy_path);

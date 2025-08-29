@@ -24,8 +24,9 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 }
 
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
+    // Use explicit error handling pattern like archives
     let command = format!(
-        "cosmos-pruner prune '{}' --blocks={} --versions={} && echo 'PRUNING_SUCCESS'",
+        "((cosmos-pruner prune '{}' --blocks={} --versions={} && echo 'PRUNING_SUCCESS') || echo 'PRUNING_FAILED')",
         deploy_path, keep_blocks, keep_versions
     );
 
@@ -40,16 +41,13 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if output.status.success() && stdout.contains("PRUNING_SUCCESS") {
+    if stdout.contains("PRUNING_SUCCESS") {
         info!("Cosmos-pruner completed successfully");
         Ok(format!("Cosmos-pruner completed successfully\nOutput: {}", stdout.trim()))
+    } else if stdout.contains("PRUNING_FAILED") {
+        Err(anyhow!("Cosmos-pruner failed\nStderr: {}", stderr))
     } else {
-        let error_msg = format!(
-            "Cosmos-pruner failed - Exit code: {:?}\nStderr: {}\nStdout: {}",
-            output.status.code(), stderr.trim(), stdout.trim()
-        );
-        error!("{}", error_msg);
-        Err(anyhow!(error_msg))
+        Err(anyhow!("Pruning operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
     }
 }
 
@@ -86,7 +84,7 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
-pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
+pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
     if let Some(parent_dir) = std::path::Path::new(target_file).parent() {
@@ -95,12 +93,13 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
         }
     }
 
+    // Use tar with built-in gzip compression and explicit error handling
     let command = format!(
-        "cd '{}' && tar -cf - {} | lz4 -z -c > '{}' && echo 'ARCHIVE_SUCCESS'",
-        source_dir, dirs, target_file
+        "(cd '{}' || (echo 'ARCHIVE_CD_FAIL'; exit 1)) && ((tar -czf '{}' {} && echo 'ARCHIVE_SUCCESS') || echo 'ARCHIVE_FAILED')",
+        source_dir, target_file, dirs
     );
 
-    info!("Creating LZ4 archive: {}", command);
+    info!("Creating gzip archive: {}", command);
 
     let output = AsyncCommand::new("sh")
         .arg("-c")
@@ -111,32 +110,28 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if output.status.success() && stdout.contains("ARCHIVE_SUCCESS") {
-        info!("LZ4 archive created successfully");
+    if stdout.contains("ARCHIVE_SUCCESS") {
+        info!("Archive created successfully");
         Ok(())
+    } else if stdout.contains("ARCHIVE_CD_FAIL") {
+        Err(anyhow!("Failed to change to source directory: {}", source_dir))
+    } else if stdout.contains("ARCHIVE_FAILED") {
+        Err(anyhow!("Archive creation failed\nStderr: {}", stderr))
     } else {
-        let error_msg = format!(
-            "LZ4 archive creation failed - Exit code: {:?}\nStderr: {}\nStdout: {}",
-            output.status.code(), stderr.trim(), stdout.trim()
-        );
-        error!("{}", error_msg);
-        Err(anyhow!(error_msg))
+        Err(anyhow!("Archive operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
     }
 }
 
-pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
-    let verify_command = format!("test -r '{}'", archive_file);
-    execute_shell_command(&verify_command).await
-        .map_err(|_| anyhow!("Archive file does not exist or is not readable: {}", archive_file))?;
-
+pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Result<()> {
     create_directory(target_dir).await?;
 
+    // Use tar with built-in gzip decompression and explicit error handling
     let command = format!(
-        "cd '{}' && lz4 -dc '{}' | tar -xf - && echo 'EXTRACT_SUCCESS'",
+        "(cd '{}' || (echo 'EXTRACT_CD_FAIL'; exit 1)) && ((tar -xzf '{}' && echo 'EXTRACT_SUCCESS') || echo 'EXTRACT_FAILED')",
         target_dir, archive_file
     );
 
-    info!("Extracting LZ4 archive: {}", command);
+    info!("Extracting gzip archive: {}", command);
 
     let output = AsyncCommand::new("sh")
         .arg("-c")
@@ -147,17 +142,25 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if output.status.success() && stdout.contains("EXTRACT_SUCCESS") {
-        info!("LZ4 archive extracted successfully");
+    if stdout.contains("EXTRACT_SUCCESS") {
+        info!("Archive extracted successfully");
         Ok(())
+    } else if stdout.contains("EXTRACT_CD_FAIL") {
+        Err(anyhow!("Failed to change to target directory: {}", target_dir))
+    } else if stdout.contains("EXTRACT_FAILED") {
+        Err(anyhow!("Archive extraction failed\nStderr: {}", stderr))
     } else {
-        let error_msg = format!(
-            "LZ4 archive extraction failed - Exit code: {:?}\nStderr: {}\nStdout: {}",
-            output.status.code(), stderr.trim(), stdout.trim()
-        );
-        error!("{}", error_msg);
-        Err(anyhow!(error_msg))
+        Err(anyhow!("Extract operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
     }
+}
+
+// Keep old function names for backward compatibility
+pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
+    create_gzip_archive(source_dir, target_file, directories).await
+}
+
+pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
+    extract_gzip_archive(archive_file, target_dir).await
 }
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
