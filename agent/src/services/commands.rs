@@ -25,7 +25,7 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     let command = format!(
-        "if cosmos-pruner prune '{}' --blocks={} --versions={}; then echo 'PRUNING_SUCCESS'; else echo 'PRUNING_FAILED'; fi",
+        "cosmos-pruner prune '{}' --blocks={} --versions={} && echo 'PRUNING_SUCCESS'",
         deploy_path, keep_blocks, keep_versions
     );
 
@@ -43,10 +43,8 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
     if stdout.contains("PRUNING_SUCCESS") {
         info!("Cosmos-pruner completed successfully");
         Ok(format!("Cosmos-pruner completed successfully\nOutput: {}", stdout.trim()))
-    } else if stdout.contains("PRUNING_FAILED") {
-        Err(anyhow!("Cosmos-pruner failed\nStderr: {}", stderr))
     } else {
-        Err(anyhow!("Pruning operation completed with unknown status\nStdout: {}\nStderr: {}", stdout, stderr))
+        Err(anyhow!("Cosmos-pruner failed or did not complete properly\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()))
     }
 }
 
