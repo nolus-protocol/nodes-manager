@@ -82,9 +82,26 @@ impl SnapshotManager {
             error!("Failed to end maintenance mode for {}: {}", node_name, e);
         }
 
-        // Send notification based on result
+        // Handle result and cleanup
         match &snapshot_result {
-            Ok(_) => {
+            Ok(snapshot_info) => {
+                info!("Snapshot created successfully: {}", snapshot_info.filename);
+
+                // NEW: Automatic cleanup based on retention count
+                if let Some(retention_count) = node_config.snapshot_retention_count {
+                    info!("Running automatic cleanup for {} (keeping {} snapshots)", node_name, retention_count);
+                    match self.cleanup_old_snapshots(node_name, retention_count as u32).await {
+                        Ok(deleted_count) => {
+                            if deleted_count > 0 {
+                                info!("Automatic cleanup: deleted {} old snapshots for {}", deleted_count, node_name);
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Automatic cleanup failed for {}: {}", node_name, e);
+                        }
+                    }
+                }
+
                 if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_creation").await {
                     warn!("Failed to send completion notification: {}", e);
                 }
@@ -165,7 +182,7 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // FIXED: List LZ4 snapshots using node_name instead of network
+        // List LZ4 snapshots using node_name instead of network
         let list_cmd = format!(
             "find '{}' -name '{}_*.lz4' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
             backup_path, node_name
@@ -189,7 +206,7 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // FIXED: Parse timestamp from filename using node_name as prefix
+                // Parse timestamp from filename using node_name as prefix
                 let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_name)) {
                     let ts_clean = ts_part.strip_suffix(".lz4").unwrap_or(ts_part);
 
@@ -262,7 +279,7 @@ impl SnapshotManager {
                 }
             }
 
-            // FIXED: Also clean up associated validator state backup files using node_name
+            // Also clean up associated validator state backup files using node_name
             if let Some(backup_path) = &node_config.snapshot_backup_path {
                 let timestamp_from_filename = snapshot.filename
                     .strip_prefix(&format!("{}_", node_name))
@@ -369,7 +386,7 @@ impl SnapshotManager {
                 "operation_status": status,
                 "operation_type": operation,
                 "server_host": server_host_clone,
-                "compression_type": "lz4", // CHANGED: Always LZ4 now
+                "compression_type": "lz4",
                 "connection_type": "http_agent",
                 "timestamp": Utc::now().to_rfc3339()
             })),

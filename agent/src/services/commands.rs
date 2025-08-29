@@ -101,7 +101,7 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     info!("Creating LZ4 archive: cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
           source_dir, dirs, target_file);
 
-    // This is the fix: just get status, don't try to manage streams
+    // REVERTED: Back to the working approach - just get status, don't capture streams
     let status = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
@@ -150,7 +150,7 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     info!("Extracting LZ4 archive: cd '{}' && lz4 -dc '{}' | tar -xf -",
           target_dir, archive_file);
 
-    // This is the fix: just get status, don't try to manage streams
+    // REVERTED: Back to the working approach - just get status, don't capture streams
     let status = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)

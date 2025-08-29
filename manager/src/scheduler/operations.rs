@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub struct MaintenanceScheduler {
@@ -38,37 +38,84 @@ impl MaintenanceScheduler {
     }
 
     pub async fn start(&self) -> Result<()> {
-        info!("Starting maintenance scheduler");
+        info!("Starting maintenance scheduler with 6-field cron format (sec min hour day month dow)");
+        let mut scheduled_count = 0;
 
         // Schedule pruning operations
         for (node_name, node_config) in &self.config.nodes {
             if let Some(schedule) = &node_config.pruning_schedule {
                 if node_config.pruning_enabled.unwrap_or(false) {
-                    self.schedule_pruning_job(node_name.clone(), schedule.clone()).await?;
+                    info!("Attempting to schedule pruning for {}: '{}'", node_name, schedule);
+                    match self.schedule_pruning_job(node_name.clone(), schedule.clone()).await {
+                        Ok(_) => {
+                            scheduled_count += 1;
+                            info!("✓ Scheduled pruning for {}: {}", node_name, schedule);
+                        }
+                        Err(e) => {
+                            error!("✗ Failed to schedule pruning for {}: {} (schedule: {})", node_name, e, schedule);
+                        }
+                    }
+                } else {
+                    info!("Pruning disabled for {}, skipping schedule", node_name);
                 }
+            } else {
+                info!("No pruning schedule configured for {}", node_name);
             }
 
             // Schedule snapshot operations
             if let Some(schedule) = &node_config.snapshot_schedule {
                 if node_config.snapshots_enabled.unwrap_or(false) {
-                    self.schedule_snapshot_job(node_name.clone(), schedule.clone()).await?;
+                    info!("Attempting to schedule snapshot for {}: '{}'", node_name, schedule);
+                    match self.schedule_snapshot_job(node_name.clone(), schedule.clone()).await {
+                        Ok(_) => {
+                            scheduled_count += 1;
+                            info!("✓ Scheduled snapshot for {}: {}", node_name, schedule);
+                        }
+                        Err(e) => {
+                            error!("✗ Failed to schedule snapshot for {}: {} (schedule: {})", node_name, e, schedule);
+                        }
+                    }
+                } else {
+                    info!("Snapshots disabled for {}, skipping schedule", node_name);
                 }
+            } else {
+                info!("No snapshot schedule configured for {}", node_name);
             }
         }
 
         // Schedule Hermes restart operations
         for (hermes_name, hermes_config) in &self.config.hermes {
             if let Some(schedule) = &hermes_config.restart_schedule {
-                self.schedule_hermes_restart_job(hermes_name.clone(), schedule.clone()).await?;
+                info!("Attempting to schedule Hermes restart for {}: '{}'", hermes_name, schedule);
+                match self.schedule_hermes_restart_job(hermes_name.clone(), schedule.clone()).await {
+                    Ok(_) => {
+                        scheduled_count += 1;
+                        info!("✓ Scheduled Hermes restart for {}: {}", hermes_name, schedule);
+                    }
+                    Err(e) => {
+                        error!("✗ Failed to schedule Hermes restart for {}: {} (schedule: {})", hermes_name, e, schedule);
+                    }
+                }
+            } else {
+                info!("No restart schedule configured for Hermes {}", hermes_name);
             }
         }
 
-        self.scheduler.start().await?;
-        info!("Maintenance scheduler started");
+        if scheduled_count > 0 {
+            self.scheduler.start().await?;
+            info!("✓ Maintenance scheduler started successfully with {} jobs", scheduled_count);
+        } else {
+            warn!("No scheduled jobs configured - scheduler not started");
+        }
+
         Ok(())
     }
 
     async fn schedule_pruning_job(&self, node_name: String, schedule: String) -> Result<()> {
+        // FIXED: Validate 6-field cron expression
+        self.validate_6_field_cron(&schedule)
+            .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
+
         let http_manager = self.http_manager.clone();
         let config = self.config.clone();
         let database = self.database.clone();
@@ -81,7 +128,7 @@ impl MaintenanceScheduler {
             let node_name = node_name_clone.clone();
 
             Box::pin(async move {
-                info!("Starting scheduled pruning for {}", node_name);
+                info!("🔧 Executing scheduled pruning for {}", node_name);
 
                 let operation_id = Uuid::new_v4().to_string();
                 let operation = MaintenanceOperation {
@@ -103,7 +150,7 @@ impl MaintenanceScheduler {
                 if let Some(node_config) = config.nodes.get(&node_name) {
                     match http_manager.run_pruning(node_config).await {
                         Ok(_) => {
-                            info!("Scheduled pruning completed for {}", node_name);
+                            info!("✓ Scheduled pruning completed for {}", node_name);
                             let mut completed_operation = operation;
                             completed_operation.status = "completed".to_string();
                             completed_operation.completed_at = Some(Utc::now());
@@ -113,7 +160,7 @@ impl MaintenanceScheduler {
                             }
                         }
                         Err(e) => {
-                            error!("Scheduled pruning failed for {}: {}", node_name, e);
+                            error!("✗ Scheduled pruning failed for {}: {}", node_name, e);
                             let mut failed_operation = operation;
                             failed_operation.status = "failed".to_string();
                             failed_operation.completed_at = Some(Utc::now());
@@ -126,14 +173,20 @@ impl MaintenanceScheduler {
                     }
                 }
             })
-        })?;
+        })
+        .map_err(|e| anyhow!("Failed to create pruning job for '{}': {}", schedule, e))?;
 
-        self.scheduler.add(job).await?;
-        info!("Scheduled pruning job for {}: {}", node_name, schedule);
+        self.scheduler.add(job).await
+            .map_err(|e| anyhow!("Failed to add pruning job to scheduler: {}", e))?;
+
         Ok(())
     }
 
     async fn schedule_snapshot_job(&self, node_name: String, schedule: String) -> Result<()> {
+        // FIXED: Validate 6-field cron expression
+        self.validate_6_field_cron(&schedule)
+            .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
+
         let snapshot_manager = self.snapshot_manager.clone();
         let database = self.database.clone();
         let node_name_clone = node_name.clone();
@@ -144,7 +197,7 @@ impl MaintenanceScheduler {
             let node_name = node_name_clone.clone();
 
             Box::pin(async move {
-                info!("Starting scheduled snapshot creation for {}", node_name);
+                info!("📸 Executing scheduled snapshot creation for {}", node_name);
 
                 let operation_id = Uuid::new_v4().to_string();
                 let operation = MaintenanceOperation {
@@ -165,7 +218,7 @@ impl MaintenanceScheduler {
 
                 match snapshot_manager.create_snapshot(&node_name).await {
                     Ok(_) => {
-                        info!("Scheduled snapshot completed for {}", node_name);
+                        info!("✓ Scheduled snapshot completed for {}", node_name);
                         let mut completed_operation = operation;
                         completed_operation.status = "completed".to_string();
                         completed_operation.completed_at = Some(Utc::now());
@@ -175,7 +228,7 @@ impl MaintenanceScheduler {
                         }
                     }
                     Err(e) => {
-                        error!("Scheduled snapshot failed for {}: {}", node_name, e);
+                        error!("✗ Scheduled snapshot failed for {}: {}", node_name, e);
                         let mut failed_operation = operation;
                         failed_operation.status = "failed".to_string();
                         failed_operation.completed_at = Some(Utc::now());
@@ -187,14 +240,20 @@ impl MaintenanceScheduler {
                     }
                 }
             })
-        })?;
+        })
+        .map_err(|e| anyhow!("Failed to create snapshot job for '{}': {}", schedule, e))?;
 
-        self.scheduler.add(job).await?;
-        info!("Scheduled snapshot job for {}: {}", node_name, schedule);
+        self.scheduler.add(job).await
+            .map_err(|e| anyhow!("Failed to add snapshot job to scheduler: {}", e))?;
+
         Ok(())
     }
 
     async fn schedule_hermes_restart_job(&self, hermes_name: String, schedule: String) -> Result<()> {
+        // FIXED: Validate 6-field cron expression
+        self.validate_6_field_cron(&schedule)
+            .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
+
         let http_manager = self.http_manager.clone();
         let config = self.config.clone();
         let database = self.database.clone();
@@ -207,7 +266,7 @@ impl MaintenanceScheduler {
             let hermes_name = hermes_name_clone.clone();
 
             Box::pin(async move {
-                info!("Starting scheduled Hermes restart for {}", hermes_name);
+                info!("🔄 Executing scheduled Hermes restart for {}", hermes_name);
 
                 let operation_id = Uuid::new_v4().to_string();
                 let operation = MaintenanceOperation {
@@ -229,7 +288,7 @@ impl MaintenanceScheduler {
                 if let Some(hermes_config) = config.hermes.get(&hermes_name) {
                     match http_manager.restart_hermes(hermes_config).await {
                         Ok(_) => {
-                            info!("Scheduled Hermes restart completed for {}", hermes_name);
+                            info!("✓ Scheduled Hermes restart completed for {}", hermes_name);
                             let mut completed_operation = operation;
                             completed_operation.status = "completed".to_string();
                             completed_operation.completed_at = Some(Utc::now());
@@ -239,7 +298,7 @@ impl MaintenanceScheduler {
                             }
                         }
                         Err(e) => {
-                            error!("Scheduled Hermes restart failed for {}: {}", hermes_name, e);
+                            error!("✗ Scheduled Hermes restart failed for {}: {}", hermes_name, e);
                             let mut failed_operation = operation;
                             failed_operation.status = "failed".to_string();
                             failed_operation.completed_at = Some(Utc::now());
@@ -252,10 +311,139 @@ impl MaintenanceScheduler {
                     }
                 }
             })
-        })?;
+        })
+        .map_err(|e| anyhow!("Failed to create Hermes restart job for '{}': {}", schedule, e))?;
 
-        self.scheduler.add(job).await?;
-        info!("Scheduled Hermes restart job for {}: {}", hermes_name, schedule);
+        self.scheduler.add(job).await
+            .map_err(|e| anyhow!("Failed to add Hermes restart job to scheduler: {}", e))?;
+
         Ok(())
+    }
+
+    // FIXED: Validate 6-field cron expression (sec min hour day month dow)
+    fn validate_6_field_cron(&self, schedule: &str) -> Result<()> {
+        let parts: Vec<&str> = schedule.split_whitespace().collect();
+
+        if parts.len() != 6 {
+            return Err(anyhow!("tokio-cron-scheduler requires exactly 6 fields: second minute hour day month dayofweek. Got {} fields: '{}'", parts.len(), schedule));
+        }
+
+        // Basic validation of each field
+        self.validate_cron_field(parts[0], "second", 0, 59)?;
+        self.validate_cron_field(parts[1], "minute", 0, 59)?;
+        self.validate_cron_field(parts[2], "hour", 0, 23)?;
+        self.validate_cron_field(parts[3], "day", 1, 31)?;
+        self.validate_cron_field(parts[4], "month", 1, 12)?;
+        self.validate_cron_field(parts[5], "dayofweek", 0, 7)?; // 0 and 7 both = Sunday
+
+        info!("Validated 6-field cron: '{}' → sec:{} min:{} hour:{} day:{} month:{} dow:{}",
+              schedule, parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]);
+
+        Ok(())
+    }
+
+    fn validate_cron_field(&self, field: &str, name: &str, min: u32, max: u32) -> Result<()> {
+        if field == "*" || field == "?" {
+            return Ok(());
+        }
+
+        // Handle ranges like "1-5"
+        if field.contains('-') {
+            let range: Vec<&str> = field.split('-').collect();
+            if range.len() == 2 {
+                let start = range[0].parse::<u32>()
+                    .map_err(|_| anyhow!("Invalid {} range start: {}", name, range[0]))?;
+                let end = range[1].parse::<u32>()
+                    .map_err(|_| anyhow!("Invalid {} range end: {}", name, range[1]))?;
+
+                if start < min || start > max || end < min || end > max {
+                    return Err(anyhow!("{} range {}-{} is outside valid range {}-{}", name, start, end, min, max));
+                }
+                return Ok(());
+            }
+        }
+
+        // Handle lists like "1,3,5"
+        if field.contains(',') {
+            for part in field.split(',') {
+                let value = part.parse::<u32>()
+                    .map_err(|_| anyhow!("Invalid {} value in list: {}", name, part))?;
+                if value < min || value > max {
+                    return Err(anyhow!("{} value {} is outside valid range {}-{}", name, value, min, max));
+                }
+            }
+            return Ok(());
+        }
+
+        // Handle step values like "*/5"
+        if field.starts_with("*/") {
+            let step = field[2..].parse::<u32>()
+                .map_err(|_| anyhow!("Invalid {} step value: {}", name, &field[2..]))?;
+            if step == 0 {
+                return Err(anyhow!("{} step value cannot be 0", name));
+            }
+            return Ok(());
+        }
+
+        // Single number
+        let value = field.parse::<u32>()
+            .map_err(|_| anyhow!("Invalid {} value: {}", name, field))?;
+
+        if value < min || value > max {
+            return Err(anyhow!("{} value {} is outside valid range {}-{}", name, value, min, max));
+        }
+
+        Ok(())
+    }
+
+    // Get scheduled operations info
+    pub async fn get_scheduled_operations(&self) -> Result<serde_json::Value> {
+        let mut scheduled = Vec::new();
+
+        // Collect scheduled operations from config
+        for (node_name, node_config) in &self.config.nodes {
+            if node_config.pruning_enabled.unwrap_or(false) {
+                if let Some(schedule) = &node_config.pruning_schedule {
+                    scheduled.push(serde_json::json!({
+                        "target": node_name,
+                        "type": "pruning",
+                        "schedule": schedule,
+                        "enabled": true,
+                        "cron_format": "6-field (sec min hour day month dow)"
+                    }));
+                }
+            }
+
+            if node_config.snapshots_enabled.unwrap_or(false) {
+                if let Some(schedule) = &node_config.snapshot_schedule {
+                    scheduled.push(serde_json::json!({
+                        "target": node_name,
+                        "type": "snapshot",
+                        "schedule": schedule,
+                        "enabled": true,
+                        "cron_format": "6-field (sec min hour day month dow)"
+                    }));
+                }
+            }
+        }
+
+        for (hermes_name, hermes_config) in &self.config.hermes {
+            if let Some(schedule) = &hermes_config.restart_schedule {
+                scheduled.push(serde_json::json!({
+                    "target": hermes_name,
+                    "type": "hermes_restart",
+                    "schedule": schedule,
+                    "enabled": true,
+                    "cron_format": "6-field (sec min hour day month dow)"
+                }));
+            }
+        }
+
+        Ok(serde_json::json!({
+            "scheduled": scheduled,
+            "active": [],
+            "total_scheduled": scheduled.len(),
+            "cron_format": "6-field tokio-cron-scheduler format: second minute hour day month dayofweek"
+        }))
     }
 }
