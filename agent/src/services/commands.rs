@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -33,36 +33,58 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     info!("Executing cosmos-pruner: {}", command);
 
-    // Use the simple .output() approach for cosmos-pruner to avoid pipe issues
-    let output = AsyncCommand::new("sh")
+    let mut child = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to execute cosmos-pruner: {}", e))?;
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    info!("Cosmos-pruner process started, reading output...");
 
-    // Log the output line by line
-    for line in stdout.lines() {
-        if !line.trim().is_empty() {
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // Create readers but don't spawn separate tasks
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    // Read output in a way that doesn't block child.wait()
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
+        while let Ok(Some(line)) = stdout_reader.next_line().await {
             info!("cosmos-pruner stdout: {}", line);
+            lines.push(line);
         }
-    }
-    for line in stderr.lines() {
-        if !line.trim().is_empty() {
+        lines.join("\n")
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = Vec::new();
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
             info!("cosmos-pruner stderr: {}", line);
+            lines.push(line);
         }
-    }
+        lines.join("\n")
+    });
 
-    info!("Cosmos-pruner completed with status: {:?}", output.status);
+    // Wait for process completion
+    let status = child.wait().await
+        .map_err(|e| anyhow!("Failed to wait for cosmos-pruner: {}", e))?;
 
-    if output.status.success() {
+    info!("Cosmos-pruner completed with status: {:?}", status);
+
+    // Collect any remaining output
+    let _stdout_output = stdout_task.await.unwrap_or_default();
+    let _stderr_output = stderr_task.await.unwrap_or_default();
+
+    if status.success() {
         info!("Cosmos-pruner execution completed successfully");
         Ok("Cosmos-pruner completed successfully".to_string())
     } else {
-        let error_msg = format!("Cosmos-pruner failed with exit code: {:?}", output.status.code());
+        let error_msg = format!("Cosmos-pruner failed with exit code: {:?}", status.code());
         Err(anyhow!(error_msg))
     }
 }
@@ -100,10 +122,11 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
+// FIXED: Simplified LZ4 archive creation to prevent hanging
 pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
-    // Simplified command without complex piping - let tar and lz4 run to completion
+    // FIXED: Simplified command without complex redirection that causes hanging
     let command = format!(
         "cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
         source_dir, dirs, target_file
@@ -114,42 +137,17 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
     info!("Target file: {}", target_file);
     info!("Directories to archive: {:?}", directories);
 
-    // Use .output() to avoid pipe handling issues
-    let output = AsyncCommand::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to execute LZ4 archive creation: {}", e))?;
+    // FIXED: Use simple execute_shell_command instead of complex stream handling
+    let output = execute_shell_command(&command).await?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Log any output
-    for line in stdout.lines() {
-        if !line.trim().is_empty() {
-            info!("lz4-archive stdout: {}", line);
-        }
-    }
-    for line in stderr.lines() {
-        if !line.trim().is_empty() {
-            info!("lz4-archive stderr: {}", line);
-        }
-    }
-
-    info!("LZ4 archive creation completed with status: {:?}", output.status);
-
-    if output.status.success() {
-        info!("LZ4 archive creation completed successfully: {}", target_file);
-        Ok(())
-    } else {
-        let error_msg = format!("LZ4 archive creation failed with exit code: {:?}", output.status.code());
-        Err(anyhow!(error_msg))
-    }
+    info!("LZ4 archive creation completed successfully: {}", target_file);
+    debug!("LZ4 output: {}", output);
+    Ok(())
 }
 
+// FIXED: Simplified LZ4 archive extraction to prevent hanging
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
-    // Simplified command without complex piping
+    // FIXED: Simplified command without complex redirection
     let command = format!(
         "cd '{}' && lz4 -dc '{}' | tar -xf -",
         target_dir, archive_file
@@ -159,117 +157,12 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     info!("Archive file: {}", archive_file);
     info!("Target directory: {}", target_dir);
 
-    // Use .output() to avoid pipe handling issues
-    let output = AsyncCommand::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to execute LZ4 archive extraction: {}", e))?;
+    // FIXED: Use simple execute_shell_command instead of complex stream handling
+    let output = execute_shell_command(&command).await?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Log any output
-    for line in stdout.lines() {
-        if !line.trim().is_empty() {
-            info!("lz4-extract stdout: {}", line);
-        }
-    }
-    for line in stderr.lines() {
-        if !line.trim().is_empty() {
-            info!("lz4-extract stderr: {}", line);
-        }
-    }
-
-    info!("LZ4 archive extraction completed with status: {:?}", output.status);
-
-    if output.status.success() {
-        info!("LZ4 archive extraction completed successfully to: {}", target_dir);
-        Ok(())
-    } else {
-        let error_msg = format!("LZ4 archive extraction failed with exit code: {:?}", output.status.code());
-        Err(anyhow!(error_msg))
-    }
-}
-
-// Keep this function for monitoring with progress updates during long operations
-pub async fn create_lz4_archive_with_progress_monitoring(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
-    let dirs = directories.join(" ");
-
-    // Create a script file to monitor progress
-    let script_content = format!(
-        r#"#!/bin/bash
-cd '{}'
-echo "Starting LZ4 compression..."
-tar -cf - {} | lz4 -z -c > '{}'
-echo "LZ4 compression completed with exit code: $?"
-"#,
-        source_dir, dirs, target_file
-    );
-
-    let script_path = format!("/tmp/lz4_archive_{}.sh", std::process::id());
-    tokio::fs::write(&script_path, script_content).await?;
-
-    let chmod_result = AsyncCommand::new("chmod")
-        .arg("+x")
-        .arg(&script_path)
-        .output()
-        .await?;
-
-    if !chmod_result.status.success() {
-        let _ = tokio::fs::remove_file(&script_path).await;
-        return Err(anyhow!("Failed to make script executable"));
-    }
-
-    info!("Creating LZ4 archive with progress monitoring");
-    info!("Source directory: {}", source_dir);
-    info!("Target file: {}", target_file);
-    info!("Directories to archive: {:?}", directories);
-
-    // Execute the script and monitor progress
-    let mut child = AsyncCommand::new("bash")
-        .arg(&script_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| anyhow!("Failed to spawn LZ4 script: {}", e))?;
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    // Monitor output without blocking child.wait()
-    let stdout_handle = tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            info!("lz4-script: {}", line);
-        }
-    });
-
-    let stderr_handle = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            info!("lz4-script-err: {}", line);
-        }
-    });
-
-    // Wait for the script to complete
-    let status = child.wait().await.map_err(|e| anyhow!("Failed to wait for LZ4 script: {}", e))?;
-
-    // Clean up
-    let _ = tokio::fs::remove_file(&script_path).await;
-    let _ = stdout_handle.await;
-    let _ = stderr_handle.await;
-
-    info!("LZ4 script completed with status: {:?}", status);
-
-    if status.success() {
-        info!("LZ4 archive creation completed successfully: {}", target_file);
-        Ok(())
-    } else {
-        let error_msg = format!("LZ4 archive creation failed with exit code: {:?}", status.code());
-        Err(anyhow!(error_msg))
-    }
+    info!("LZ4 archive extraction completed successfully to: {}", target_dir);
+    debug!("LZ4 output: {}", output);
+    Ok(())
 }
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {

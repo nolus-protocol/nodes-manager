@@ -28,6 +28,7 @@ pub struct PruningRequest {
     pub log_path: Option<String>,
 }
 
+// FIXED: Added pruning configuration to SnapshotRequest
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
@@ -35,6 +36,9 @@ pub struct SnapshotRequest {
     pub backup_path: String,
     pub service_name: String,
     pub log_path: Option<String>,
+    // FIXED: Add pruning configuration instead of hardcoding
+    pub pruning_keep_blocks: Option<u64>,
+    pub pruning_keep_versions: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

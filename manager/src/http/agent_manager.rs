@@ -340,13 +340,15 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // Execute snapshot creation via agent
+        // FIXED: Pass the actual pruning configuration to the agent
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
             "backup_path": backup_path,
             "service_name": service_name,
-            "log_path": node_config.log_path
+            "log_path": node_config.log_path,
+            "pruning_keep_blocks": node_config.pruning_keep_blocks,
+            "pruning_keep_versions": node_config.pruning_keep_versions
         });
 
         let result = self.execute_operation(&node_config.server_host, "/snapshot/create", payload).await?;

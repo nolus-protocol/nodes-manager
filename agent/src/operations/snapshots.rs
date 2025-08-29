@@ -15,6 +15,12 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     let snapshot_path = format!("{}/{}", request.backup_path, snapshot_filename);
     let validator_backup_path = format!("{}/validator_state_backup_{}.json", request.backup_path, timestamp);
 
+    // FIXED: Use configured pruning values with proper defaults
+    let keep_blocks = request.pruning_keep_blocks.unwrap_or(50000);
+    let keep_versions = request.pruning_keep_versions.unwrap_or(100);
+
+    info!("Using pruning configuration: blocks={}, versions={}", keep_blocks, keep_versions);
+
     // Step 1: Create backup directory
     info!("Step 1: Creating backup directory: {}", request.backup_path);
     commands::create_directory(&request.backup_path).await?;
@@ -31,9 +37,9 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
         info!("Step 3: No log path configured, skipping log truncation");
     }
 
-    // Step 4: Execute cosmos-pruner before snapshot (with default values)
-    info!("Step 4: Executing cosmos-pruner before snapshot");
-    let pruning_output = commands::execute_cosmos_pruner(&request.deploy_path, 50000, 100).await?;
+    // Step 4: Execute cosmos-pruner before snapshot (FIXED: use configured values)
+    info!("Step 4: Executing cosmos-pruner before snapshot with configured values");
+    let pruning_output = commands::execute_cosmos_pruner(&request.deploy_path, keep_blocks, keep_versions).await?;
     info!("Pruning completed: {}", pruning_output.len());
 
     // Step 5: Backup validator state
@@ -41,8 +47,8 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     let validator_source = format!("{}/data/priv_validator_state.json", request.deploy_path);
     commands::copy_file_if_exists(&validator_source, &validator_backup_path).await?;
 
-    // Step 6: Create LZ4 compressed snapshot (now with streaming progress)
-    info!("Step 6: Creating LZ4 compressed snapshot (this will show real-time progress)");
+    // Step 6: Create LZ4 compressed snapshot (FIXED: now uses simplified command that won't hang)
+    info!("Step 6: Creating LZ4 compressed snapshot");
     info!("Starting LZ4 compression of data and wasm directories...");
     commands::create_lz4_archive(
         &request.deploy_path,
