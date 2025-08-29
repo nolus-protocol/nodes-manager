@@ -4,20 +4,6 @@ use tokio::process::Command as AsyncCommand;
 use std::process::Stdio;
 use tracing::{debug, info, warn};
 
-// ========================================================================
-// WARNING: DO NOT MODIFY THE LZ4 FUNCTIONS BELOW (create_lz4_archive, extract_lz4_archive)
-//
-// These functions use the working two-step approach:
-// - Step 1: tar command (create/extract tar file)
-// - Step 2: lz4 command (compress/decompress)
-// - .status() instead of .output() for both steps
-// - Stdio::null() for all streams on both steps
-//
-// This eliminates pipeline blocking issues. Any changes to this approach
-// will cause workflow hanging issues. If modifications are needed, test
-// thoroughly on a separate branch first.
-// ========================================================================
-
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
 
@@ -38,33 +24,29 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
     }
 }
 
-// ========================================================================
-// FIXED: Apply same working approach as LZ4 functions
-// Use .status() + Stdio::null() to prevent stream capture blocking
-// ========================================================================
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     let command = format!(
-        "cosmos-pruner prune {} --blocks={} --versions={}",
+        "cosmos-pruner prune {} --blocks={} --versions={} && echo 'PRUNING_COMPLETE'",
         deploy_path, keep_blocks, keep_versions
     );
 
     info!("Executing cosmos-pruner: {}", command);
 
-    // FIXED: Use same approach as working LZ4 functions
-    let status = AsyncCommand::new("sh")
+    let mut child = AsyncCommand::new("sh")
         .arg("-c")
         .arg(&command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()  // Use .status() NOT .output()
-        .await?;
+        .spawn()?;
+
+    let status = child.wait().await?;
 
     if status.success() {
-        info!("Cosmos-pruner completed successfully");
+        info!("Cosmos-pruner completed successfully with exit code: {:?}", status.code());
         Ok("Cosmos-pruner completed successfully".to_string())
     } else {
-        let error_msg = "Cosmos-pruner execution failed";
+        let error_msg = format!("Cosmos-pruner failed with exit code: {:?}", status.code());
         Err(anyhow!(error_msg))
     }
 }
@@ -102,72 +84,39 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
-// ========================================================================
-// WORKING LZ4 ARCHIVE FUNCTION - TWO-STEP APPROACH
-// Uses .status() + Stdio::null() for both steps - eliminates pipeline issues!
-// ========================================================================
 pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
 
-    // Create the target directory if it doesn't exist
     if let Some(parent_dir) = std::path::Path::new(target_file).parent() {
         if let Some(parent_str) = parent_dir.to_str() {
             create_directory(parent_str).await?;
         }
     }
 
-    // Step 1: Create uncompressed tar file
-    let temp_tar_file = format!("{}.tmp.tar", target_file);
-    let tar_command = format!(
-        "cd '{}' && tar -cf '{}' {}",
-        source_dir, temp_tar_file, dirs
+    let command = format!(
+        "cd '{}' && tar -cf - {} | lz4 -z -c > '{}' && echo 'LZ4_COMPLETE'",
+        source_dir, dirs, target_file
     );
 
-    info!("Step 1: Creating tar archive: {}", tar_command);
+    info!("Creating LZ4 archive: cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
+          source_dir, dirs, target_file);
 
-    let tar_status = AsyncCommand::new("sh")
+    let mut child = AsyncCommand::new("sh")
         .arg("-c")
-        .arg(&tar_command)
+        .arg(&command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()  // Same working approach as pruning
-        .await?;
+        .spawn()?;
 
-    if !tar_status.success() {
-        // Clean up temp file on failure
-        let _ = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await;
-        return Err(anyhow!("Tar archive creation failed"));
-    }
+    let status = child.wait().await?;
 
-    info!("Step 1 completed successfully");
+    if status.success() {
+        info!("LZ4 archive created successfully with exit code: {:?}", status.code());
 
-    // Step 2: Compress the tar file with LZ4
-    let lz4_command = format!("lz4 -z -c '{}' > '{}'", temp_tar_file, target_file);
-
-    info!("Step 2: Compressing with LZ4: {}", lz4_command);
-
-    let lz4_status = AsyncCommand::new("sh")
-        .arg("-c")
-        .arg(&lz4_command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()  // Same working approach as pruning
-        .await?;
-
-    // Clean up temporary tar file regardless of success/failure
-    if let Err(e) = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await {
-        warn!("Failed to cleanup temporary tar file {}: {}", temp_tar_file, e);
-    }
-
-    if lz4_status.success() {
-        info!("LZ4 archive created successfully: {}", target_file);
-
-        // Verify the file was actually created and has reasonable size
         match get_file_size(target_file).await {
             Ok(size) => {
-                if size > 1024 { // At least 1KB
+                if size > 1024 {
                     info!("Archive verified: {} bytes", size);
                     Ok(())
                 } else {
@@ -179,67 +128,38 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
             }
         }
     } else {
-        Err(anyhow!("LZ4 compression failed"))
+        Err(anyhow!("LZ4 archive creation failed with exit code: {:?}", status.code()))
     }
 }
 
-// ========================================================================
-// WORKING LZ4 EXTRACT FUNCTION - TWO-STEP APPROACH
-// Uses .status() + Stdio::null() for both steps - eliminates pipeline issues!
-// ========================================================================
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
-    // Verify archive file exists first
     let verify_command = format!("test -f '{}'", archive_file);
     execute_shell_command(&verify_command).await
         .map_err(|_| anyhow!("Archive file does not exist: {}", archive_file))?;
 
-    // Create target directory
     create_directory(target_dir).await?;
 
-    // Step 1: Decompress LZ4 to temporary tar file
-    let temp_tar_file = format!("{}/extracted.tmp.tar", target_dir);
-    let lz4_decompress_command = format!("lz4 -dc '{}' > '{}'", archive_file, temp_tar_file);
+    let command = format!(
+        "cd '{}' && lz4 -dc '{}' | tar -xf - && echo 'EXTRACT_COMPLETE'",
+        target_dir, archive_file
+    );
 
-    info!("Step 1: Decompressing LZ4: {}", lz4_decompress_command);
+    info!("Extracting LZ4 archive: cd '{}' && lz4 -dc '{}' | tar -xf -",
+          target_dir, archive_file);
 
-    let lz4_status = AsyncCommand::new("sh")
+    let mut child = AsyncCommand::new("sh")
         .arg("-c")
-        .arg(&lz4_decompress_command)
+        .arg(&command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()  // Same working approach as pruning
-        .await?;
+        .spawn()?;
 
-    if !lz4_status.success() {
-        return Err(anyhow!("LZ4 decompression failed"));
-    }
+    let status = child.wait().await?;
 
-    info!("Step 1 completed successfully");
+    if status.success() {
+        info!("LZ4 archive extracted successfully with exit code: {:?}", status.code());
 
-    // Step 2: Extract tar file
-    let tar_extract_command = format!("cd '{}' && tar -xf '{}'", target_dir, temp_tar_file);
-
-    info!("Step 2: Extracting tar: {}", tar_extract_command);
-
-    let tar_status = AsyncCommand::new("sh")
-        .arg("-c")
-        .arg(&tar_extract_command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()  // Same working approach as pruning
-        .await?;
-
-    // Clean up temporary tar file regardless of success/failure
-    if let Err(e) = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await {
-        warn!("Failed to cleanup temporary tar file {}: {}", temp_tar_file, e);
-    }
-
-    if tar_status.success() {
-        info!("LZ4 archive extracted successfully to: {}", target_dir);
-
-        // Verify extraction by checking if data directory exists
         let verify_command = format!("test -d '{}/data'", target_dir);
         match execute_shell_command(&verify_command).await {
             Ok(_) => {
@@ -248,18 +168,13 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
             },
             Err(_) => {
                 info!("Warning: data directory not found after extraction, but extraction reported success");
-                Ok(()) // Still consider it successful since the main command succeeded
+                Ok(())
             }
         }
     } else {
-        Err(anyhow!("Tar extraction failed"))
+        Err(anyhow!("LZ4 archive extraction failed with exit code: {:?}", status.code()))
     }
 }
-
-// ========================================================================
-// END OF CRITICAL WORKING FUNCTIONS - TWO-STEP LZ4 APPROACH
-// Both functions use reliable two-step process + .status() + Stdio::null()
-// ========================================================================
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
     if trigger_words.is_empty() {
@@ -274,7 +189,6 @@ pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String
 
     debug!("Checking log for trigger words: {}", command);
 
-    // grep returns 0 if found, 1 if not found
     match execute_shell_command(&command).await {
         Ok(_) => {
             info!("Trigger words found in log file: {}", log_file);
