@@ -60,7 +60,7 @@ impl SnapshotManager {
         }
     }
 
-    /// Create snapshot for a node using gzip compression via HTTP agent
+    /// Create snapshot for a node using FAST COPY method via HTTP agent
     pub async fn create_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -68,11 +68,11 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
-        info!("Starting gzip snapshot creation for node {} via HTTP agent", node_name);
+        info!("Starting FAST COPY snapshot creation for node {} via HTTP agent", node_name);
 
-        // Start maintenance tracking with 24-hour timeout for all snapshots
+        // Start maintenance tracking with reduced timeout (copy is much faster than compression)
         self.maintenance_tracker
-            .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
+            .start_maintenance(node_name, "fast_copy_snapshot", 60, &node_config.server_host) // 1 hour for copy
             .await?;
 
         let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
@@ -85,7 +85,7 @@ impl SnapshotManager {
         // Handle result and cleanup
         match &snapshot_result {
             Ok(snapshot_info) => {
-                info!("Snapshot created successfully: {}", snapshot_info.filename);
+                info!("FAST COPY snapshot created successfully: {} (compression running in background)", snapshot_info.filename);
 
                 // NEW: Automatic cleanup based on retention count
                 if let Some(retention_count) = node_config.snapshot_retention_count {
@@ -102,12 +102,12 @@ impl SnapshotManager {
                     }
                 }
 
-                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_creation").await {
+                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "fast_copy_snapshot").await {
                     warn!("Failed to send completion notification: {}", e);
                 }
             }
             Err(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "snapshot_creation").await {
+                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "fast_copy_snapshot").await {
                     warn!("Failed to send error notification: {}", e);
                 }
             }
@@ -116,7 +116,7 @@ impl SnapshotManager {
         snapshot_result
     }
 
-    /// Restore from latest snapshot using HttpAgentManager
+    /// Restore from latest snapshot using FAST COPY method via HttpAgentManager
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -128,11 +128,11 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
 
-        info!("Starting snapshot restore for node {} via HTTP agent", node_name);
+        info!("Starting FAST COPY snapshot restore for node {} via HTTP agent", node_name);
 
-        // Start maintenance tracking with 24-hour timeout for restore operations
+        // Start maintenance tracking with reduced timeout (copy is much faster than extraction)
         self.maintenance_tracker
-            .start_maintenance(node_name, "snapshot_restore", 1440, &node_config.server_host)
+            .start_maintenance(node_name, "fast_copy_restore", 60, &node_config.server_host) // 1 hour for copy
             .await?;
 
         let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
@@ -145,12 +145,12 @@ impl SnapshotManager {
         // Send notification based on result
         match &restore_result {
             Ok(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_restore").await {
+                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "fast_copy_restore").await {
                     warn!("Failed to send completion notification: {}", e);
                 }
             }
             Err(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "snapshot_restore").await {
+                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "fast_copy_restore").await {
                     warn!("Failed to send error notification: {}", e);
                 }
             }
@@ -170,7 +170,7 @@ impl SnapshotManager {
         self.http_manager.check_auto_restore_triggers(node_name).await
     }
 
-    /// List all snapshots for a node via HTTP agent
+    /// List all snapshots for a node via HTTP agent (supports both directory and compressed formats)
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -182,10 +182,17 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // List gzip snapshots using node_name instead of network
+        // NEW: Search for both directory-based snapshots AND compressed files
         let list_cmd = format!(
-            "find '{}' -name '{}_*.tar.gz' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
-            backup_path, node_name
+            r#"
+            (
+                # List directory-based snapshots
+                find '{}' -maxdepth 1 -type d -name '{}_*' -exec stat -c '%n DIR %Y' {{}} \;
+                # List compressed snapshots
+                find '{}' -maxdepth 1 -type f -name '{}_*.tar.gz' -exec stat -c '%n %s %Y' {{}} \;
+            ) | sort -k3 -nr
+            "#,
+            backup_path, node_name, backup_path, node_name
         );
 
         let output = self.http_manager
@@ -203,12 +210,28 @@ impl SnapshotManager {
             if parts.len() >= 3 {
                 let full_path = parts[0];
                 let filename = full_path.split('/').last().unwrap_or(parts[0]).to_string();
-                let file_size_bytes = parts[1].parse::<u64>().ok();
-                let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
+                let timestamp_unix = parts.last().map_or("0", |&v| v).parse::<i64>().unwrap_or(0);
+
+                // Determine if this is a directory or compressed file
+                let (file_size_bytes, compression_type) = if parts.contains(&"DIR") {
+                    // Directory-based snapshot
+                    let size_cmd = format!("du -sb '{}' | cut -f1", full_path);
+                    let size = self.http_manager
+                        .execute_single_command(&node_config.server_host, &size_cmd)
+                        .await
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u64>().ok());
+                    (size, "directory".to_string())
+                } else {
+                    // Compressed file
+                    let size = parts.get(1).and_then(|s| s.parse::<u64>().ok());
+                    (size, "gzip".to_string())
+                };
 
                 // Parse timestamp from filename using node_name as prefix
                 let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_name)) {
-                    let ts_clean = ts_part.strip_suffix(".tar.gz").unwrap_or(ts_part);
+                    let ts_clean = ts_part
+                        .strip_suffix(".tar.gz").unwrap_or(ts_part); // Remove .tar.gz if present
 
                     chrono::NaiveDateTime::parse_from_str(ts_clean, "%Y%m%d_%H%M%S")
                         .ok()
@@ -231,7 +254,7 @@ impl SnapshotManager {
                     created_at,
                     file_size_bytes,
                     snapshot_path: full_path.to_string(),
-                    compression_type: "gzip".to_string(),
+                    compression_type,
                 });
             }
         }
@@ -269,27 +292,13 @@ impl SnapshotManager {
               snapshots_to_delete.len(), node_name, retention_count);
 
         for snapshot in snapshots_to_delete {
-            match self.delete_snapshot_file(&node_config.server_host, &snapshot.snapshot_path).await {
+            match self.delete_snapshot_file(&node_config.server_host, &snapshot.snapshot_path, &snapshot.compression_type).await {
                 Ok(_) => {
-                    info!("Deleted old snapshot via HTTP agent: {}", snapshot.filename);
+                    info!("Deleted old snapshot via HTTP agent: {} ({})", snapshot.filename, snapshot.compression_type);
                     deleted_count += 1;
                 }
                 Err(e) => {
                     warn!("Failed to delete snapshot {} via HTTP agent: {}", snapshot.filename, e);
-                }
-            }
-
-            // Also clean up associated validator state backup files using node_name
-            if let Some(backup_path) = &node_config.snapshot_backup_path {
-                let timestamp_from_filename = snapshot.filename
-                    .strip_prefix(&format!("{}_", node_name))
-                    .and_then(|s| s.strip_suffix(".tar.gz"));
-
-                if let Some(timestamp) = timestamp_from_filename {
-                    let validator_backup_file = format!("{}/validator_state_backup_{}.json", backup_path, timestamp);
-                    if let Err(e) = self.delete_snapshot_file(&node_config.server_host, &validator_backup_file).await {
-                        warn!("Could not delete validator backup file {} via HTTP agent: {}", validator_backup_file, e);
-                    }
                 }
             }
         }
@@ -310,21 +319,28 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
+        // Determine if it's a directory or file
         let snapshot_path = format!("{}/{}", backup_path, filename);
-        self.delete_snapshot_file(&node_config.server_host, &snapshot_path).await?;
+        let compression_type = if filename.ends_with(".tar.gz") { "gzip" } else { "directory" };
 
-        info!("Deleted snapshot {} for node {} via HTTP agent", filename, node_name);
+        self.delete_snapshot_file(&node_config.server_host, &snapshot_path, compression_type).await?;
+
+        info!("Deleted snapshot {} for node {} via HTTP agent ({})", filename, node_name, compression_type);
         Ok(())
     }
 
-    /// Helper method to delete a snapshot file via HTTP agent
-    async fn delete_snapshot_file(&self, server_host: &str, file_path: &str) -> Result<()> {
-        let delete_cmd = format!("rm -f '{}'", file_path);
+    /// Helper method to delete a snapshot file or directory via HTTP agent
+    async fn delete_snapshot_file(&self, server_host: &str, file_path: &str, compression_type: &str) -> Result<()> {
+        let delete_cmd = match compression_type {
+            "directory" => format!("rm -rf '{}'", file_path), // Directory
+            _ => format!("rm -f '{}'", file_path), // File
+        };
+
         self.http_manager.execute_single_command(server_host, &delete_cmd).await?;
         Ok(())
     }
 
-    /// Get snapshot statistics with compression information
+    /// Get snapshot statistics with compression information (supports both formats)
     pub async fn get_snapshot_stats(&self, node_name: &str) -> Result<SnapshotStats> {
         let snapshots = self.list_snapshots(node_name).await?;
 
@@ -341,8 +357,8 @@ impl SnapshotManager {
             *by_network.entry(snapshot.network.clone()).or_insert(0) += 1;
         }
 
-        // All snapshots are gzip now
-        let compression_type = "gzip".to_string();
+        // Mixed compression type (both directory and gzip supported)
+        let compression_type = "mixed".to_string();
 
         Ok(SnapshotStats {
             total_snapshots,
@@ -380,13 +396,14 @@ impl SnapshotManager {
             alarm_type: format!("node_{}", operation),
             severity: if status == "failed" { "high".to_string() } else { "info".to_string() },
             node_name: node_name.to_string(),
-            message: format!("Node {} {} operation {}: {} via HTTP agent", node_name, operation, status, operation),
+            message: format!("Node {} {} operation {}: {} via HTTP agent (FAST COPY method)", node_name, operation, status, operation),
             server_host,
             details: Some(serde_json::json!({
                 "operation_status": status,
                 "operation_type": operation,
                 "server_host": server_host_clone,
-                "compression_type": "gzip",
+                "method": "fast_copy",
+                "compression_type": "mixed",
                 "connection_type": "http_agent",
                 "timestamp": Utc::now().to_rfc3339()
             })),
@@ -400,7 +417,7 @@ impl SnapshotManager {
             .await?;
 
         if response.status().is_success() {
-            info!("Sent {} notification for {}: {} {} via HTTP agent", operation, node_name, operation, status);
+            info!("Sent {} notification for {}: {} {} via HTTP agent (FAST COPY)", operation, node_name, operation, status);
         } else {
             warn!("Failed to send {} notification: HTTP {}", operation, response.status());
         }

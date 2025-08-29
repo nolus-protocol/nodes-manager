@@ -2,7 +2,6 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn, error};
-use std::time::Duration;
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -66,6 +65,56 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
+// NEW: Check if directory exists
+pub async fn directory_exists(path: &str) -> bool {
+    let command = format!("test -d '{}'", path);
+    execute_shell_command(&command).await.is_ok()
+}
+
+// NEW: Fast directory copy (much more reliable than tar)
+pub async fn copy_directory(source: &str, destination: &str) -> Result<()> {
+    info!("Copying directory: {} -> {}", source, destination);
+
+    // Ensure source exists
+    if !directory_exists(source).await {
+        return Err(anyhow!("Source directory does not exist: {}", source));
+    }
+
+    // Create parent directory of destination
+    if let Some(parent) = std::path::Path::new(destination).parent() {
+        if let Some(parent_str) = parent.to_str() {
+            create_directory(parent_str).await?;
+        }
+    }
+
+    // Use cp -r for reliable recursive copy
+    let command = format!("cp -r '{}' '{}'", source, destination);
+
+    info!("Executing copy command: {}", command);
+    let start_time = std::time::Instant::now();
+
+    let output = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .output()
+        .await?;
+
+    let copy_time = start_time.elapsed();
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Directory copy failed: {}", stderr));
+    }
+
+    // Verify copy was successful
+    if !directory_exists(destination).await {
+        return Err(anyhow!("Copy operation completed but destination directory not found"));
+    }
+
+    info!("Directory copy completed in {:.1}s: {}", copy_time.as_secs_f64(), destination);
+    Ok(())
+}
+
 pub async fn get_file_size(file_path: &str) -> Result<u64> {
     let command = format!("stat -c%s '{}'", file_path);
     let output = execute_shell_command(&command).await?;
@@ -85,8 +134,10 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
-// FIXED: Robust gzip archive creation with separate verification
+// LEGACY: Keep old gzip functions for backward compatibility (but they're not recommended)
 pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
+    warn!("⚠️  Using legacy gzip archive creation - consider using fast copy method instead");
+
     let dirs = directories.join(" ");
 
     info!("Creating gzip archive: source_dir={}, target_file={}, dirs={}", source_dir, target_file, dirs);
@@ -98,15 +149,13 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
         }
     }
 
-    // FIXED: Remove the complex && chain that was causing hangs
+    // Simplified tar command (removed the hanging && chain)
     let command = format!(
         "tar -czf '{}' -C '{}' {}",
         target_file, source_dir, dirs
     );
 
     info!("Executing tar command: {}", command);
-
-    // Execute tar command with timeout monitoring
     let start_time = std::time::Instant::now();
 
     let output = AsyncCommand::new("sh")
@@ -126,10 +175,7 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
         return Err(anyhow!("Archive creation failed\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()));
     }
 
-    // FIXED: Separate verification instead of relying on command output
-    info!("Tar command completed, verifying archive...");
-
-    // Check if archive file exists
+    // Verify archive was created
     if !std::path::Path::new(target_file).exists() {
         return Err(anyhow!("Archive file was not created: {}", target_file));
     }
@@ -147,29 +193,13 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
         }
     }
 
-    // FIXED: Test archive integrity with tar -tzf (quick test)
-    info!("Testing archive integrity...");
-    let test_command = format!("tar -tzf '{}' | head -5", target_file);
-    match execute_shell_command(&test_command).await {
-        Ok(test_output) => {
-            if test_output.trim().is_empty() {
-                warn!("Archive integrity test returned empty output, but file exists");
-            } else {
-                info!("Archive integrity verified - contains files");
-                debug!("Archive contents preview:\n{}", test_output.trim());
-            }
-        },
-        Err(e) => {
-            warn!("Archive integrity test failed: {}, but archive file exists", e);
-            // Don't fail here - the file exists and has reasonable size
-        }
-    }
-
     info!("Gzip archive creation completed successfully: {}", target_file);
     Ok(())
 }
 
 pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Result<()> {
+    warn!("⚠️  Using legacy gzip archive extraction - consider using fast copy method instead");
+
     info!("Extracting gzip archive: {} to {}", archive_file, target_dir);
 
     // Verify archive file exists
@@ -184,7 +214,7 @@ pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Resul
     // Create target directory
     create_directory(target_dir).await?;
 
-    // FIXED: Simplified extraction command
+    // Simplified extraction command
     let command = format!(
         "tar -xzf '{}' -C '{}'",
         archive_file, target_dir
@@ -210,16 +240,13 @@ pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Resul
         return Err(anyhow!("Archive extraction failed\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()));
     }
 
-    // FIXED: Verify extraction results
+    // Verify extraction results
     info!("Extraction command completed, verifying results...");
 
     let verify_data_cmd = format!("test -d '{}/data'", target_dir);
-    let verify_wasm_cmd = format!("test -d '{}/wasm'", target_dir);
-
     let data_exists = execute_shell_command(&verify_data_cmd).await.is_ok();
-    let wasm_exists = execute_shell_command(&verify_wasm_cmd).await.is_ok();
 
-    info!("Extraction verification: data_dir={}, wasm_dir={}", data_exists, wasm_exists);
+    info!("Extraction verification: data_dir={}", data_exists);
 
     if !data_exists {
         return Err(anyhow!("Data directory not found after extraction: {}/data", target_dir));
@@ -272,7 +299,7 @@ pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String
     }
 }
 
-// NEW: Get directory size (useful for monitoring disk usage)
+// Get directory size (useful for monitoring disk usage)
 pub async fn get_directory_size(dir_path: &str) -> Result<u64> {
     let command = format!("du -sb '{}' | cut -f1", dir_path);
     let output = execute_shell_command(&command).await?;
@@ -281,7 +308,7 @@ pub async fn get_directory_size(dir_path: &str) -> Result<u64> {
         .map_err(|e| anyhow!("Failed to parse directory size: {}", e))
 }
 
-// NEW: Check available disk space
+// Check available disk space
 pub async fn get_available_disk_space(path: &str) -> Result<u64> {
     let command = format!("df '{}' | tail -1 | awk '{{print $4}}'", path);
     let output = execute_shell_command(&command).await?;

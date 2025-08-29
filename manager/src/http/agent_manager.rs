@@ -415,11 +415,11 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
+        // 3. Start maintenance tracking (REDUCED timeout for fast copy)
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
-            "snapshot_creation",
-            1440, // 24 hour estimated duration for snapshots
+            "fast_copy_snapshot",
+            60, // 1 hour for fast copy (much faster than compression)
             &node_config.server_host
         ).await;
 
@@ -458,9 +458,9 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        info!("Starting gzip snapshot creation for {} via HTTP agent", node_name);
+        info!("Starting FAST COPY snapshot creation for {} via HTTP agent", node_name);
 
-        // Execute snapshot creation via agent
+        // Execute snapshot creation via agent (now using fast copy method)
         let payload = json!({
             "node_name": node_name,
             "deploy_path": deploy_path,
@@ -478,10 +478,10 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: result["size_bytes"].as_u64(),
             snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: "gzip".to_string(),
+            compression_type: "directory".to_string(), // NEW: Fast copy creates directories
         };
 
-        info!("Gzip snapshot created successfully: {}", snapshot_info.filename);
+        info!("FAST COPY snapshot created successfully: {} (background compression may be running)", snapshot_info.filename);
         Ok(snapshot_info)
     }
 
@@ -493,11 +493,11 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // 3. Start maintenance tracking (maintenance tracker)
+        // 3. Start maintenance tracking (REDUCED timeout for fast copy)
         let maintenance_result = self.maintenance_tracker.start_maintenance(
             node_name,
-            "snapshot_restore",
-            1440, // 24 hour estimated duration for restore
+            "fast_copy_restore",
+            60, // 1 hour for fast copy restore
             &node_config.server_host
         ).await;
 
@@ -527,34 +527,46 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Snapshots or auto-restore not enabled for node {}", node_name));
         }
 
-        // Use node_name instead of network to find snapshots
         let backup_path = node_config.snapshot_backup_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
+        // NEW: Look for both directory-based snapshots AND compressed files
         let find_latest_cmd = format!(
-            "find '{}' -name '{}_*.tar.gz' | xargs -r stat -c '%Y %n' | sort -nr | head -1 | cut -d' ' -f2-",
-            backup_path, node_name
+            r#"
+            (
+                find '{}' -maxdepth 1 -type d -name '{}_*' -exec stat -c '%Y %n DIR' {{}} \;
+                find '{}' -maxdepth 1 -type f -name '{}_*.tar.gz' -exec stat -c '%Y %n FILE' {{}} \;
+            ) | sort -nr | head -1 | cut -d' ' -f2-
+            "#,
+            backup_path, node_name, backup_path, node_name
         );
 
-        let latest_snapshot_path = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
-        let latest_snapshot_path = latest_snapshot_path.trim();
+        let latest_snapshot_output = self.execute_single_command(&node_config.server_host, &find_latest_cmd).await?;
+        let latest_snapshot_parts: Vec<&str> = latest_snapshot_output.trim().split_whitespace().collect();
+
+        if latest_snapshot_parts.len() < 2 {
+            return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
+        }
+
+        let latest_snapshot_path = latest_snapshot_parts[0];
+        let snapshot_type = latest_snapshot_parts[1]; // "DIR" or "FILE"
 
         if latest_snapshot_path.is_empty() {
-            return Err(anyhow::anyhow!("No gzip snapshots found for node {}", node_name));
+            return Err(anyhow::anyhow!("No snapshots found for node {}", node_name));
         }
 
         // Extract filename from path
         let snapshot_filename = latest_snapshot_path.split('/').last()
             .ok_or_else(|| anyhow::anyhow!("Invalid snapshot path"))?;
 
-        info!("Starting gzip snapshot restore for {} from {}", node_name, snapshot_filename);
+        info!("Starting FAST COPY snapshot restore for {} from {} ({})", node_name, snapshot_filename, snapshot_type);
 
-        // Execute restore via agent
+        // Execute restore via agent (supports both directory and file restore)
         let payload = json!({
             "node_name": node_name,
             "deploy_path": node_config.pruning_deploy_path,
-            "snapshot_file": latest_snapshot_path,
-            "validator_backup_file": null, // Will be handled by agent
+            "snapshot_file": latest_snapshot_path, // This is now the backup directory or file path
+            "validator_backup_file": null, // Will be handled automatically by agent
             "service_name": node_config.pruning_service_name,
             "log_path": node_config.log_path
         });
@@ -568,10 +580,10 @@ impl HttpAgentManager {
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_path.to_string(),
-            compression_type: "gzip".to_string(),
+            compression_type: if snapshot_type == "DIR" { "directory".to_string() } else { "gzip".to_string() },
         };
 
-        info!("Gzip snapshot restore completed successfully: {}", snapshot_filename);
+        info!("FAST COPY snapshot restore completed successfully: {} ({})", snapshot_filename, snapshot_type);
         Ok(snapshot_info)
     }
 
