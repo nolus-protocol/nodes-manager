@@ -62,98 +62,12 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn copy_directory(source: &str, destination: &str) -> Result<()> {
-    info!("Copying directory from {} to {}", source, destination);
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent_dir) = std::path::Path::new(destination).parent() {
-        if let Some(parent_str) = parent_dir.to_str() {
-            create_directory(parent_str).await?;
-        }
-    }
-
-    let command = format!("cp -r '{}' '{}'", source, destination);
-    execute_shell_command(&command).await?;
-    info!("Directory copied successfully from {} to {}", source, destination);
-    Ok(())
-}
-
-pub async fn copy_snapshot_folders(deploy_path: &str, backup_dir: &str, directories: &[&str]) -> Result<()> {
-    info!("Copying snapshot folders from {} to backup directory {}", deploy_path, backup_dir);
-
-    // Create backup directory
-    create_directory(backup_dir).await?;
-
-    // Copy each directory
-    for dir in directories {
-        let source_path = format!("{}/{}", deploy_path, dir);
-        let dest_path = format!("{}/{}", backup_dir, dir);
-
-        // Check if source directory exists before copying
-        let check_command = format!("test -d '{}'", source_path);
-        if execute_shell_command(&check_command).await.is_ok() {
-            copy_directory(&source_path, &dest_path).await?;
-            info!("Copied {} directory for snapshot", dir);
-        } else {
-            warn!("Source directory {} does not exist, skipping", source_path);
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn compress_directory_background(backup_dir: &str, compressed_file: &str) {
-    info!("Starting fire-and-forget background compression: {} -> {}", backup_dir, compressed_file);
-
-    let backup_dir = backup_dir.to_string();
-    let compressed_file = compressed_file.to_string();
-
-    // FIRE-AND-FORGET: Spawn background task for compression
-    // This function NEVER returns an error - compression is for user convenience only
-    tokio::spawn(async move {
-        let command = format!(
-            "tar -czf '{}' -C '{}' . && echo 'BACKGROUND_COMPRESSION_SUCCESS' && rm -rf '{}'",
-            compressed_file, backup_dir, backup_dir
-        );
-
-        match AsyncCommand::new("sh")
-            .arg("-c")
-            .arg(&command)
-            .output()
-            .await
-        {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("BACKGROUND_COMPRESSION_SUCCESS") {
-                    info!("Fire-and-forget compression completed: {}", compressed_file);
-                } else {
-                    warn!("Fire-and-forget compression may have failed: {} (not tracked)", compressed_file);
-                }
-            }
-            Err(e) => {
-                warn!("Fire-and-forget compression command failed: {} (not tracked)", e);
-            }
-        }
-    });
-
-    info!("Fire-and-forget compression task spawned (result not tracked)");
-    // Function returns immediately - no awaiting, no error tracking
-}
-
 pub async fn get_file_size(file_path: &str) -> Result<u64> {
     let command = format!("stat -c%s '{}'", file_path);
     let output = execute_shell_command(&command).await?;
 
     output.trim().parse::<u64>()
         .map_err(|e| anyhow!("Failed to parse file size: {}", e))
-}
-
-pub async fn get_directory_size(dir_path: &str) -> Result<u64> {
-    let command = format!("du -sb '{}' | cut -f1", dir_path);
-    let output = execute_shell_command(&command).await?;
-
-    output.trim().parse::<u64>()
-        .map_err(|e| anyhow!("Failed to parse directory size: {}", e))
 }
 
 pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> {
@@ -167,34 +81,35 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
     Ok(())
 }
 
-pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
-    if trigger_words.is_empty() {
-        return Ok(false);
-    }
+// NEW: Function to copy data and wasm directories from snapshot directory
+pub async fn copy_snapshot_directories(snapshot_dir: &str, target_dir: &str) -> Result<()> {
+    info!("Copying snapshot directories from {} to {}", snapshot_dir, target_dir);
 
-    let pattern = trigger_words.join("|");
-    let command = format!(
-        "tail -n 1000 '{}' | grep -q -E '{}'",
-        log_file, pattern
+    // Copy data directory
+    let data_copy_cmd = format!(
+        "if [ -d '{}/data' ]; then cp -r '{}/data' '{}/' && echo 'data_copied'; else echo 'data_not_found'; fi",
+        snapshot_dir, snapshot_dir, target_dir
     );
 
-    debug!("Checking log for trigger words: {}", command);
-
-    match execute_shell_command(&command).await {
-        Ok(_) => {
-            info!("Trigger words found in log file: {}", log_file);
-            Ok(true)
-        }
-        Err(_) => {
-            debug!("No trigger words found in log file: {}", log_file);
-            Ok(false)
-        }
+    let data_result = execute_shell_command(&data_copy_cmd).await?;
+    if !data_result.contains("data_copied") {
+        return Err(anyhow!("Failed to copy data directory from snapshot"));
     }
+
+    // Copy wasm directory (if exists)
+    let wasm_copy_cmd = format!(
+        "if [ -d '{}/wasm' ]; then cp -r '{}/wasm' '{}/' && echo 'wasm_copied'; else echo 'wasm_not_found'; fi",
+        snapshot_dir, snapshot_dir, target_dir
+    );
+
+    let wasm_result = execute_shell_command(&wasm_copy_cmd).await?;
+    debug!("Wasm copy result: {}", wasm_result.trim());
+
+    info!("Snapshot directories copied successfully");
+    Ok(())
 }
 
-// Legacy functions for backward compatibility (but now use optimized approach)
 pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
-    // For compatibility, fall back to the old method if needed
     let dirs = directories.join(" ");
 
     // Ensure parent directory exists
@@ -204,6 +119,7 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
         }
     }
 
+    // Use tar with -C flag to avoid cd command and complex shell logic
     let command = format!(
         "tar -czf '{}' -C '{}' {} && echo 'ARCHIVE_SUCCESS'",
         target_file, source_dir, dirs
@@ -223,6 +139,7 @@ pub async fn create_gzip_archive(source_dir: &str, target_file: &str, directorie
     if stdout.contains("ARCHIVE_SUCCESS") {
         info!("Gzip archive created successfully");
 
+        // Verify archive was created and has reasonable size
         match get_file_size(target_file).await {
             Ok(size) => {
                 if size > 1024 {
@@ -250,6 +167,7 @@ pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Resul
     // Create target directory
     create_directory(target_dir).await?;
 
+    // Use tar with -C flag to avoid cd command
     let command = format!(
         "tar -xzf '{}' -C '{}' && echo 'EXTRACT_SUCCESS'",
         archive_file, target_dir
@@ -269,6 +187,7 @@ pub async fn extract_gzip_archive(archive_file: &str, target_dir: &str) -> Resul
     if stdout.contains("EXTRACT_SUCCESS") {
         info!("Gzip archive extracted successfully");
 
+        // Verify extraction results
         let verify_command = format!("test -d '{}/data'", target_dir);
         match execute_shell_command(&verify_command).await {
             Ok(_) => {
@@ -292,4 +211,63 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
 
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
     extract_gzip_archive(archive_file, target_dir).await
+}
+
+// NEW: Function to copy directories to snapshot directory for snapshot creation
+pub async fn copy_directories_to_snapshot(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
+    info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
+
+    for dir in directories {
+        let source_path = format!("{}/{}", source_dir, dir);
+        let target_path = format!("{}/{}", snapshot_dir, dir);
+
+        let copy_cmd = format!(
+            "if [ -d '{}' ]; then cp -r '{}' '{}' && echo '{}_copied'; else echo '{}_not_found'; fi",
+            source_path, source_path, target_path, dir, dir
+        );
+
+        let result = execute_shell_command(&copy_cmd).await?;
+        if result.contains(&format!("{}_copied", dir)) {
+            info!("Successfully copied {} directory to snapshot", dir);
+        } else {
+            warn!("Directory {} not found in source, skipping", dir);
+        }
+    }
+
+    info!("Directory copying to snapshot completed");
+    Ok(())
+}
+
+// NEW: Function to get directory size
+pub async fn get_directory_size(dir_path: &str) -> Result<u64> {
+    let command = format!("du -sb '{}' | cut -f1", dir_path);
+    let output = execute_shell_command(&command).await?;
+
+    output.trim().parse::<u64>()
+        .map_err(|e| anyhow!("Failed to parse directory size: {}", e))
+}
+
+pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
+    if trigger_words.is_empty() {
+        return Ok(false);
+    }
+
+    let pattern = trigger_words.join("|");
+    let command = format!(
+        "tail -n 1000 '{}' | grep -q -E '{}'",
+        log_file, pattern
+    );
+
+    debug!("Checking log for trigger words: {}", command);
+
+    match execute_shell_command(&command).await {
+        Ok(_) => {
+            info!("Trigger words found in log file: {}", log_file);
+            Ok(true)
+        }
+        Err(_) => {
+            debug!("No trigger words found in log file: {}", log_file);
+            Ok(false)
+        }
+    }
 }

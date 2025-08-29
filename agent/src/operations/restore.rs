@@ -6,151 +6,30 @@ use crate::services::{commands, logs, systemctl};
 use crate::types::RestoreRequest;
 
 pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<String> {
-    info!("Starting optimized snapshot restore for: {}", request.node_name);
+    info!("Starting snapshot restore for: {}", request.node_name);
 
-    // Step 1: Try to find the uncompressed backup directory first (optimized path)
-    let backup_dir_path = if request.snapshot_file.ends_with(".tar.gz") {
-        // Extract timestamp from compressed filename to find backup directory
-        let filename = std::path::Path::new(&request.snapshot_file)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| s.strip_suffix(".tar"))
-            .unwrap_or("");
+    // Step 1: Verify snapshot directory exists
+    let dir_check_command = format!("test -d '{}'", request.snapshot_dir);
+    commands::execute_shell_command(&dir_check_command).await
+        .map_err(|_| anyhow::anyhow!("Snapshot directory does not exist: {}", request.snapshot_dir))?;
 
-        // UNIFIED: Removed _backup suffix from directory name
-        format!("{}/{}",
-                std::path::Path::new(&request.snapshot_file).parent().unwrap().to_str().unwrap(),
-                filename)
-    } else {
-        request.snapshot_file.clone()
-    };
+    // Step 2: Get directory size for logging
+    let size_command = format!("du -sb '{}' | cut -f1", request.snapshot_dir);
+    let dir_size = commands::execute_shell_command(&size_command).await
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
 
-    let use_optimized_path = {
-        let check_command = format!("test -d '{}'", backup_dir_path);
-        commands::execute_shell_command(&check_command).await.is_ok()
-    };
-
-    if use_optimized_path {
-        info!("Found uncompressed backup directory: {} - using optimized restore", backup_dir_path);
-        execute_optimized_restore(request, &backup_dir_path).await
-    } else {
-        info!("Uncompressed backup not found, falling back to compressed file extraction");
-        execute_compressed_restore(request).await
-    }
-}
-
-async fn execute_optimized_restore(request: &RestoreRequest, backup_dir: &str) -> Result<String> {
-    info!("Executing OPTIMIZED restore from backup directory: {}", backup_dir);
-
-    // Verify backup directory exists and has data
-    let data_check = format!("test -d '{}/data'", backup_dir);
-    if commands::execute_shell_command(&data_check).await.is_err() {
-        return Err(anyhow::anyhow!("Backup directory does not contain data folder: {}", backup_dir));
-    }
-
-    let backup_size = commands::get_directory_size(backup_dir).await.unwrap_or(0);
-
-    // Step 1: Stop the node service
-    info!("Stopping service for restore: {}", request.service_name);
+    // Step 3: Stop the node service
     systemctl::stop_service(&request.service_name).await?;
 
-    // Step 2: Truncate logs (if configured)
-    if let Some(log_path) = &request.log_path {
-        info!("Truncating logs at: {}", log_path);
-        logs::truncate_log_path(log_path).await?;
-    }
-
-    // Step 3: Delete existing data and wasm directories
-    let data_dir = format!("{}/data", request.deploy_path);
-    let wasm_dir = format!("{}/wasm", request.deploy_path);
-
-    let data_exists_cmd = format!("test -d '{}'", data_dir);
-    if commands::execute_shell_command(&data_exists_cmd).await.is_ok() {
-        info!("Deleting existing data directory: {}", data_dir);
-        commands::delete_directory(&data_dir).await?;
-    }
-
-    let wasm_exists_cmd = format!("test -d '{}'", wasm_dir);
-    if commands::execute_shell_command(&wasm_exists_cmd).await.is_ok() {
-        info!("Deleting existing wasm directory: {}", wasm_dir);
-        commands::delete_directory(&wasm_dir).await?;
-    }
-
-    // Step 4: OPTIMIZED - Copy folders directly from backup directory (no decompression needed)
-    info!("Copying data folder from backup ({:.1} MB total)...", backup_size as f64 / 1024.0 / 1024.0);
-    let backup_data_dir = format!("{}/data", backup_dir);
-    commands::copy_directory(&backup_data_dir, &data_dir).await?;
-
-    // Copy wasm folder if it exists in backup
-    let backup_wasm_dir = format!("{}/wasm", backup_dir);
-    let wasm_check_cmd = format!("test -d '{}'", backup_wasm_dir);
-    if commands::execute_shell_command(&wasm_check_cmd).await.is_ok() {
-        info!("Copying wasm folder from backup...");
-        commands::copy_directory(&backup_wasm_dir, &wasm_dir).await?;
-    }
-
-    // Step 5: Verify copy results
-    let verify_data_cmd = format!("test -d '{}'", data_dir);
-    if commands::execute_shell_command(&verify_data_cmd).await.is_err() {
-        return Err(anyhow::anyhow!("Data directory not found after copying from backup"));
-    }
-
-    // Step 6: Restore validator state (if available)
-    if let Some(validator_backup_file) = &request.validator_backup_file {
-        let validator_destination = format!("{}/data/priv_validator_state.json", request.deploy_path);
-        info!("Restoring validator state from: {}", validator_backup_file);
-        commands::copy_file_if_exists(validator_backup_file, &validator_destination).await?;
-    }
-
-    // Step 7: Set proper ownership/permissions
-    info!("Setting proper ownership and permissions...");
-    let chown_cmd = format!("chown -R $(stat -c '%U:%G' '{}') '{}/data'",
-                           request.deploy_path, request.deploy_path);
-    commands::execute_shell_command(&chown_cmd).await?;
-
-    let wasm_chown_cmd = format!("if [ -d '{}/wasm' ]; then chown -R $(stat -c '%U:%G' '{}') '{}/wasm'; fi",
-                                request.deploy_path, request.deploy_path, request.deploy_path);
-    commands::execute_shell_command(&wasm_chown_cmd).await?;
-
-    // Step 8: Start the node service
-    info!("Starting service after optimized restore: {}", request.service_name);
-    systemctl::start_service(&request.service_name).await?;
-
-    // Step 9: Verify service is running
-    let status = systemctl::get_service_status(&request.service_name).await?;
-    if status != "active" {
-        return Err(anyhow::anyhow!(
-            "Service {} failed to start properly after optimized restore (status: {})",
-            request.service_name, status
-        ));
-    }
-
-    info!("OPTIMIZED snapshot restore completed successfully for: {} ({:.1} MB copied)",
-          request.node_name, backup_size as f64 / 1024.0 / 1024.0);
-
-    Ok(format!("Optimized snapshot restore completed for {} - copied {:.1} MB directly from backup directory",
-               request.node_name, backup_size as f64 / 1024.0 / 1024.0))
-}
-
-async fn execute_compressed_restore(request: &RestoreRequest) -> Result<String> {
-    info!("Executing FALLBACK restore from compressed file: {}", request.snapshot_file);
-
-    // Verify compressed file exists
-    let file_check_command = format!("test -f '{}'", request.snapshot_file);
-    commands::execute_shell_command(&file_check_command).await
-        .map_err(|_| anyhow::anyhow!("Snapshot file does not exist: {}", request.snapshot_file))?;
-
-    let file_size = commands::get_file_size(&request.snapshot_file).await?;
-
-    // Step 1: Stop the node service
-    systemctl::stop_service(&request.service_name).await?;
-
-    // Step 2: Truncate logs (if configured)
+    // Step 4: Truncate logs (if configured)
     if let Some(log_path) = &request.log_path {
         logs::truncate_log_path(log_path).await?;
     }
 
-    // Step 3: Delete existing data and wasm directories
+    // Step 5: Delete existing data and wasm directories
     let data_dir = format!("{}/data", request.deploy_path);
     let wasm_dir = format!("{}/wasm", request.deploy_path);
 
@@ -164,23 +43,22 @@ async fn execute_compressed_restore(request: &RestoreRequest) -> Result<String> 
         commands::delete_directory(&wasm_dir).await?;
     }
 
-    // Step 4: Extract compressed snapshot (fallback method)
-    info!("Extracting compressed snapshot ({:.1} MB)...", file_size as f64 / 1024.0 / 1024.0);
-    commands::extract_gzip_archive(&request.snapshot_file, &request.deploy_path).await?;
+    // Step 6: Copy data and wasm directories from snapshot directory
+    info!("Copying snapshot data ({:.1} MB)...", dir_size as f64 / 1024.0 / 1024.0);
+    commands::copy_snapshot_directories(&request.snapshot_dir, &request.deploy_path).await?;
 
-    // Step 5: Verify extraction results
+    // Step 7: Verify copy results
     let verify_data_cmd = format!("test -d '{}/data'", request.deploy_path);
     if commands::execute_shell_command(&verify_data_cmd).await.is_err() {
-        return Err(anyhow::anyhow!("Data directory not found after extraction"));
+        return Err(anyhow::anyhow!("Data directory not found after copy"));
     }
 
-    // Step 6: Restore validator state (if available)
-    if let Some(validator_backup_file) = &request.validator_backup_file {
-        let validator_destination = format!("{}/data/priv_validator_state.json", request.deploy_path);
-        commands::copy_file_if_exists(validator_backup_file, &validator_destination).await?;
-    }
+    // Step 8: Restore validator state (if available)
+    let validator_source = format!("{}/priv_validator_state.json", request.snapshot_dir);
+    let validator_destination = format!("{}/data/priv_validator_state.json", request.deploy_path);
+    commands::copy_file_if_exists(&validator_source, &validator_destination).await?;
 
-    // Step 7: Set proper ownership/permissions
+    // Step 9: Set proper ownership/permissions
     let chown_cmd = format!("chown -R $(stat -c '%U:%G' '{}') '{}/data'",
                            request.deploy_path, request.deploy_path);
     commands::execute_shell_command(&chown_cmd).await?;
@@ -189,10 +67,10 @@ async fn execute_compressed_restore(request: &RestoreRequest) -> Result<String> 
                                 request.deploy_path, request.deploy_path, request.deploy_path);
     commands::execute_shell_command(&wasm_chown_cmd).await?;
 
-    // Step 8: Start the node service
+    // Step 10: Start the node service
     systemctl::start_service(&request.service_name).await?;
 
-    // Step 9: Verify service is running
+    // Step 11: Verify service is running
     let status = systemctl::get_service_status(&request.service_name).await?;
     if status != "active" {
         return Err(anyhow::anyhow!(
@@ -201,7 +79,7 @@ async fn execute_compressed_restore(request: &RestoreRequest) -> Result<String> 
         ));
     }
 
-    info!("Fallback snapshot restore completed successfully for: {}", request.node_name);
+    info!("Snapshot restore completed successfully for: {}", request.node_name);
 
-    Ok(format!("Fallback snapshot restore completed for {} from compressed file", request.node_name))
+    Ok(format!("Snapshot restore completed for {}", request.node_name))
 }
