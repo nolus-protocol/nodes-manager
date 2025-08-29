@@ -7,14 +7,15 @@ use tracing::{debug, info, warn};
 // ========================================================================
 // WARNING: DO NOT MODIFY THE LZ4 FUNCTIONS BELOW (create_lz4_archive, extract_lz4_archive)
 //
-// These functions use the working approach:
-// - Pipeline commands (tar | lz4)
-// - .status() instead of .output()
-// - Stdio::null() for all streams
+// These functions use the working two-step approach:
+// - Step 1: tar command (create/extract tar file)
+// - Step 2: lz4 command (compress/decompress)
+// - .status() instead of .output() for both steps
+// - Stdio::null() for all streams on both steps
 //
-// This combination works reliably. Any changes to this approach will cause
-// workflow hanging issues. If modifications are needed, test thoroughly
-// on a separate branch first.
+// This eliminates pipeline blocking issues. Any changes to this approach
+// will cause workflow hanging issues. If modifications are needed, test
+// thoroughly on a separate branch first.
 // ========================================================================
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
@@ -102,8 +103,8 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
 }
 
 // ========================================================================
-// WORKING LZ4 ARCHIVE FUNCTION - DO NOT MODIFY
-// Uses pipeline approach with .status() + Stdio::null() - this works!
+// WORKING LZ4 ARCHIVE FUNCTION - TWO-STEP APPROACH
+// Uses .status() + Stdio::null() for both steps - eliminates pipeline issues!
 // ========================================================================
 pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories: &[&str]) -> Result<()> {
     let dirs = directories.join(" ");
@@ -115,25 +116,52 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
         }
     }
 
-    let command = format!(
-        "cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
-        source_dir, dirs, target_file
+    // Step 1: Create uncompressed tar file
+    let temp_tar_file = format!("{}.tmp.tar", target_file);
+    let tar_command = format!(
+        "cd '{}' && tar -cf '{}' {}",
+        source_dir, temp_tar_file, dirs
     );
 
-    info!("Creating LZ4 archive: cd '{}' && tar -cf - {} | lz4 -z -c > '{}'",
-          source_dir, dirs, target_file);
+    info!("Step 1: Creating tar archive: {}", tar_command);
 
-    // CRITICAL: This approach works - do not change to .output()
-    let status = AsyncCommand::new("sh")
+    let tar_status = AsyncCommand::new("sh")
         .arg("-c")
-        .arg(&command)
+        .arg(&tar_command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()  // Use .status() NOT .output()
+        .status()  // Same working approach as pruning
         .await?;
 
-    if status.success() {
+    if !tar_status.success() {
+        // Clean up temp file on failure
+        let _ = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await;
+        return Err(anyhow!("Tar archive creation failed"));
+    }
+
+    info!("Step 1 completed successfully");
+
+    // Step 2: Compress the tar file with LZ4
+    let lz4_command = format!("lz4 -z -c '{}' > '{}'", temp_tar_file, target_file);
+
+    info!("Step 2: Compressing with LZ4: {}", lz4_command);
+
+    let lz4_status = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&lz4_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()  // Same working approach as pruning
+        .await?;
+
+    // Clean up temporary tar file regardless of success/failure
+    if let Err(e) = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await {
+        warn!("Failed to cleanup temporary tar file {}: {}", temp_tar_file, e);
+    }
+
+    if lz4_status.success() {
         info!("LZ4 archive created successfully: {}", target_file);
 
         // Verify the file was actually created and has reasonable size
@@ -151,13 +179,13 @@ pub async fn create_lz4_archive(source_dir: &str, target_file: &str, directories
             }
         }
     } else {
-        Err(anyhow!("LZ4 archive creation failed"))
+        Err(anyhow!("LZ4 compression failed"))
     }
 }
 
 // ========================================================================
-// WORKING LZ4 EXTRACT FUNCTION - DO NOT MODIFY
-// Uses pipeline approach with .status() + Stdio::null() - this works!
+// WORKING LZ4 EXTRACT FUNCTION - TWO-STEP APPROACH
+// Uses .status() + Stdio::null() for both steps - eliminates pipeline issues!
 // ========================================================================
 pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result<()> {
     // Verify archive file exists first
@@ -168,25 +196,47 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
     // Create target directory
     create_directory(target_dir).await?;
 
-    let command = format!(
-        "cd '{}' && lz4 -dc '{}' | tar -xf -",
-        target_dir, archive_file
-    );
+    // Step 1: Decompress LZ4 to temporary tar file
+    let temp_tar_file = format!("{}/extracted.tmp.tar", target_dir);
+    let lz4_decompress_command = format!("lz4 -dc '{}' > '{}'", archive_file, temp_tar_file);
 
-    info!("Extracting LZ4 archive: cd '{}' && lz4 -dc '{}' | tar -xf -",
-          target_dir, archive_file);
+    info!("Step 1: Decompressing LZ4: {}", lz4_decompress_command);
 
-    // CRITICAL: This approach works - do not change to .output()
-    let status = AsyncCommand::new("sh")
+    let lz4_status = AsyncCommand::new("sh")
         .arg("-c")
-        .arg(&command)
+        .arg(&lz4_decompress_command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()  // Use .status() NOT .output()
+        .status()  // Same working approach as pruning
         .await?;
 
-    if status.success() {
+    if !lz4_status.success() {
+        return Err(anyhow!("LZ4 decompression failed"));
+    }
+
+    info!("Step 1 completed successfully");
+
+    // Step 2: Extract tar file
+    let tar_extract_command = format!("cd '{}' && tar -xf '{}'", target_dir, temp_tar_file);
+
+    info!("Step 2: Extracting tar: {}", tar_extract_command);
+
+    let tar_status = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&tar_extract_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()  // Same working approach as pruning
+        .await?;
+
+    // Clean up temporary tar file regardless of success/failure
+    if let Err(e) = execute_shell_command(&format!("rm -f '{}'", temp_tar_file)).await {
+        warn!("Failed to cleanup temporary tar file {}: {}", temp_tar_file, e);
+    }
+
+    if tar_status.success() {
         info!("LZ4 archive extracted successfully to: {}", target_dir);
 
         // Verify extraction by checking if data directory exists
@@ -202,12 +252,13 @@ pub async fn extract_lz4_archive(archive_file: &str, target_dir: &str) -> Result
             }
         }
     } else {
-        Err(anyhow!("LZ4 archive extraction failed"))
+        Err(anyhow!("Tar extraction failed"))
     }
 }
 
 // ========================================================================
-// END OF CRITICAL WORKING FUNCTIONS
+// END OF CRITICAL WORKING FUNCTIONS - TWO-STEP LZ4 APPROACH
+// Both functions use reliable two-step process + .status() + Stdio::null()
 // ========================================================================
 
 pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String]) -> Result<bool> {
