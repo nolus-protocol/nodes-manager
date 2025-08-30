@@ -24,27 +24,47 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 }
 
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
-    let command = format!(
-        "cosmos-pruner prune '{}' --blocks={} --versions={} && echo 'PRUNING_SUCCESS'",
-        deploy_path, keep_blocks, keep_versions
-    );
+    info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    info!("Executing cosmos-pruner: {}", command);
+    // Use direct command execution - no shell wrapper
+    let mut command = AsyncCommand::new("cosmos-pruner");
+    command
+        .arg("prune")
+        .arg(deploy_path)
+        .arg("--blocks")
+        .arg(keep_blocks.to_string())
+        .arg("--versions")
+        .arg(keep_versions.to_string());
 
-    let output = AsyncCommand::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .output()
-        .await?;
+    info!("Executing cosmos-pruner process - waiting for completion...");
+
+    let output = command.output().await?;
+
+    // GUARANTEED: Every process has an exit code - capture it immediately
+    let exit_code = output.status.code().unwrap_or(-1);
+    let success = output.status.success();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if stdout.contains("PRUNING_SUCCESS") {
-        info!("Cosmos-pruner completed successfully");
-        Ok(format!("Cosmos-pruner completed successfully\nOutput: {}", stdout.trim()))
+    // LOG: Always log completion and exit code for debugging
+    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
+    info!("cosmos-pruner stdout length: {} bytes", stdout.len());
+    if !stderr.is_empty() {
+        info!("cosmos-pruner stderr: {}", stderr.trim());
+    }
+
+    // CONTINUE WORKFLOW: Regardless of exit code, return appropriate result
+    if success {
+        info!("cosmos-pruner completed successfully (exit code 0)");
+        Ok(format!("cosmos-pruner completed successfully (exit code: {})\nOutput: {}", exit_code, stdout.trim()))
     } else {
-        Err(anyhow!("Cosmos-pruner failed or did not complete properly\nStdout: {}\nStderr: {}", stdout.trim(), stderr.trim()))
+        // Process completed with non-zero exit code - this is still completion!
+        error!("cosmos-pruner failed with exit code: {}", exit_code);
+        Err(anyhow!(
+            "cosmos-pruner failed (exit code: {})\nStdout: {}\nStderr: {}",
+            exit_code, stdout.trim(), stderr.trim()
+        ))
     }
 }
 
