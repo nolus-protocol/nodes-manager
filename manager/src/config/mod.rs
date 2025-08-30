@@ -15,10 +15,7 @@ pub struct Config {
     pub alarm_webhook_url: String,
     pub hermes_min_uptime_minutes: Option<u32>,
     pub auto_restore_trigger_words: Option<Vec<String>>,
-    pub log_monitoring_enabled: Option<bool>,
-    pub log_monitoring_patterns: Option<Vec<String>>,
     pub log_monitoring_interval_minutes: Option<u32>,
-    pub log_monitoring_context_lines: Option<i32>,
 
     // Populated from individual server config files
     #[serde(skip)]
@@ -36,7 +33,6 @@ pub struct ServerConfig {
     pub api_key: String,
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
-    pub max_concurrent_requests: Option<usize>,
 }
 
 fn default_request_timeout() -> u64 {
@@ -68,6 +64,11 @@ pub struct NodeConfig {
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
+
+    // Per-node log monitoring configuration
+    pub log_monitoring_enabled: Option<bool>,
+    pub log_monitoring_patterns: Option<Vec<String>>,
+    pub log_monitoring_context_lines: Option<i32>,
 
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,

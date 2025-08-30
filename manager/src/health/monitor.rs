@@ -79,6 +79,13 @@ struct AlertState {
     alert_count: u32,
 }
 
+#[derive(Debug, Clone)]
+struct LogAlertState {
+    first_alert: DateTime<Utc>,
+    last_alert_sent: DateTime<Utc>,
+    alert_count: u32,
+}
+
 // Auto-restore cooldown tracking
 #[derive(Debug, Clone)]
 struct AutoRestoreCooldown {
@@ -101,6 +108,7 @@ pub struct HealthMonitor {
     snapshot_manager: Arc<SnapshotManager>,
     client: HttpClient,
     alert_states: Arc<tokio::sync::Mutex<HashMap<String, AlertState>>>,
+    log_alert_states: Arc<tokio::sync::Mutex<HashMap<String, LogAlertState>>>,
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
     // Auto-restore cooldown tracking (2 hour cooldown)
     auto_restore_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, AutoRestoreCooldown>>>,
@@ -129,6 +137,7 @@ impl HealthMonitor {
             snapshot_manager,
             client,
             alert_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            log_alert_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             previous_health_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             auto_restore_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             block_height_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -199,19 +208,6 @@ impl HealthMonitor {
             }
         }
 
-        // Log monitoring if enabled (only for healthy nodes NOT in maintenance)
-        if self.config.log_monitoring_enabled.unwrap_or(false) {
-            let non_maintenance_statuses: Vec<_> = health_statuses.iter()
-                .filter(|status| !status.in_maintenance)
-                .collect();
-
-            if !non_maintenance_statuses.is_empty() {
-                if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
-                    error!("Log monitoring failed: {}", e);
-                }
-            }
-        }
-
         // FIXED: Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period (exclude maintenance nodes)
         let non_maintenance_statuses: Vec<_> = health_statuses.iter()
             .filter(|status| !status.in_maintenance)
@@ -225,6 +221,170 @@ impl HealthMonitor {
         }
 
         Ok(health_statuses)
+    }
+
+    // NEW: Separate log monitoring method for all nodes with per-node configuration and rate limiting
+    pub async fn monitor_logs_for_all_nodes(&self) -> Result<()> {
+        let mut tasks = Vec::new();
+
+        for (node_name, node_config) in &self.config.nodes {
+            if !node_config.enabled {
+                continue;
+            }
+
+            // Skip nodes in maintenance
+            if self.maintenance_tracker.is_in_maintenance(node_name).await {
+                continue;
+            }
+
+            // Skip if log monitoring not enabled for this node
+            if !node_config.log_monitoring_enabled.unwrap_or(false) {
+                continue;
+            }
+
+            // Skip if no patterns configured for this node
+            let patterns = match &node_config.log_monitoring_patterns {
+                Some(patterns) if !patterns.is_empty() => patterns,
+                _ => continue,
+            };
+
+            // Skip if no log path configured
+            let log_path = match &node_config.log_path {
+                Some(path) => path,
+                None => continue,
+            };
+
+            let context_lines: i32 = node_config.log_monitoring_context_lines.unwrap_or(2);
+            let node_name = node_name.clone();
+            let server_host = node_config.server_host.clone();
+            let log_path = log_path.clone();
+            let patterns = patterns.clone();
+            let monitor = self.clone();
+
+            let task = tokio::spawn(async move {
+                monitor.check_node_logs_with_rate_limiting(&node_name, &server_host, &log_path, &patterns, context_lines).await
+            });
+
+            tasks.push(task);
+        }
+
+        let results = join_all(tasks).await;
+        for result in results {
+            if let Err(e) = result {
+                error!("Log monitoring task failed: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn check_node_logs_with_rate_limiting(&self, node_name: &str, server_host: &str, log_path: &str, patterns: &[String], context_lines: i32) -> Result<()> {
+        let server_config = self.config.servers.get(server_host)
+            .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
+
+        let command = format!(
+            "tail -n 1000 {}/out1.log | grep -n -A {} -B {} -E '{}'",
+            log_path,
+            context_lines,
+            context_lines,
+            patterns.join("|")
+        );
+
+        match self.execute_log_command(server_config, &command).await {
+            Ok(output) => {
+                if !output.trim().is_empty() {
+                    // Pattern found - send rate-limited alert
+                    if let Err(e) = self.send_progressive_log_alert(node_name, server_host, log_path, &output, patterns).await {
+                        error!("Failed to send log alert for {}: {}", node_name, e);
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Log monitoring for {} failed: {}", node_name, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_progressive_log_alert(&self, node_name: &str, server_host: &str, log_path: &str, log_output: &str, patterns: &[String]) -> Result<()> {
+        let mut log_alert_states = self.log_alert_states.lock().await;
+        let now = Utc::now();
+
+        let should_send_alert = match log_alert_states.get_mut(node_name) {
+            None => {
+                // First time seeing this pattern - send immediate alert
+                let alert_state = LogAlertState {
+                    first_alert: now,
+                    last_alert_sent: now,
+                    alert_count: 1,
+                };
+                log_alert_states.insert(node_name.to_string(), alert_state);
+                true
+            }
+
+            Some(alert_state) => {
+                let hours_since_first = (now - alert_state.first_alert).num_hours();
+                let hours_since_last = (now - alert_state.last_alert_sent).num_hours();
+
+                // Same progressive escalation as health alerts: immediate, 3h, 6h, 12h, then every 24h
+                let should_alert = match alert_state.alert_count {
+                    1 => hours_since_first >= 3,  // Second alert after 3 hours
+                    2 => hours_since_first >= 6,  // Third alert after 6 hours
+                    3 => hours_since_first >= 12, // Fourth alert after 12 hours
+                    _ => hours_since_last >= 24,  // Then every 24 hours
+                };
+
+                if should_alert {
+                    alert_state.last_alert_sent = now;
+                    alert_state.alert_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        drop(log_alert_states);
+
+        if should_send_alert {
+            self.send_log_alert(node_name, server_host, log_path, log_output, patterns).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn send_log_alert(&self, node_name: &str, server_host: &str, log_path: &str, log_output: &str, patterns: &[String]) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let payload = serde_json::json!({
+            "node_name": node_name,
+            "server_host": server_host,
+            "log_path": log_path,
+            "log_output": log_output,
+            "matched_patterns": patterns,
+            "timestamp": Utc::now(),
+            "alert_type": "log_pattern_match"
+        });
+
+        let response = timeout(
+            Duration::from_secs(10),
+            self.client.post(&self.config.alarm_webhook_url)
+                .json(&payload)
+                .send(),
+        )
+        .await
+        .map_err(|_| anyhow!("Log alert webhook timeout"))?
+        .map_err(|e| anyhow!("Log alert webhook request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Log alert webhook returned status: {}", response.status()));
+        }
+
+        info!("Log pattern alert sent for node: {} (patterns: {:?})", node_name, patterns);
+        Ok(())
     }
 
     // FIXED: Only monitor auto-restore triggers for UNHEALTHY nodes and only ONCE per unhealthy period
@@ -519,6 +679,14 @@ impl HealthMonitor {
                 info!("Node {} recovered - sending recovery notification", status.node_name);
                 // FIXED: Clear auto-restore checked flag when node recovers
                 self.clear_auto_restore_checked(&status.node_name).await;
+
+                // Clear log alert state when node recovers
+                {
+                    let mut log_alert_states = self.log_alert_states.lock().await;
+                    if log_alert_states.remove(&status.node_name).is_some() {
+                        debug!("Cleared log alert state for recovered node: {}", status.node_name);
+                    }
+                }
 
                 if let Err(e) = self.send_recovery_notification(status).await {
                     error!("Failed to send recovery notification for {}: {}", status.node_name, e);
@@ -896,80 +1064,6 @@ impl HealthMonitor {
         Ok(())
     }
 
-    async fn monitor_logs(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
-        let patterns = match &self.config.log_monitoring_patterns {
-            Some(patterns) if !patterns.is_empty() => patterns,
-            _ => return Ok(()),
-        };
-
-        let context_lines_value: i32 = self.config.log_monitoring_context_lines.unwrap_or(2);
-        let mut tasks = Vec::new();
-
-        for status in health_statuses {
-            if !status.is_healthy {
-                continue;
-            }
-
-            let node_config = match self.config.nodes.get(&status.node_name) {
-                Some(config) => config,
-                None => continue,
-            };
-
-            let log_path = match &node_config.log_path {
-                Some(path) => path,
-                None => continue,
-            };
-
-            let node_name = status.node_name.clone();
-            let server_host = status.server_host.clone();
-            let log_path = log_path.clone();
-            let patterns = patterns.clone();
-            let monitor = self.clone();
-            let context_lines = context_lines_value;
-
-            let task = tokio::spawn(async move {
-                monitor.check_node_logs(&node_name, &server_host, &log_path, &patterns, context_lines).await
-            });
-
-            tasks.push(task);
-        }
-
-        let results = join_all(tasks).await;
-        for result in results {
-            if let Err(e) = result {
-                error!("Log monitoring task failed: {}", e);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn check_node_logs(&self, node_name: &str, server_host: &str, log_path: &str, patterns: &[String], context_lines: i32) -> Result<()> {
-        let server_config = self.config.servers.get(server_host)
-            .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
-
-        let command = format!(
-            "tail -n 1000 {}/out1.log | grep -n -A {} -B {} -E '{}'",
-            log_path,
-            context_lines,
-            context_lines,
-            patterns.join("|")
-        );
-
-        match self.execute_log_command(server_config, &command).await {
-            Ok(output) => {
-                if !output.trim().is_empty() {
-                    self.send_log_alert(node_name, server_host, log_path, &output).await?;
-                }
-            }
-            Err(e) => {
-                debug!("Log monitoring for {} failed: {}", node_name, e);
-            }
-        }
-
-        Ok(())
-    }
-
     async fn execute_log_command(&self, server_config: &ServerConfig, command: &str) -> Result<String> {
         let agent_url = format!("http://{}:{}/command/execute", server_config.host, server_config.agent_port);
 
@@ -998,34 +1092,6 @@ impl HealthMonitor {
 
         Ok(output)
     }
-
-    async fn send_log_alert(&self, node_name: &str, server_host: &str, log_path: &str, log_output: &str) -> Result<()> {
-        let payload = serde_json::json!({
-            "node_name": node_name,
-            "server_host": server_host,
-            "log_path": log_path,
-            "log_output": log_output,
-            "timestamp": Utc::now(),
-            "alert_type": "log_pattern_match"
-        });
-
-        let response = timeout(
-            Duration::from_secs(10),
-            self.client.post(&self.config.alarm_webhook_url)
-                .json(&payload)
-                .send(),
-        )
-        .await
-        .map_err(|_| anyhow!("Log alert webhook timeout"))?
-        .map_err(|e| anyhow!("Log alert webhook request failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!("Log alert webhook returned status: {}", response.status()));
-        }
-
-        debug!("Log alert sent for node: {}", node_name);
-        Ok(())
-    }
 }
 
 impl Clone for HealthMonitor {
@@ -1037,6 +1103,7 @@ impl Clone for HealthMonitor {
             snapshot_manager: self.snapshot_manager.clone(),
             client: self.client.clone(),
             alert_states: self.alert_states.clone(),
+            log_alert_states: self.log_alert_states.clone(),
             previous_health_states: self.previous_health_states.clone(),
             auto_restore_cooldowns: self.auto_restore_cooldowns.clone(),
             block_height_states: self.block_height_states.clone(),
