@@ -387,6 +387,108 @@ impl HttpAgentManager {
         Ok(())
     }
 
+    // === NEW: RESTORE FUNCTIONALITY ===
+
+    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
+
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        let maintenance_result = self.maintenance_tracker.start_maintenance(
+            node_name,
+            "snapshot_restore",
+            1440,
+            &node_config.server_host
+        ).await;
+
+        if let Err(e) = maintenance_result {
+            self.operation_tracker.finish_operation(node_name).await;
+            return Err(e);
+        }
+
+        let result = self.restore_node_from_snapshot_impl(node_name).await;
+
+        self.operation_tracker.finish_operation(node_name).await;
+        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+            info!("Failed to end maintenance for {}: {}", node_name, e);
+        }
+
+        result
+    }
+
+    async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        if !node_config.snapshots_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+        }
+
+        if !node_config.auto_restore_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
+        }
+
+        let deploy_path = node_config.pruning_deploy_path.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
+
+        let backup_path = node_config.snapshot_backup_path.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
+
+        let service_name = node_config.pruning_service_name.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+
+        // Find latest snapshot directory
+        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
+
+        info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
+
+        let payload = json!({
+            "node_name": node_name,
+            "deploy_path": deploy_path,
+            "snapshot_dir": latest_snapshot_dir,
+            "service_name": service_name,
+            "log_path": node_config.log_path
+        });
+
+        let result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
+
+        // Create SnapshotInfo from restore result
+        let snapshot_info = crate::snapshot::SnapshotInfo {
+            node_name: node_name.to_string(),
+            network: node_config.network.clone(),
+            filename: latest_snapshot_dir.split('/').last().unwrap_or("unknown").to_string(),
+            created_at: Utc::now(), // We don't have the original creation time from restore
+            file_size_bytes: None, // We don't have size info from restore
+            snapshot_path: latest_snapshot_dir,
+            compression_type: "directory".to_string(),
+        };
+
+        info!("Restore completed successfully for node {}", node_name);
+        Ok(snapshot_info)
+    }
+
+    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, node_name: &str) -> Result<String> {
+        let list_cmd = format!(
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | head -1",
+            backup_path, node_name
+        );
+
+        let output = self.execute_single_command(server_host, &list_cmd).await?;
+
+        let snapshot_dir = output.trim();
+        if snapshot_dir.is_empty() {
+            return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
+        }
+
+        // Verify the snapshot directory exists and contains data
+        let verify_cmd = format!("test -d '{}/data'", snapshot_dir);
+        self.execute_single_command(server_host, &verify_cmd).await
+            .map_err(|_| anyhow::anyhow!("Snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
+
+        Ok(snapshot_dir.to_string())
+    }
+
     pub async fn cancel_operation(&self, target_name: &str) -> Result<()> {
         self.operation_tracker.cancel_operation(target_name).await
     }
@@ -425,13 +527,38 @@ impl HttpAgentManager {
         Ok(true)
     }
 
-    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        Err(anyhow::anyhow!("Restore not implemented for {}", node_name))
-    }
-
     pub async fn check_auto_restore_triggers(&self, node_name: &str) -> Result<bool> {
-        let _ = node_name;
-        Ok(false)
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        let trigger_words = match &self.config.auto_restore_trigger_words {
+            Some(words) if !words.is_empty() => words,
+            _ => return Ok(false),
+        };
+
+        let log_path = match &node_config.log_path {
+            Some(path) => path,
+            None => return Ok(false),
+        };
+
+        let log_file = format!("{}/out1.log", log_path);
+        let payload = json!({
+            "log_file": log_file,
+            "trigger_words": trigger_words
+        });
+
+        let result = self.execute_operation(&node_config.server_host, "/snapshot/check-triggers", payload).await?;
+
+        let output = result.get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("{}");
+
+        let parsed: serde_json::Value = serde_json::from_str(output).unwrap_or_default();
+        let triggers_found = parsed.get("triggers_found")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        Ok(triggers_found)
     }
 }
 

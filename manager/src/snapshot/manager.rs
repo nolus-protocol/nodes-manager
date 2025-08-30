@@ -130,17 +130,8 @@ impl SnapshotManager {
 
         info!("Starting snapshot restore for node {} via HTTP agent", node_name);
 
-        // Start maintenance tracking with 24-hour timeout for restore operations
-        self.maintenance_tracker
-            .start_maintenance(node_name, "snapshot_restore", 1440, &node_config.server_host)
-            .await?;
-
+        // FIXED: Don't do maintenance tracking here - HttpAgentManager already does it
         let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
-
-        // End maintenance tracking
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            error!("Failed to end maintenance mode for {}: {}", node_name, e);
-        }
 
         // Send notification based on result
         match &restore_result {
