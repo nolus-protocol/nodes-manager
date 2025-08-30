@@ -315,11 +315,22 @@ async fn create_snapshot(
     state.finish_operation(&request.node_name).await;
 
     match result {
-        Ok(snapshot_info) => Ok(ResponseJson(ApiResponse::success_with_snapshot(
-            snapshot_info.filename,
-            snapshot_info.size_bytes,
-            snapshot_info.path,
-        ))),
+        Ok(snapshot_info) => {
+            // IMPORTANT: Spawn background LZ4 compression AFTER returning success
+            let backup_path = request.backup_path.clone();
+            let snapshot_dirname = snapshot_info.filename.clone();
+
+            tokio::spawn(async move {
+                commands::create_lz4_compressed_snapshot(&backup_path, &snapshot_dirname).await;
+            });
+
+            // Return success immediately without waiting for LZ4
+            Ok(ResponseJson(ApiResponse::success_with_snapshot(
+                snapshot_info.filename,
+                snapshot_info.size_bytes,
+                snapshot_info.path,
+            )))
+        }
         Err(e) => {
             error!("Snapshot creation failed for {}: {}", request.node_name, e);
             Ok(ResponseJson(ApiResponse::error(e.to_string())))
