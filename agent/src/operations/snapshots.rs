@@ -6,13 +6,12 @@ use crate::services::{commands, logs, systemctl};
 use crate::types::{SnapshotInfo, SnapshotRequest};
 
 pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result<SnapshotInfo> {
-    info!("Starting snapshot creation for: {}", request.node_name);
+    info!("Starting snapshot creation for network: {} (from node: {})", request.network, request.node_name);
 
-    // Generate timestamp and directory name using the node_name from request
+    // FIXED: Generate snapshot directory name using NETWORK instead of node_name
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let snapshot_dirname = format!("{}_{}", request.node_name, timestamp);
+    let snapshot_dirname = format!("{}_{}", request.network, timestamp);
     let snapshot_path = format!("{}/{}", request.backup_path, snapshot_dirname);
-    let validator_backup_path = format!("{}/priv_validator_state.json", snapshot_path);
 
     // Step 1: Create backup directory and snapshot directory
     commands::create_directory(&request.backup_path).await?;
@@ -26,15 +25,18 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
         logs::truncate_log_path(log_path).await?;
     }
 
-    // Step 4: Backup validator state to snapshot directory
-    let validator_source = format!("{}/data/priv_validator_state.json", request.deploy_path);
-    commands::copy_file_if_exists(&validator_source, &validator_backup_path).await?;
+    // FIXED: Skip validator state backup - we don't want validator state in snapshots
+    info!("Skipping validator state backup (will be preserved on individual nodes during restore)");
 
-    // Step 5: Copy data and wasm directories to snapshot directory
-    info!("Copying blockchain data to snapshot directory...");
+    // Step 4: Copy ONLY data and wasm directories to snapshot directory (no validator state)
+    info!("Copying blockchain data to snapshot directory (excluding validator state)...");
     commands::copy_directories_to_snapshot(&request.deploy_path, &snapshot_path, &["data", "wasm"]).await?;
 
-    // Step 6: Get directory size and verify snapshot
+    // FIXED: Remove any validator state that might have been copied
+    let validator_in_snapshot = format!("{}/data/priv_validator_state.json", snapshot_path);
+    commands::remove_file_if_exists(&validator_in_snapshot).await?;
+
+    // Step 5: Get directory size and verify snapshot
     let size_bytes = commands::get_directory_size(&snapshot_path).await?;
     if size_bytes < 1024 {
         return Err(anyhow::anyhow!(
@@ -43,10 +45,10 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
         ));
     }
 
-    // Step 7: Start the node service
+    // Step 6: Start the node service
     systemctl::start_service(&request.service_name).await?;
 
-    // Step 8: Verify service is running
+    // Step 7: Verify service is running
     let status = systemctl::get_service_status(&request.service_name).await?;
     if status != "active" {
         return Err(anyhow::anyhow!(
@@ -55,8 +57,8 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
         ));
     }
 
-    info!("Snapshot directory created successfully: {} ({:.1} MB)",
-          snapshot_dirname, size_bytes as f64 / 1024.0 / 1024.0);
+    info!("Network snapshot created successfully: {} ({:.1} MB) - can be used by any node on {} network",
+          snapshot_dirname, size_bytes as f64 / 1024.0 / 1024.0, request.network);
 
     Ok(SnapshotInfo {
         filename: snapshot_dirname,

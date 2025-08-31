@@ -68,7 +68,7 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
-        info!("Starting directory snapshot creation for node {} via HTTP agent", node_name);
+        info!("Starting network snapshot creation for {} network via node {} (HTTP agent)", node_config.network, node_name);
 
         // Start maintenance tracking with 24-hour timeout for all snapshots
         self.maintenance_tracker
@@ -85,19 +85,20 @@ impl SnapshotManager {
         // Handle result and cleanup
         match &snapshot_result {
             Ok(snapshot_info) => {
-                info!("Snapshot created successfully: {}", snapshot_info.filename);
+                info!("Network snapshot created successfully: {} (can be used by any node on {} network)",
+                      snapshot_info.filename, snapshot_info.network);
 
-                // NEW: Automatic cleanup based on retention count
+                // FIXED: Automatic cleanup based on retention count for NETWORK snapshots
                 if let Some(retention_count) = node_config.snapshot_retention_count {
-                    info!("Running automatic cleanup for {} (keeping {} snapshots)", node_name, retention_count);
-                    match self.cleanup_old_snapshots(node_name, retention_count as u32).await {
+                    info!("Running automatic cleanup for {} network (keeping {} snapshots)", snapshot_info.network, retention_count);
+                    match self.cleanup_old_network_snapshots(&snapshot_info.network, retention_count as u32).await {
                         Ok(deleted_count) => {
                             if deleted_count > 0 {
-                                info!("Automatic cleanup: deleted {} old snapshots for {}", deleted_count, node_name);
+                                info!("Automatic cleanup: deleted {} old network snapshots for {}", deleted_count, snapshot_info.network);
                             }
                         },
                         Err(e) => {
-                            warn!("Automatic cleanup failed for {}: {}", node_name, e);
+                            warn!("Automatic cleanup failed for {} network: {}", snapshot_info.network, e);
                         }
                     }
                 }
@@ -128,7 +129,8 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
 
-        info!("Starting snapshot restore for node {} via HTTP agent", node_name);
+        info!("Starting snapshot restore for node {} from {} network snapshots (preserving validator state)",
+              node_name, node_config.network);
 
         // FIXED: Don't do maintenance tracking here - HttpAgentManager already does it
         let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
@@ -161,7 +163,7 @@ impl SnapshotManager {
         self.http_manager.check_auto_restore_triggers(node_name).await
     }
 
-    /// List all snapshots for a node via HTTP agent
+    /// FIXED: List all snapshots for a NETWORK (not specific node) via HTTP agent
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -173,10 +175,10 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // FIXED: List snapshot directories instead of gzip files
+        // FIXED: List NETWORK snapshots instead of node-specific snapshots
         let list_cmd = format!(
             "find '{}' -maxdepth 1 -type d -name '{}_*' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
-            backup_path, node_name
+            backup_path, node_config.network
         );
 
         let output = self.http_manager
@@ -197,8 +199,8 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // Parse timestamp from directory name using node_name as prefix
-                let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_name)) {
+                // FIXED: Parse timestamp from network directory name
+                let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_config.network)) {
                     chrono::NaiveDateTime::parse_from_str(ts_part, "%Y%m%d_%H%M%S")
                         .ok()
                         .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
@@ -214,13 +216,13 @@ impl SnapshotManager {
                 };
 
                 snapshots.push(SnapshotInfo {
-                    node_name: node_name.to_string(),
+                    node_name: node_name.to_string(), // Keep original node name for API compatibility
                     network: node_config.network.clone(),
                     filename,
                     created_at,
                     file_size_bytes,
                     snapshot_path: full_path.to_string(),
-                    compression_type: "directory".to_string(), // FIXED: Changed from gzip to directory
+                    compression_type: "directory".to_string(),
                 });
             }
         }
@@ -228,7 +230,7 @@ impl SnapshotManager {
         Ok(snapshots)
     }
 
-    /// Clean up old snapshots based on retention count via HTTP agent
+    /// FIXED: Clean up old NETWORK snapshots based on retention count via HTTP agent
     pub async fn cleanup_old_snapshots(&self, node_name: &str, retention_count: u32) -> Result<u32> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -240,37 +242,47 @@ impl SnapshotManager {
             return Err(anyhow::anyhow!("Retention count must be at least 1"));
         }
 
+        self.cleanup_old_network_snapshots(&node_config.network, retention_count).await
+    }
+
+    /// FIXED: Clean up old snapshots for a specific NETWORK
+    async fn cleanup_old_network_snapshots(&self, network: &str, retention_count: u32) -> Result<u32> {
+        // Find a node on this network to use for the operation
+        let (node_name, node_config) = self.config.nodes.iter()
+            .find(|(_, config)| config.network == network && config.snapshots_enabled.unwrap_or(false))
+            .ok_or_else(|| anyhow::anyhow!("No nodes found with snapshots enabled for network {}", network))?;
+
         let mut snapshots = self.list_snapshots(node_name).await?;
 
         // Sort by creation time, newest first
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         if snapshots.len() <= retention_count as usize {
-            info!("No old snapshots to clean up for {} (have {}, keeping {})",
-                  node_name, snapshots.len(), retention_count);
+            info!("No old network snapshots to clean up for {} (have {}, keeping {})",
+                  network, snapshots.len(), retention_count);
             return Ok(0);
         }
 
         let snapshots_to_delete = &snapshots[(retention_count as usize)..];
         let mut deleted_count = 0;
 
-        info!("Cleaning up {} old snapshot directories for node {} (keeping {} most recent) via HTTP agent",
-              snapshots_to_delete.len(), node_name, retention_count);
+        info!("Cleaning up {} old network snapshot directories for {} (keeping {} most recent) via HTTP agent",
+              snapshots_to_delete.len(), network, retention_count);
 
         for snapshot in snapshots_to_delete {
-            // FIXED: Delete snapshot directory instead of gzip file
+            // Delete network snapshot directory
             match self.delete_snapshot_directory(&node_config.server_host, &snapshot.snapshot_path).await {
                 Ok(_) => {
-                    info!("Deleted old snapshot directory via HTTP agent: {}", snapshot.filename);
+                    info!("Deleted old network snapshot directory via HTTP agent: {}", snapshot.filename);
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to delete snapshot directory {} via HTTP agent: {}", snapshot.filename, e);
+                    warn!("Failed to delete network snapshot directory {} via HTTP agent: {}", snapshot.filename, e);
                 }
             }
         }
 
-        info!("Cleaned up {} old snapshot directories for node {} via HTTP agent", deleted_count, node_name);
+        info!("Cleaned up {} old network snapshot directories for {} via HTTP agent", deleted_count, network);
         Ok(deleted_count)
     }
 
@@ -289,7 +301,7 @@ impl SnapshotManager {
         let snapshot_path = format!("{}/{}", backup_path, filename);
         self.delete_snapshot_directory(&node_config.server_host, &snapshot_path).await?;
 
-        info!("Deleted snapshot directory {} for node {} via HTTP agent", filename, node_name);
+        info!("Deleted network snapshot directory {} via HTTP agent", filename);
         Ok(())
     }
 
@@ -317,7 +329,7 @@ impl SnapshotManager {
             *by_network.entry(snapshot.network.clone()).or_insert(0) += 1;
         }
 
-        // FIXED: All snapshots are directories now
+        // All snapshots are directories now
         let compression_type = "directory".to_string();
 
         Ok(SnapshotStats {
@@ -364,6 +376,7 @@ impl SnapshotManager {
                 "server_host": server_host_clone,
                 "compression_type": "directory",
                 "connection_type": "http_agent",
+                "snapshot_type": "network_based",
                 "timestamp": Utc::now().to_rfc3339()
             })),
         };

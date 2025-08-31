@@ -118,7 +118,7 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn _get_file_size(file_path: &str) -> Result<u64> {
+pub async fn get_file_size(file_path: &str) -> Result<u64> {
     let command = format!("stat -c%s '{}'", file_path);
     let output = execute_shell_command(&command).await?;
 
@@ -134,6 +134,54 @@ pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> 
 
     let output = execute_shell_command(&command).await?;
     debug!("Copy result: {}", output.trim());
+    Ok(())
+}
+
+// FIXED: NEW - Remove file if it exists (for cleaning validator state from snapshots)
+pub async fn remove_file_if_exists(file_path: &str) -> Result<()> {
+    let command = format!(
+        "if [ -f '{}' ]; then rm '{}' && echo 'removed'; else echo 'not found'; fi",
+        file_path, file_path
+    );
+
+    let output = execute_shell_command(&command).await?;
+    debug!("Remove result for {}: {}", file_path, output.trim());
+    Ok(())
+}
+
+// FIXED: NEW - Backup current validator state before restore
+pub async fn backup_current_validator_state(source: &str, backup_path: &str) -> Result<()> {
+    info!("Backing up current validator state from {} to {}", source, backup_path);
+
+    let command = format!(
+        "if [ -f '{}' ]; then cp '{}' '{}' && echo 'validator_state_backed_up'; else echo 'validator_state_not_found'; fi",
+        source, source, backup_path
+    );
+
+    let output = execute_shell_command(&command).await?;
+    if output.contains("validator_state_backed_up") {
+        info!("Current validator state backed up successfully");
+    } else {
+        info!("No current validator state found - will create default after restore");
+    }
+    Ok(())
+}
+
+// FIXED: NEW - Restore current validator state after snapshot restore
+pub async fn restore_current_validator_state(backup_path: &str, destination: &str) -> Result<()> {
+    info!("Restoring current validator state from {} to {}", backup_path, destination);
+
+    let command = format!(
+        "if [ -f '{}' ]; then cp '{}' '{}' && echo 'validator_state_restored'; else echo 'validator_backup_not_found'; fi",
+        backup_path, backup_path, destination
+    );
+
+    let output = execute_shell_command(&command).await?;
+    if output.contains("validator_state_restored") {
+        info!("Current validator state restored successfully - signing state preserved");
+    } else {
+        warn!("No validator state backup found - node will start with default validator state");
+    }
     Ok(())
 }
 
