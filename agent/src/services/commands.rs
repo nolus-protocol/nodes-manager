@@ -118,7 +118,7 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_file_size(file_path: &str) -> Result<u64> {
+pub async fn _get_file_size(file_path: &str) -> Result<u64> {
     let command = format!("stat -c%s '{}'", file_path);
     let output = execute_shell_command(&command).await?;
 

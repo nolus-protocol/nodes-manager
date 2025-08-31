@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     scheduler.start().await?;
     info!("Scheduler started");
 
-    // Start periodic health monitoring (now includes auto-restore checking)
+    // Start periodic health monitoring (now includes auto-restore checking and log monitoring)
     let health_monitor_clone = health_monitor.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(90));
@@ -129,20 +129,6 @@ async fn main() -> Result<()> {
             interval.tick().await;
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
                 warn!("Health monitoring error: {}", e);
-            }
-        }
-    });
-
-    // NEW: Start separate periodic log monitoring with configurable interval
-    let health_monitor_log = health_monitor.clone();
-    let log_interval_minutes = config.log_monitoring_interval_minutes.unwrap_or(5);
-    info!("Starting log monitoring task with {}-minute interval", log_interval_minutes);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(log_interval_minutes as u64 * 60));
-        loop {
-            interval.tick().await;
-            if let Err(e) = health_monitor_log.monitor_logs_for_all_nodes().await {
-                warn!("Log monitoring error: {}", e);
             }
         }
     });
@@ -173,7 +159,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started (health monitoring every 90s, log monitoring every {}m, auto-restore monitoring)", log_interval_minutes);
+    info!("Background tasks started (including auto-restore monitoring)");
 
     // Start web server
     start_web_server(

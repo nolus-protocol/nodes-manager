@@ -28,7 +28,7 @@ pub struct AppState {
 }
 
 #[derive(Clone, Debug)]
-struct BusyState {
+pub struct BusyState {
     operation_type: String,
     started_at: chrono::DateTime<chrono::Utc>,
 }
@@ -151,18 +151,6 @@ fn validate_api_key(headers: &axum::http::HeaderMap, expected_key: &str) -> bool
         }
     }
     false
-}
-
-// Extract node name from request (different operations have different request structures)
-fn extract_node_name_from_request(request: &serde_json::Value) -> Option<String> {
-    // Try different possible node name fields
-    if let Some(node_name) = request.get("node_name").and_then(|v| v.as_str()) {
-        return Some(node_name.to_string());
-    }
-    if let Some(service_name) = request.get("service_name").and_then(|v| v.as_str()) {
-        return Some(service_name.to_string());
-    }
-    None
 }
 
 // === BASIC COMMAND OPERATIONS ===

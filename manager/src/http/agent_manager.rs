@@ -451,7 +451,7 @@ impl HttpAgentManager {
             "log_path": node_config.log_path
         });
 
-        let result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
+        let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
 
         // Create SnapshotInfo from restore result
         let snapshot_info = crate::snapshot::SnapshotInfo {
