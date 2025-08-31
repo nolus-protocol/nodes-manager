@@ -23,19 +23,6 @@ pub struct OperationResult {
     pub executed_at: DateTime<Utc>,
 }
 
-#[derive(Clone)]
-pub struct SchedulerConfig {
-    // All fields removed as they were unused
-}
-
-impl Default for SchedulerConfig {
-    fn default() -> Self {
-        Self {
-            // All fields removed
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationStatus {
     Scheduled,

@@ -20,7 +20,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub health_service: Arc<HealthMonitor>,
     pub agent_manager: Arc<HttpAgentManager>,
-    pub snapshot_service: Arc<SnapshotManager>, // NEW: Add snapshot service
+    pub snapshot_service: Arc<SnapshotManager>,
 }
 
 impl AppState {
@@ -37,7 +37,7 @@ impl AppState {
             config,
             health_service: health_monitor,
             agent_manager: http_manager,
-            snapshot_service: snapshot_manager, // NEW: Include snapshot service
+            snapshot_service: snapshot_manager,
         }
     }
 }
@@ -76,16 +76,4 @@ pub struct HermesInstance {
     pub uptime_formatted: Option<String>,
     pub dependent_nodes: Vec<String>,
     pub in_maintenance: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SystemMetrics {
-    pub total_nodes: usize,
-    pub healthy_nodes: usize,
-    pub unhealthy_nodes: usize,
-    pub maintenance_nodes: usize,
-    pub total_hermes: usize,
-    pub active_hermes: usize,
-    pub inactive_hermes: usize,
-    pub active_operations: usize,
 }

@@ -33,24 +33,6 @@ pub struct SnapshotInfo {
     pub compression: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BatchOperationResult {
-    pub success_count: usize,
-    pub failure_count: usize,
-    pub results: Vec<OperationResult>,
-    pub summary: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct OperationResult {
-    pub target_name: String,
-    pub operation_type: String,
-    pub success: bool,
-    pub message: String,
-    pub duration_seconds: Option<f64>,
-    pub details: Option<serde_json::Value>,
-}
-
 pub struct HttpAgentManager {
     pub config: Arc<Config>,
     pub client: Client,
@@ -64,7 +46,6 @@ impl HttpAgentManager {
         operation_tracker: Arc<SimpleOperationTracker>,
         maintenance_tracker: Arc<MaintenanceTracker>
     ) -> Self {
-        // No timeout - let operations run as long as needed
         let client = Client::new();
 
         Self {
@@ -387,7 +368,7 @@ impl HttpAgentManager {
         Ok(())
     }
 
-    // === NEW: RESTORE FUNCTIONALITY ===
+    // === RESTORE FUNCTIONALITY ===
 
     pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
@@ -438,7 +419,6 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // Find latest snapshot directory
         let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
 
         info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
@@ -451,15 +431,14 @@ impl HttpAgentManager {
             "log_path": node_config.log_path
         });
 
-        let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
+        let result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
 
-        // Create SnapshotInfo from restore result
         let snapshot_info = crate::snapshot::SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
             filename: latest_snapshot_dir.split('/').last().unwrap_or("unknown").to_string(),
-            created_at: Utc::now(), // We don't have the original creation time from restore
-            file_size_bytes: None, // We don't have size info from restore
+            created_at: Utc::now(),
+            file_size_bytes: None,
             snapshot_path: latest_snapshot_dir,
             compression_type: "directory".to_string(),
         };
@@ -481,7 +460,6 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
         }
 
-        // Verify the snapshot directory exists and contains data
         let verify_cmd = format!("test -d '{}/data'", snapshot_dir);
         self.execute_single_command(server_host, &verify_cmd).await
             .map_err(|_| anyhow::anyhow!("Snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
@@ -503,28 +481,6 @@ impl HttpAgentManager {
 
     pub async fn emergency_cleanup_operations(&self, max_hours: i64) -> u32 {
         self.operation_tracker.cleanup_old_operations(max_hours).await
-    }
-
-    pub async fn restart_multiple_hermes(&self, _hermes_configs: Vec<HermesConfig>) -> Result<BatchOperationResult> {
-        Ok(BatchOperationResult {
-            success_count: 0,
-            failure_count: 0,
-            results: vec![],
-            summary: "Not implemented".to_string(),
-        })
-    }
-
-    pub async fn batch_prune_nodes(&self, _node_names: Vec<String>) -> Result<BatchOperationResult> {
-        Ok(BatchOperationResult {
-            success_count: 0,
-            failure_count: 0,
-            results: vec![],
-            summary: "Not implemented".to_string(),
-        })
-    }
-
-    pub async fn check_node_dependencies(&self, _dependent_nodes: &Option<Vec<String>>) -> Result<bool> {
-        Ok(true)
     }
 
     pub async fn check_auto_restore_triggers(&self, node_name: &str) -> Result<bool> {
