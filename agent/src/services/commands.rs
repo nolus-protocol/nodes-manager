@@ -26,19 +26,19 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    // Use direct command execution - no shell wrapper
-    let mut command = AsyncCommand::new("cosmos-pruner");
-    command
-        .arg("prune")
-        .arg(deploy_path)
-        .arg("--blocks")
-        .arg(keep_blocks.to_string())
-        .arg("--versions")
-        .arg(keep_versions.to_string());
+    // FIXED: Use shell wrapper like the working version
+    let command = format!(
+        "cosmos-pruner prune '{}' --blocks={} --versions={}",
+        deploy_path, keep_blocks, keep_versions
+    );
 
     info!("Executing cosmos-pruner process - waiting for completion...");
 
-    let output = command.output().await?;
+    let output = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .output()
+        .await?;
 
     // GUARANTEED: Every process has an exit code - capture it immediately
     let exit_code = output.status.code().unwrap_or(-1);
