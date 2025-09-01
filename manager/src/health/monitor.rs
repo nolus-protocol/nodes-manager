@@ -77,6 +77,7 @@ struct AlertState {
     first_unhealthy: DateTime<Utc>,
     last_alert_sent: DateTime<Utc>,
     alert_count: u32,
+    consecutive_unhealthy_count: u32, // NEW: Track consecutive unhealthy checks
 }
 
 // Auto-restore cooldown tracking
@@ -199,14 +200,16 @@ impl HealthMonitor {
             }
         }
 
-        // FIXED: Per-node log monitoring for healthy nodes (not maintenance nodes)
-        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
-            .filter(|status| !status.in_maintenance)
-            .collect();
+        // Log monitoring if enabled (only for healthy nodes NOT in maintenance)
+        if self.config.log_monitoring_enabled.unwrap_or(false) {
+            let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+                .filter(|status| !status.in_maintenance)
+                .collect();
 
-        if !non_maintenance_statuses.is_empty() {
-            if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
-                error!("Log monitoring failed: {}", e);
+            if !non_maintenance_statuses.is_empty() {
+                if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
+                    error!("Log monitoring failed: {}", e);
+                }
             }
         }
 
@@ -507,7 +510,7 @@ impl HealthMonitor {
 
         match (previous_health, status.is_healthy, status.in_maintenance) {
             (Some(true), false, false) | (None, false, false) => {
-                info!("Node {} became unhealthy - sending alert", status.node_name);
+                info!("Node {} became unhealthy - tracking consecutive failures", status.node_name);
                 if let Err(e) = self.send_progressive_alert(status).await {
                     error!("Failed to send alert for {}: {}", status.node_name, e);
                 }
@@ -542,38 +545,61 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // MODIFIED: Only send alerts after 3 consecutive unhealthy checks
     async fn send_progressive_alert(&self, status: &HealthStatus) -> Result<()> {
         let mut alert_states = self.alert_states.lock().await;
         let now = Utc::now();
 
         let should_send_alert = match alert_states.get_mut(&status.node_name) {
             None => {
+                // First time seeing this node as unhealthy
                 let alert_state = AlertState {
                     first_unhealthy: now,
-                    last_alert_sent: now,
-                    alert_count: 1,
+                    last_alert_sent: DateTime::<Utc>::MIN_UTC, // Haven't sent any alerts yet
+                    alert_count: 0,
+                    consecutive_unhealthy_count: 1,
                 };
                 alert_states.insert(status.node_name.clone(), alert_state);
-                true
+                info!("Node {} unhealthy check 1/3 - no alert sent yet", status.node_name);
+                false // Don't send alert yet, need 3 consecutive failures
             }
 
             Some(alert_state) => {
-                let hours_since_first = (now - alert_state.first_unhealthy).num_hours();
-                let hours_since_last = (now - alert_state.last_alert_sent).num_hours();
+                // Increment consecutive unhealthy count
+                alert_state.consecutive_unhealthy_count += 1;
 
-                let should_alert = match alert_state.alert_count {
-                    1 => hours_since_first >= 3,
-                    2 => hours_since_first >= 6,
-                    3 => hours_since_first >= 12,
-                    _ => hours_since_last >= 24,
-                };
-
-                if should_alert {
-                    alert_state.last_alert_sent = now;
-                    alert_state.alert_count += 1;
-                    true
+                if alert_state.alert_count == 0 {
+                    // Haven't sent first alert yet
+                    if alert_state.consecutive_unhealthy_count >= 3 {
+                        // Send first alert after 3 consecutive unhealthy checks
+                        alert_state.alert_count = 1;
+                        alert_state.last_alert_sent = now;
+                        info!("Node {} unhealthy for 3 consecutive checks - sending first alert", status.node_name);
+                        true
+                    } else {
+                        info!("Node {} unhealthy check {}/3 - no alert sent yet",
+                              status.node_name, alert_state.consecutive_unhealthy_count);
+                        false
+                    }
                 } else {
-                    false
+                    // Already sent first alert, use existing progressive timing logic
+                    let hours_since_first = (now - alert_state.first_unhealthy).num_hours();
+                    let hours_since_last = (now - alert_state.last_alert_sent).num_hours();
+
+                    let should_alert = match alert_state.alert_count {
+                        1 => hours_since_first >= 3,
+                        2 => hours_since_first >= 6,
+                        3 => hours_since_first >= 12,
+                        _ => hours_since_last >= 24,
+                    };
+
+                    if should_alert {
+                        alert_state.last_alert_sent = now;
+                        alert_state.alert_count += 1;
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
         };
@@ -894,8 +920,13 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // FIXED: Monitor logs per node configuration instead of global configuration
     async fn monitor_logs(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
+        let patterns = match &self.config.log_monitoring_patterns {
+            Some(patterns) if !patterns.is_empty() => patterns,
+            _ => return Ok(()),
+        };
+
+        let context_lines_value: i32 = self.config.log_monitoring_context_lines.unwrap_or(2);
         let mut tasks = Vec::new();
 
         for status in health_statuses {
@@ -908,16 +939,6 @@ impl HealthMonitor {
                 None => continue,
             };
 
-            // FIXED: Check per-node log monitoring settings
-            if !node_config.log_monitoring_enabled.unwrap_or(false) {
-                continue;
-            }
-
-            let patterns = match &node_config.log_monitoring_patterns {
-                Some(patterns) if !patterns.is_empty() => patterns,
-                _ => continue,
-            };
-
             let log_path = match &node_config.log_path {
                 Some(path) => path,
                 None => continue,
@@ -928,7 +949,7 @@ impl HealthMonitor {
             let log_path = log_path.clone();
             let patterns = patterns.clone();
             let monitor = self.clone();
-            let context_lines = node_config.log_monitoring_context_lines.unwrap_or(2);
+            let context_lines = context_lines_value;
 
             let task = tokio::spawn(async move {
                 monitor.check_node_logs(&node_name, &server_host, &log_path, &patterns, context_lines).await
