@@ -147,28 +147,27 @@ impl MaintenanceScheduler {
                     return;
                 }
 
-                if let Some(node_config) = config.nodes.get(&node_name) {
-                    match http_manager.run_pruning(node_config).await {
-                        Ok(_) => {
-                            info!("✓ Scheduled pruning completed for {}", node_name);
-                            let mut completed_operation = operation;
-                            completed_operation.status = "completed".to_string();
-                            completed_operation.completed_at = Some(Utc::now());
+                // FIXED: Use execute_node_pruning instead of run_pruning to set maintenance mode
+                match http_manager.execute_node_pruning(&node_name).await {
+                    Ok(_) => {
+                        info!("✓ Scheduled pruning completed for {}", node_name);
+                        let mut completed_operation = operation;
+                        completed_operation.status = "completed".to_string();
+                        completed_operation.completed_at = Some(Utc::now());
 
-                            if let Err(e) = database.store_maintenance_operation(&completed_operation).await {
-                                error!("Failed to update operation status: {}", e);
-                            }
+                        if let Err(e) = database.store_maintenance_operation(&completed_operation).await {
+                            error!("Failed to update operation status: {}", e);
                         }
-                        Err(e) => {
-                            error!("✗ Scheduled pruning failed for {}: {}", node_name, e);
-                            let mut failed_operation = operation;
-                            failed_operation.status = "failed".to_string();
-                            failed_operation.completed_at = Some(Utc::now());
-                            failed_operation.error_message = Some(e.to_string());
+                    }
+                    Err(e) => {
+                        error!("✗ Scheduled pruning failed for {}: {}", node_name, e);
+                        let mut failed_operation = operation;
+                        failed_operation.status = "failed".to_string();
+                        failed_operation.completed_at = Some(Utc::now());
+                        failed_operation.error_message = Some(e.to_string());
 
-                            if let Err(e) = database.store_maintenance_operation(&failed_operation).await {
-                                error!("Failed to update operation status: {}", e);
-                            }
+                        if let Err(e) = database.store_maintenance_operation(&failed_operation).await {
+                            error!("Failed to update operation status: {}", e);
                         }
                     }
                 }
