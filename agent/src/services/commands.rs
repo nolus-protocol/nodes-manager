@@ -41,9 +41,22 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
     let mut child = command.spawn()
         .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
-    // Simply wait for the process to complete - no stream handling
-    let status = child.wait().await
-        .map_err(|e| anyhow!("Failed to wait for cosmos-pruner: {}", e))?;
+    // Use polling instead of infinite wait (child.wait().await has issues)
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                info!("cosmos-pruner process detected as completed");
+                break status;
+            }
+            Ok(None) => {
+                // Process still running, wait 1 second and check again
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => {
+                return Err(anyhow!("Error checking cosmos-pruner status: {}", e));
+            }
+        }
+    };
 
     let exit_code = status.code().unwrap_or(-1);
     let success = status.success();
