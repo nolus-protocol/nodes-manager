@@ -79,12 +79,14 @@ struct AlertState {
     alert_count: u32,
 }
 
+// Auto-restore cooldown tracking
 #[derive(Debug, Clone)]
 struct AutoRestoreCooldown {
     last_restore_attempt: DateTime<Utc>,
     restore_count: u32,
 }
 
+// Block height tracking for progression detection
 #[derive(Debug, Clone)]
 struct BlockHeightState {
     last_height: i64,
@@ -100,8 +102,11 @@ pub struct HealthMonitor {
     client: HttpClient,
     alert_states: Arc<tokio::sync::Mutex<HashMap<String, AlertState>>>,
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
+    // Auto-restore cooldown tracking (2 hour cooldown)
     auto_restore_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, AutoRestoreCooldown>>>,
+    // Block height progression tracking
     block_height_states: Arc<tokio::sync::Mutex<HashMap<String, BlockHeightState>>>,
+    // NEW: Track which nodes have already been checked for auto-restore triggers in their current unhealthy state
     auto_restore_checked_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
 }
 
@@ -140,14 +145,15 @@ impl HealthMonitor {
                 continue;
             }
 
-            // Skip health checks entirely for nodes in maintenance
+            // CRITICAL FIX: Skip health checks entirely for nodes in maintenance
             if self.maintenance_tracker.is_in_maintenance(node_name).await {
                 info!("Skipping health check for {} - node in maintenance mode", node_name);
 
+                // Return a maintenance status without doing any health checks
                 let maintenance_status = HealthStatus {
                     node_name: node_name.clone(),
                     rpc_url: node_config.rpc_url.clone(),
-                    is_healthy: false,
+                    is_healthy: false, // Set to false so it shows as maintenance, not healthy
                     error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
                     last_check: Utc::now(),
                     block_height: None,
@@ -161,7 +167,7 @@ impl HealthMonitor {
                 };
 
                 health_statuses.push(maintenance_status);
-                continue;
+                continue; // Skip to next node
             }
 
             let task = {
@@ -182,7 +188,7 @@ impl HealthMonitor {
             }
         }
 
-        // Store results and handle state transitions
+        // Store results in database and handle state transitions
         for status in &health_statuses {
             if let Err(e) = self.store_health_record(status).await {
                 error!("Failed to store health record for {}: {}", status.node_name, e);
@@ -193,18 +199,18 @@ impl HealthMonitor {
             }
         }
 
-        // Per-node log monitoring (only for healthy nodes NOT in maintenance)
-        let eligible_nodes: Vec<_> = health_statuses.iter()
-            .filter(|status| !status.in_maintenance && status.is_healthy)
+        // FIXED: Per-node log monitoring for healthy nodes (not maintenance nodes)
+        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+            .filter(|status| !status.in_maintenance)
             .collect();
 
-        if !eligible_nodes.is_empty() {
-            if let Err(e) = self.monitor_logs_per_node(&eligible_nodes).await {
+        if !non_maintenance_statuses.is_empty() {
+            if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
                 error!("Log monitoring failed: {}", e);
             }
         }
 
-        // Auto-restore monitoring (only unhealthy nodes, exclude maintenance)
+        // FIXED: Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period (exclude maintenance nodes)
         let non_maintenance_statuses: Vec<_> = health_statuses.iter()
             .filter(|status| !status.in_maintenance)
             .cloned()
@@ -219,64 +225,14 @@ impl HealthMonitor {
         Ok(health_statuses)
     }
 
-    // Enhanced per-node log monitoring
-    async fn monitor_logs_per_node(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
-        let mut tasks = Vec::new();
-
-        for status in health_statuses {
-            let node_config = match self.config.nodes.get(&status.node_name) {
-                Some(config) => config,
-                None => continue,
-            };
-
-            // Check if log monitoring is enabled for this specific node
-            if !node_config.log_monitoring_enabled.unwrap_or(false) {
-                continue;
-            }
-
-            let patterns = match &node_config.log_monitoring_patterns {
-                Some(patterns) if !patterns.is_empty() => patterns,
-                _ => continue, // No patterns configured for this node
-            };
-
-            let log_path = match &node_config.log_path {
-                Some(path) => path,
-                None => continue,
-            };
-
-            let context_lines = node_config.log_monitoring_context_lines.unwrap_or(2);
-            let node_name = status.node_name.clone();
-            let server_host = status.server_host.clone();
-            let log_path = log_path.clone();
-            let patterns = patterns.clone();
-            let monitor = self.clone();
-
-            let task = tokio::spawn(async move {
-                monitor.check_node_logs(&node_name, &server_host, &log_path, &patterns, context_lines).await
-            });
-
-            tasks.push(task);
-        }
-
-        if !tasks.is_empty() {
-            info!("Running log monitoring for {} nodes with individual configurations", tasks.len());
-            let results = join_all(tasks).await;
-            for result in results {
-                if let Err(e) = result {
-                    error!("Per-node log monitoring task failed: {}", e);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
+    // FIXED: Only monitor auto-restore triggers for UNHEALTHY nodes and only ONCE per unhealthy period
     async fn monitor_auto_restore_triggers(&self, health_statuses: &[HealthStatus]) -> Result<()> {
         let trigger_words = match &self.config.auto_restore_trigger_words {
             Some(words) if !words.is_empty() => words,
-            _ => return Ok(()),
+            _ => return Ok(()), // No trigger words configured
         };
 
+        // Only check UNHEALTHY nodes for auto-restore triggers (maintenance nodes already filtered out)
         let unhealthy_nodes: Vec<_> = health_statuses.iter()
             .filter(|status| !status.is_healthy && status.enabled && !status.in_maintenance)
             .collect();
@@ -291,6 +247,7 @@ impl HealthMonitor {
         let mut tasks = Vec::new();
 
         for status in unhealthy_nodes {
+            // FIXED: Check if we've already checked this node during its current unhealthy state
             if self.has_already_checked_auto_restore(&status.node_name).await {
                 debug!("Auto-restore triggers already checked for {} during current unhealthy state", status.node_name);
                 continue;
@@ -301,6 +258,7 @@ impl HealthMonitor {
                 None => continue,
             };
 
+            // Only check nodes with auto-restore enabled
             if !node_config.auto_restore_enabled.unwrap_or(false) || !node_config.snapshots_enabled.unwrap_or(false) {
                 continue;
             }
@@ -323,6 +281,7 @@ impl HealthMonitor {
             tasks.push(task);
         }
 
+        // Wait for all auto-restore trigger checks
         let results = join_all(tasks).await;
         for result in results {
             if let Err(e) = result {
@@ -333,17 +292,20 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // NEW: Check if we've already checked auto-restore triggers for this node during its current unhealthy state
     async fn has_already_checked_auto_restore(&self, node_name: &str) -> bool {
         let checked_states = self.auto_restore_checked_states.lock().await;
         checked_states.get(node_name).copied().unwrap_or(false)
     }
 
+    // NEW: Mark a node as checked for auto-restore triggers during its current unhealthy state
     async fn mark_auto_restore_checked(&self, node_name: &str) {
         let mut checked_states = self.auto_restore_checked_states.lock().await;
         checked_states.insert(node_name.to_string(), true);
         debug!("Marked {} as checked for auto-restore triggers", node_name);
     }
 
+    // NEW: Clear auto-restore checked flag when node becomes healthy (so it can be checked again if it becomes unhealthy later)
     async fn clear_auto_restore_checked(&self, node_name: &str) {
         let mut checked_states = self.auto_restore_checked_states.lock().await;
         if checked_states.remove(node_name).is_some() {
@@ -358,15 +320,19 @@ impl HealthMonitor {
         log_path: &str,
         trigger_words: &[String],
     ) -> Result<()> {
+        // Check cooldown first
         if !self.is_auto_restore_allowed(node_name).await {
             debug!("Auto-restore for {} is in cooldown period", node_name);
+            // FIXED: Still mark as checked even if in cooldown, so we don't keep trying
             self.mark_auto_restore_checked(node_name).await;
             return Ok(());
         }
 
+        // Get server config for HTTP connection
         let server_config = self.config.servers.get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
+        // Check only latest 500 lines instead of 1000
         let log_file = format!("{}/out1.log", log_path);
         let command = format!(
             "tail -n 500 '{}' | grep -q -E '{}'",
@@ -374,10 +340,12 @@ impl HealthMonitor {
             trigger_words.join("|")
         );
 
+        // FIXED: Mark as checked BEFORE performing the check to prevent duplicate checks
         self.mark_auto_restore_checked(node_name).await;
 
         match self.execute_log_command(server_config, &command).await {
             Ok(_) => {
+                // Trigger words found - execute auto-restore
                 warn!("Auto-restore trigger words found in {} log file: {}", node_name, log_file);
                 if let Err(e) = self.execute_auto_restore(node_name, trigger_words).await {
                     error!("Auto-restore failed for {}: {}", node_name, e);
@@ -387,6 +355,7 @@ impl HealthMonitor {
                 }
             }
             Err(_) => {
+                // No trigger words found - this is normal
                 debug!("No auto-restore trigger words found for {}", node_name);
             }
         }
@@ -394,6 +363,7 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // Check if auto-restore is allowed (cooldown mechanism)
     async fn is_auto_restore_allowed(&self, node_name: &str) -> bool {
         let cooldowns = self.auto_restore_cooldowns.lock().await;
         let now = Utc::now();
@@ -401,6 +371,7 @@ impl HealthMonitor {
         match cooldowns.get(node_name) {
             Some(cooldown) => {
                 let hours_since_last = (now - cooldown.last_restore_attempt).num_hours();
+                // 2 hour cooldown between restore attempts
                 if hours_since_last >= 2 {
                     true
                 } else {
@@ -409,13 +380,15 @@ impl HealthMonitor {
                     false
                 }
             }
-            None => true,
+            None => true, // No previous restore attempts
         }
     }
 
+    // Execute auto-restore with cooldown tracking
     async fn execute_auto_restore(&self, node_name: &str, trigger_words: &[String]) -> Result<()> {
         info!("Executing auto-restore for {} due to trigger words: {:?}", node_name, trigger_words);
 
+        // Update cooldown tracking
         {
             let mut cooldowns = self.auto_restore_cooldowns.lock().await;
             let now = Utc::now();
@@ -427,8 +400,10 @@ impl HealthMonitor {
             cooldown.restore_count += 1;
         }
 
+        // Send notification that auto-restore is starting
         self.send_auto_restore_alert(node_name, "starting", trigger_words).await?;
 
+        // Execute the restore using SnapshotManager
         match self.snapshot_manager.restore_from_snapshot(node_name).await {
             Ok(snapshot_info) => {
                 info!("Auto-restore completed for {} using snapshot: {}", node_name, snapshot_info.filename);
@@ -441,6 +416,86 @@ impl HealthMonitor {
                 Err(e)
             }
         }
+    }
+
+    // Send auto-restore notifications
+    async fn send_auto_restore_alert(&self, node_name: &str, status: &str, trigger_words: &[String]) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let severity = match status {
+            "failed" => "critical",
+            "starting" => "warning",
+            "completed" => "info",
+            _ => "info",
+        };
+
+        let message = match status {
+            "starting" => format!("Auto-restore STARTED for {} due to corruption indicators", node_name),
+            "completed" => format!("Auto-restore COMPLETED for {} - node should be syncing from restored state", node_name),
+            "failed" => format!("Auto-restore FAILED for {} - manual intervention required", node_name),
+            _ => format!("Auto-restore {} for {}", status, node_name),
+        };
+
+        let payload = serde_json::json!({
+            "node_name": node_name,
+            "message": message,
+            "trigger_words": trigger_words,
+            "status": status,
+            "timestamp": Utc::now(),
+            "alert_type": "auto_restore",
+            "severity": severity
+        });
+
+        match timeout(
+            Duration::from_secs(10),
+            self.client.post(&self.config.alarm_webhook_url)
+                .json(&payload)
+                .send(),
+        )
+        .await
+        {
+            Ok(Ok(response)) => {
+                if response.status().is_success() {
+                    info!("Auto-restore alert sent for {}: {}", node_name, status);
+                } else {
+                    warn!("Auto-restore alert webhook returned status: {} for {}", response.status(), node_name);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to send auto-restore alert for {}: {}", node_name, e);
+            }
+            Err(_) => {
+                warn!("Auto-restore alert timeout for {}", node_name);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_auto_restore_failed_alert(&self, node_name: &str, error_message: &str) -> Result<()> {
+        if self.config.alarm_webhook_url.is_empty() {
+            return Ok(());
+        }
+
+        let payload = serde_json::json!({
+            "node_name": node_name,
+            "message": format!("CRITICAL: Auto-restore failed for {} - manual intervention required", node_name),
+            "error_message": error_message,
+            "timestamp": Utc::now(),
+            "alert_type": "auto_restore_failure",
+            "severity": "critical"
+        });
+
+        let _ = timeout(
+            Duration::from_secs(10),
+            self.client.post(&self.config.alarm_webhook_url)
+                .json(&payload)
+                .send(),
+        ).await;
+
+        Ok(())
     }
 
     async fn handle_health_state_change(&self, status: &HealthStatus) -> Result<()> {
@@ -460,6 +515,7 @@ impl HealthMonitor {
 
             (Some(false), true, _) => {
                 info!("Node {} recovered - sending recovery notification", status.node_name);
+                // FIXED: Clear auto-restore checked flag when node recovers
                 self.clear_auto_restore_checked(&status.node_name).await;
 
                 if let Err(e) = self.send_recovery_notification(status).await {
@@ -473,6 +529,7 @@ impl HealthMonitor {
                 }
             }
 
+            // IMPORTANT: Skip alerts for maintenance nodes
             (_, _, true) => {
                 debug!("Skipping health state change handling for {} - node in maintenance", status.node_name);
             }
@@ -575,7 +632,10 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // Enhanced health check with block progression tracking
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
+        // REMOVED: In-function maintenance check since we now skip maintenance nodes entirely in check_all_nodes()
+
         let mut status = HealthStatus {
             node_name: node_name.to_string(),
             rpc_url: node_config.rpc_url.clone(),
@@ -589,7 +649,7 @@ impl HealthMonitor {
             network: node_config.network.clone(),
             server_host: node_config.server_host.clone(),
             enabled: node_config.enabled,
-            in_maintenance: false,
+            in_maintenance: false, // This should never be true here since maintenance nodes are filtered out
         };
 
         match self.fetch_node_status(&node_config.rpc_url).await {
@@ -603,10 +663,15 @@ impl HealthMonitor {
                     status.is_syncing = Some(is_catching_up);
                     status.validator_address = Some(result.validator_info.address);
 
+                    // Check block progression for health determination
                     let block_progression_healthy = self.check_block_progression(node_name, current_height).await;
 
+                    // Node is healthy if:
+                    // 1. RPC responds successfully
+                    // 2. Block height is progressing (or node is catching up, which is normal)
                     status.is_healthy = block_progression_healthy || is_catching_up;
 
+                    // Set appropriate error message if not healthy
                     if !status.is_healthy && !is_catching_up {
                         status.error_message = Some("Block height not progressing".to_string());
                     }
@@ -625,36 +690,45 @@ impl HealthMonitor {
         Ok(status)
     }
 
+    // Check if block height is progressing
     async fn check_block_progression(&self, node_name: &str, current_height: i64) -> bool {
         let mut block_states = self.block_height_states.lock().await;
         let now = Utc::now();
 
         match block_states.get_mut(node_name) {
             None => {
+                // First check for this node
                 block_states.insert(node_name.to_string(), BlockHeightState {
                     last_height: current_height,
                     last_updated: now,
                     consecutive_no_progress: 0,
                 });
-                true
+                true // Assume healthy on first check
             }
             Some(state) => {
                 let minutes_since_update = (now - state.last_updated).num_minutes();
 
+                // Only check progression if enough time has passed (at least 2 minutes)
                 if minutes_since_update < 2 {
-                    return true;
+                    return true; // Too soon to judge, assume healthy
                 }
 
                 if current_height > state.last_height {
+                    // Block height increased - healthy
                     state.last_height = current_height;
                     state.last_updated = now;
                     state.consecutive_no_progress = 0;
                     true
                 } else if current_height == state.last_height {
+                    // Block height stayed the same
                     state.consecutive_no_progress += 1;
                     state.last_updated = now;
+
+                    // Allow up to 3 consecutive checks without progress (about 6 minutes)
+                    // before marking as unhealthy
                     state.consecutive_no_progress < 3
                 } else {
+                    // Block height decreased - this shouldn't happen, mark as unhealthy
                     state.last_height = current_height;
                     state.last_updated = now;
                     state.consecutive_no_progress += 1;
@@ -730,6 +804,49 @@ impl HealthMonitor {
         }
     }
 
+    pub async fn force_check_node(&self, node_name: &str) -> Result<HealthStatus> {
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow!("Node {} not found in configuration", node_name))?;
+
+        // Check if node is in maintenance before doing health check
+        if self.maintenance_tracker.is_in_maintenance(node_name).await {
+            info!("Force health check requested for {} - node in maintenance mode, returning maintenance status", node_name);
+
+            return Ok(HealthStatus {
+                node_name: node_name.to_string(),
+                rpc_url: node_config.rpc_url.clone(),
+                is_healthy: false,
+                error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
+                last_check: Utc::now(),
+                block_height: None,
+                is_syncing: None,
+                is_catching_up: false,
+                validator_address: None,
+                network: node_config.network.clone(),
+                server_host: node_config.server_host.clone(),
+                enabled: node_config.enabled,
+                in_maintenance: true,
+            });
+        }
+
+        let status = self.check_node_health(node_name, node_config).await?;
+
+        if let Err(e) = self.store_health_record(&status).await {
+            error!("Failed to store health record for {}: {}", status.node_name, e);
+        }
+
+        if let Err(e) = self.handle_health_state_change(&status).await {
+            error!("Failed to handle health state change for {}: {}", status.node_name, e);
+        }
+
+        Ok(status)
+    }
+
+    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<HealthRecord>> {
+        let _ = (node_name, limit);
+        Ok(Vec::new())
+    }
+
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
         let record = HealthRecord {
             node_name: status.node_name.clone(),
@@ -777,6 +894,59 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // FIXED: Monitor logs per node configuration instead of global configuration
+    async fn monitor_logs(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
+        let mut tasks = Vec::new();
+
+        for status in health_statuses {
+            if !status.is_healthy {
+                continue;
+            }
+
+            let node_config = match self.config.nodes.get(&status.node_name) {
+                Some(config) => config,
+                None => continue,
+            };
+
+            // FIXED: Check per-node log monitoring settings
+            if !node_config.log_monitoring_enabled.unwrap_or(false) {
+                continue;
+            }
+
+            let patterns = match &node_config.log_monitoring_patterns {
+                Some(patterns) if !patterns.is_empty() => patterns,
+                _ => continue,
+            };
+
+            let log_path = match &node_config.log_path {
+                Some(path) => path,
+                None => continue,
+            };
+
+            let node_name = status.node_name.clone();
+            let server_host = status.server_host.clone();
+            let log_path = log_path.clone();
+            let patterns = patterns.clone();
+            let monitor = self.clone();
+            let context_lines = node_config.log_monitoring_context_lines.unwrap_or(2);
+
+            let task = tokio::spawn(async move {
+                monitor.check_node_logs(&node_name, &server_host, &log_path, &patterns, context_lines).await
+            });
+
+            tasks.push(task);
+        }
+
+        let results = join_all(tasks).await;
+        for result in results {
+            if let Err(e) = result {
+                error!("Log monitoring task failed: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
     async fn check_node_logs(&self, node_name: &str, server_host: &str, log_path: &str, patterns: &[String], context_lines: i32) -> Result<()> {
         let server_config = self.config.servers.get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
@@ -792,8 +962,7 @@ impl HealthMonitor {
         match self.execute_log_command(server_config, &command).await {
             Ok(output) => {
                 if !output.trim().is_empty() {
-                    info!("Log patterns detected for {} - sending alert", node_name);
-                    self.send_log_alert(node_name, server_host, log_path, &output, patterns).await?;
+                    self.send_log_alert(node_name, server_host, log_path, &output).await?;
                 }
             }
             Err(e) => {
@@ -833,13 +1002,12 @@ impl HealthMonitor {
         Ok(output)
     }
 
-    async fn send_log_alert(&self, node_name: &str, server_host: &str, log_path: &str, log_output: &str, patterns: &[String]) -> Result<()> {
+    async fn send_log_alert(&self, node_name: &str, server_host: &str, log_path: &str, log_output: &str) -> Result<()> {
         let payload = serde_json::json!({
             "node_name": node_name,
             "server_host": server_host,
             "log_path": log_path,
             "log_output": log_output,
-            "patterns_matched": patterns,
             "timestamp": Utc::now(),
             "alert_type": "log_pattern_match"
         });
@@ -859,85 +1027,6 @@ impl HealthMonitor {
         }
 
         debug!("Log alert sent for node: {}", node_name);
-        Ok(())
-    }
-
-    async fn send_auto_restore_alert(&self, node_name: &str, status: &str, trigger_words: &[String]) -> Result<()> {
-        if self.config.alarm_webhook_url.is_empty() {
-            return Ok(());
-        }
-
-        let severity = match status {
-            "failed" => "critical",
-            "starting" => "warning",
-            "completed" => "info",
-            _ => "info",
-        };
-
-        let message = match status {
-            "starting" => format!("Auto-restore STARTED for {} due to corruption indicators", node_name),
-            "completed" => format!("Auto-restore COMPLETED for {} - node should be syncing from restored state", node_name),
-            "failed" => format!("Auto-restore FAILED for {} - manual intervention required", node_name),
-            _ => format!("Auto-restore {} for {}", status, node_name),
-        };
-
-        let payload = serde_json::json!({
-            "node_name": node_name,
-            "message": message,
-            "trigger_words": trigger_words,
-            "status": status,
-            "timestamp": Utc::now(),
-            "alert_type": "auto_restore",
-            "severity": severity
-        });
-
-        match timeout(
-            Duration::from_secs(10),
-            self.client.post(&self.config.alarm_webhook_url)
-                .json(&payload)
-                .send(),
-        )
-        .await
-        {
-            Ok(Ok(response)) => {
-                if response.status().is_success() {
-                    info!("Auto-restore alert sent for {}: {}", node_name, status);
-                } else {
-                    warn!("Auto-restore alert webhook returned status: {} for {}", response.status(), node_name);
-                }
-            }
-            Ok(Err(e)) => {
-                warn!("Failed to send auto-restore alert for {}: {}", node_name, e);
-            }
-            Err(_) => {
-                warn!("Auto-restore alert timeout for {}", node_name);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn send_auto_restore_failed_alert(&self, node_name: &str, error_message: &str) -> Result<()> {
-        if self.config.alarm_webhook_url.is_empty() {
-            return Ok(());
-        }
-
-        let payload = serde_json::json!({
-            "node_name": node_name,
-            "message": format!("CRITICAL: Auto-restore failed for {} - manual intervention required", node_name),
-            "error_message": error_message,
-            "timestamp": Utc::now(),
-            "alert_type": "auto_restore_failure",
-            "severity": "critical"
-        });
-
-        let _ = timeout(
-            Duration::from_secs(10),
-            self.client.post(&self.config.alarm_webhook_url)
-                .json(&payload)
-                .send(),
-        ).await;
-
         Ok(())
     }
 }
