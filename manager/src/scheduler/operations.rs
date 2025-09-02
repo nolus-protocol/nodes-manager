@@ -13,7 +13,7 @@ use uuid::Uuid;
 pub struct MaintenanceScheduler {
     database: Arc<Database>,
     http_manager: Arc<HttpAgentManager>,
-    config: Arc<Config>,
+    _config: Arc<Config>,
     snapshot_manager: Arc<SnapshotManager>,
     scheduler: JobScheduler,
 }
@@ -31,7 +31,7 @@ impl MaintenanceScheduler {
         Ok(Self {
             database,
             http_manager,
-            config,
+            _config: config,
             snapshot_manager,
             scheduler,
         })
@@ -42,7 +42,7 @@ impl MaintenanceScheduler {
         let mut scheduled_count = 0;
 
         // Schedule pruning operations
-        for (node_name, node_config) in &self.config.nodes {
+        for (node_name, node_config) in &self._config.nodes {
             if let Some(schedule) = &node_config.pruning_schedule {
                 if node_config.pruning_enabled.unwrap_or(false) {
                     info!("Attempting to schedule pruning for {}: '{}'", node_name, schedule);
@@ -84,7 +84,7 @@ impl MaintenanceScheduler {
         }
 
         // Schedule Hermes restart operations
-        for (hermes_name, hermes_config) in &self.config.hermes {
+        for (hermes_name, hermes_config) in &self._config.hermes {
             if let Some(schedule) = &hermes_config.restart_schedule {
                 info!("Attempting to schedule Hermes restart for {}: '{}'", hermes_name, schedule);
                 match self.schedule_hermes_restart_job(hermes_name.clone(), schedule.clone()).await {
@@ -117,13 +117,12 @@ impl MaintenanceScheduler {
             .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
 
         let http_manager = self.http_manager.clone();
-        let config = self.config.clone();
+        let _config = self._config.clone();
         let database = self.database.clone();
         let node_name_clone = node_name.clone();
 
         let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
             let http_manager = http_manager.clone();
-            let config = config.clone();
             let database = database.clone();
             let node_name = node_name_clone.clone();
 
@@ -254,13 +253,13 @@ impl MaintenanceScheduler {
             .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
 
         let http_manager = self.http_manager.clone();
-        let config = self.config.clone();
+        let _config = self._config.clone();
         let database = self.database.clone();
         let hermes_name_clone = hermes_name.clone();
 
         let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
             let http_manager = http_manager.clone();
-            let config = config.clone();
+            let _config = _config.clone();
             let database = database.clone();
             let hermes_name = hermes_name_clone.clone();
 
@@ -284,7 +283,7 @@ impl MaintenanceScheduler {
                     return;
                 }
 
-                if let Some(hermes_config) = config.hermes.get(&hermes_name) {
+                if let Some(hermes_config) = _config.hermes.get(&hermes_name) {
                     match http_manager.restart_hermes(hermes_config).await {
                         Ok(_) => {
                             info!("✓ Scheduled Hermes restart completed for {}", hermes_name);
@@ -393,56 +392,5 @@ impl MaintenanceScheduler {
         }
 
         Ok(())
-    }
-
-    // Get scheduled operations info
-    pub async fn get_scheduled_operations(&self) -> Result<serde_json::Value> {
-        let mut scheduled = Vec::new();
-
-        // Collect scheduled operations from config
-        for (node_name, node_config) in &self.config.nodes {
-            if node_config.pruning_enabled.unwrap_or(false) {
-                if let Some(schedule) = &node_config.pruning_schedule {
-                    scheduled.push(serde_json::json!({
-                        "target": node_name,
-                        "type": "pruning",
-                        "schedule": schedule,
-                        "enabled": true,
-                        "cron_format": "6-field (sec min hour day month dow)"
-                    }));
-                }
-            }
-
-            if node_config.snapshots_enabled.unwrap_or(false) {
-                if let Some(schedule) = &node_config.snapshot_schedule {
-                    scheduled.push(serde_json::json!({
-                        "target": node_name,
-                        "type": "snapshot",
-                        "schedule": schedule,
-                        "enabled": true,
-                        "cron_format": "6-field (sec min hour day month dow)"
-                    }));
-                }
-            }
-        }
-
-        for (hermes_name, hermes_config) in &self.config.hermes {
-            if let Some(schedule) = &hermes_config.restart_schedule {
-                scheduled.push(serde_json::json!({
-                    "target": hermes_name,
-                    "type": "hermes_restart",
-                    "schedule": schedule,
-                    "enabled": true,
-                    "cron_format": "6-field (sec min hour day month dow)"
-                }));
-            }
-        }
-
-        Ok(serde_json::json!({
-            "scheduled": scheduled,
-            "active": [],
-            "total_scheduled": scheduled.len(),
-            "cron_format": "6-field tokio-cron-scheduler format: second minute hour day month dayofweek"
-        }))
     }
 }

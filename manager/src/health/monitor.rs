@@ -826,49 +826,6 @@ impl HealthMonitor {
         }
     }
 
-    pub async fn force_check_node(&self, node_name: &str) -> Result<HealthStatus> {
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow!("Node {} not found in configuration", node_name))?;
-
-        // Check if node is in maintenance before doing health check
-        if self.maintenance_tracker.is_in_maintenance(node_name).await {
-            info!("Force health check requested for {} - node in maintenance mode, returning maintenance status", node_name);
-
-            return Ok(HealthStatus {
-                node_name: node_name.to_string(),
-                rpc_url: node_config.rpc_url.clone(),
-                is_healthy: false,
-                error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
-                last_check: Utc::now(),
-                block_height: None,
-                is_syncing: None,
-                is_catching_up: false,
-                validator_address: None,
-                network: node_config.network.clone(),
-                server_host: node_config.server_host.clone(),
-                enabled: node_config.enabled,
-                in_maintenance: true,
-            });
-        }
-
-        let status = self.check_node_health(node_name, node_config).await?;
-
-        if let Err(e) = self.store_health_record(&status).await {
-            error!("Failed to store health record for {}: {}", status.node_name, e);
-        }
-
-        if let Err(e) = self.handle_health_state_change(&status).await {
-            error!("Failed to handle health state change for {}: {}", status.node_name, e);
-        }
-
-        Ok(status)
-    }
-
-    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<HealthRecord>> {
-        let _ = (node_name, limit);
-        Ok(Vec::new())
-    }
-
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
         let record = HealthRecord {
             node_name: status.node_name.clone(),

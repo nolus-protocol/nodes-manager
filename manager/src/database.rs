@@ -285,43 +285,6 @@ impl Database {
         }
     }
 
-    pub async fn get_all_latest_health_records(&self) -> Result<Vec<HealthRecord>> {
-        debug!("Querying all latest health records");
-
-        let rows = sqlx::query(
-            r#"
-            SELECT h1.node_name, h1.is_healthy, h1.error_message, h1.timestamp,
-                   h1.block_height, h1.is_syncing, h1.is_catching_up, h1.validator_address
-            FROM health_records h1
-            INNER JOIN (
-                SELECT node_name, MAX(timestamp) as max_timestamp
-                FROM health_records
-                GROUP BY node_name
-            ) h2 ON h1.node_name = h2.node_name AND h1.timestamp = h2.max_timestamp
-            ORDER BY h1.node_name
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut records = Vec::with_capacity(rows.len());
-        for row in rows {
-            records.push(HealthRecord {
-                node_name: row.get("node_name"),
-                is_healthy: row.get("is_healthy"),
-                error_message: row.get("error_message"),
-                timestamp: row.get("timestamp"),
-                block_height: row.get("block_height"),
-                is_syncing: row.get("is_syncing"),
-                is_catching_up: row.get("is_catching_up"),
-                validator_address: row.get("validator_address"),
-            });
-        }
-
-        debug!("✅ Retrieved {} latest health records", records.len());
-        Ok(records)
-    }
-
     pub async fn store_maintenance_operation(&self, operation: &MaintenanceOperation) -> Result<()> {
         debug!("Storing maintenance operation: {}", operation.id);
 
@@ -350,62 +313,6 @@ impl Database {
             }
             Err(e) => {
                 error!("❌ Failed to store maintenance operation {}: {}", operation.id, e);
-                Err(e.into())
-            }
-        }
-    }
-
-    pub async fn get_maintenance_operations(&self, limit: Option<i32>) -> Result<Vec<MaintenanceOperation>> {
-        let limit_clause = limit.map(|l| format!("LIMIT {}", l)).unwrap_or_default();
-        let query = format!(
-            r#"
-            SELECT id, operation_type, target_name, status, started_at,
-                   completed_at, error_message, details
-            FROM maintenance_operations
-            ORDER BY started_at DESC
-            {}
-            "#,
-            limit_clause
-        );
-
-        let rows = sqlx::query(&query)
-            .fetch_all(&self.pool)
-            .await?;
-
-        let mut operations = Vec::with_capacity(rows.len());
-        for row in rows {
-            operations.push(MaintenanceOperation {
-                id: row.get("id"),
-                operation_type: row.get("operation_type"),
-                target_name: row.get("target_name"),
-                status: row.get("status"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
-                error_message: row.get("error_message"),
-                details: row.get("details"),
-            });
-        }
-
-        Ok(operations)
-    }
-
-    pub async fn cleanup_old_health_records(&self, days_to_keep: i64) -> Result<u64> {
-        let cutoff_date = Utc::now() - chrono::Duration::days(days_to_keep);
-
-        match sqlx::query("DELETE FROM health_records WHERE timestamp < ?")
-            .bind(cutoff_date)
-            .execute(&self.pool)
-            .await
-        {
-            Ok(result) => {
-                let deleted_count = result.rows_affected();
-                if deleted_count > 0 {
-                    info!("Cleaned up {} old health records (older than {} days)", deleted_count, days_to_keep);
-                }
-                Ok(deleted_count)
-            }
-            Err(e) => {
-                error!("Failed to cleanup old health records: {}", e);
                 Err(e.into())
             }
         }

@@ -190,14 +190,14 @@ impl HttpAgentManager {
             return Err(e);
         }
 
-        let result = self.restart_node_impl(node_name).await;
+        let _result = self.restart_node_impl(node_name).await;
 
         self.operation_tracker.finish_operation(node_name).await;
         if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
             info!("Failed to end maintenance for {}: {}", node_name, e);
         }
 
-        result
+        _result
     }
 
     async fn restart_node_impl(&self, node_name: &str) -> Result<()> {
@@ -489,7 +489,7 @@ impl HttpAgentManager {
             "log_path": node_config.log_path
         });
 
-        let result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
+        let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
 
         // Create SnapshotInfo from restore result
         let snapshot_info = crate::snapshot::SnapshotInfo {
@@ -541,28 +541,6 @@ impl HttpAgentManager {
 
     pub async fn emergency_cleanup_operations(&self, max_hours: i64) -> u32 {
         self.operation_tracker.cleanup_old_operations(max_hours).await
-    }
-
-    pub async fn restart_multiple_hermes(&self, _hermes_configs: Vec<HermesConfig>) -> Result<BatchOperationResult> {
-        Ok(BatchOperationResult {
-            success_count: 0,
-            failure_count: 0,
-            results: vec![],
-            summary: "Not implemented".to_string(),
-        })
-    }
-
-    pub async fn batch_prune_nodes(&self, _node_names: Vec<String>) -> Result<BatchOperationResult> {
-        Ok(BatchOperationResult {
-            success_count: 0,
-            failure_count: 0,
-            results: vec![],
-            summary: "Not implemented".to_string(),
-        })
-    }
-
-    pub async fn check_node_dependencies(&self, _dependent_nodes: &Option<Vec<String>>) -> Result<bool> {
-        Ok(true)
     }
 
     pub async fn check_auto_restore_triggers(&self, node_name: &str) -> Result<bool> {

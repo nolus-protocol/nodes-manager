@@ -122,25 +122,6 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_file_size(file_path: &str) -> Result<u64> {
-    let command = format!("stat -c%s '{}'", file_path);
-    let output = execute_shell_command(&command).await?;
-
-    output.trim().parse::<u64>()
-        .map_err(|e| anyhow!("Failed to parse file size: {}", e))
-}
-
-pub async fn copy_file_if_exists(source: &str, destination: &str) -> Result<()> {
-    let command = format!(
-        "if [ -f '{}' ]; then cp '{}' '{}' && echo 'copied'; else echo 'not found'; fi",
-        source, source, destination
-    );
-
-    let output = execute_shell_command(&command).await?;
-    debug!("Copy result: {}", output.trim());
-    Ok(())
-}
-
 // FIXED: NEW - Remove file if it exists (for cleaning validator state from snapshots)
 pub async fn remove_file_if_exists(file_path: &str) -> Result<()> {
     let command = format!(
