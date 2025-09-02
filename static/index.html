@@ -987,13 +987,13 @@
                                         <div class="schedule-info">
                                             <div class="schedule-item">
                                                 <div class="schedule-label">Pruning</div>
-                                                ${(nodeConfig.pruning_enabled && nodeConfig.pruning_schedule) ? `
+                                                ${nodeConfig.pruning_schedule ? `
                                                     <div class="schedule-cron">${formatCronDisplay(nodeConfig.pruning_schedule)}</div>
                                                 ` : '<div class="schedule-empty">Not scheduled</div>'}
                                             </div>
                                             <div class="schedule-item">
                                                 <div class="schedule-label">Snapshot</div>
-                                                ${(nodeConfig.snapshots_enabled && nodeConfig.snapshot_schedule) ? `
+                                                ${nodeConfig.snapshot_schedule ? `
                                                     <div class="schedule-cron">${formatCronDisplay(nodeConfig.snapshot_schedule)}</div>
                                                 ` : '<div class="schedule-empty">Not scheduled</div>'}
                                             </div>
