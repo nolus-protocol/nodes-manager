@@ -77,7 +77,7 @@ struct AlertState {
     first_unhealthy: DateTime<Utc>,
     last_alert_sent: DateTime<Utc>,
     alert_count: u32,
-    consecutive_unhealthy_count: u32, // NEW: Track consecutive unhealthy checks
+    consecutive_unhealthy_count: u32,
 }
 
 // Auto-restore cooldown tracking
@@ -103,11 +103,8 @@ pub struct HealthMonitor {
     client: HttpClient,
     alert_states: Arc<tokio::sync::Mutex<HashMap<String, AlertState>>>,
     previous_health_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
-    // Auto-restore cooldown tracking (2 hour cooldown)
     auto_restore_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, AutoRestoreCooldown>>>,
-    // Block height progression tracking
     block_height_states: Arc<tokio::sync::Mutex<HashMap<String, BlockHeightState>>>,
-    // NEW: Track which nodes have already been checked for auto-restore triggers in their current unhealthy state
     auto_restore_checked_states: Arc<tokio::sync::Mutex<HashMap<String, bool>>>,
 }
 
@@ -200,16 +197,14 @@ impl HealthMonitor {
             }
         }
 
-        // Log monitoring if enabled (only for healthy nodes NOT in maintenance)
-        if self.config.log_monitoring_enabled.unwrap_or(false) {
-            let non_maintenance_statuses: Vec<_> = health_statuses.iter()
-                .filter(|status| !status.in_maintenance)
-                .collect();
+        // FIXED: Per-node log monitoring - only for healthy nodes NOT in maintenance
+        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+            .filter(|status| !status.in_maintenance)
+            .collect();
 
-            if !non_maintenance_statuses.is_empty() {
-                if let Err(e) = self.monitor_logs(&non_maintenance_statuses).await {
-                    error!("Log monitoring failed: {}", e);
-                }
+        if !non_maintenance_statuses.is_empty() {
+            if let Err(e) = self.monitor_logs_per_node(&non_maintenance_statuses).await {
+                error!("Log monitoring failed: {}", e);
             }
         }
 
@@ -229,6 +224,7 @@ impl HealthMonitor {
     }
 
     // FIXED: Only monitor auto-restore triggers for UNHEALTHY nodes and only ONCE per unhealthy period
+    // FIXED: Only require auto_restore_enabled, not snapshots_enabled
     async fn monitor_auto_restore_triggers(&self, health_statuses: &[HealthStatus]) -> Result<()> {
         let trigger_words = match &self.config.auto_restore_trigger_words {
             Some(words) if !words.is_empty() => words,
@@ -261,8 +257,8 @@ impl HealthMonitor {
                 None => continue,
             };
 
-            // Only check nodes with auto-restore enabled
-            if !node_config.auto_restore_enabled.unwrap_or(false) || !node_config.snapshots_enabled.unwrap_or(false) {
+            // FIXED: Only check nodes with auto-restore enabled (removed snapshots_enabled requirement)
+            if !node_config.auto_restore_enabled.unwrap_or(false) {
                 continue;
             }
 
@@ -920,16 +916,13 @@ impl HealthMonitor {
         Ok(())
     }
 
-    async fn monitor_logs(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
-        let patterns = match &self.config.log_monitoring_patterns {
-            Some(patterns) if !patterns.is_empty() => patterns,
-            _ => return Ok(()),
-        };
-
+    // FIXED: Per-node log monitoring instead of global patterns
+    async fn monitor_logs_per_node(&self, health_statuses: &[&HealthStatus]) -> Result<()> {
         let context_lines_value: i32 = self.config.log_monitoring_context_lines.unwrap_or(2);
         let mut tasks = Vec::new();
 
         for status in health_statuses {
+            // FIXED: Only monitor healthy nodes that have log monitoring enabled
             if !status.is_healthy {
                 continue;
             }
@@ -939,9 +932,27 @@ impl HealthMonitor {
                 None => continue,
             };
 
+            // FIXED: Check if log monitoring is enabled for THIS specific node
+            if !node_config.log_monitoring_enabled.unwrap_or(false) {
+                debug!("Log monitoring disabled for node: {}", status.node_name);
+                continue;
+            }
+
+            // FIXED: Get patterns for THIS specific node
+            let patterns = match &node_config.log_monitoring_patterns {
+                Some(patterns) if !patterns.is_empty() => patterns,
+                _ => {
+                    debug!("No log monitoring patterns configured for node: {}", status.node_name);
+                    continue;
+                }
+            };
+
             let log_path = match &node_config.log_path {
                 Some(path) => path,
-                None => continue,
+                None => {
+                    debug!("No log path configured for node: {}", status.node_name);
+                    continue;
+                }
             };
 
             let node_name = status.node_name.clone();
@@ -957,6 +968,13 @@ impl HealthMonitor {
 
             tasks.push(task);
         }
+
+        if tasks.is_empty() {
+            debug!("No nodes have log monitoring enabled");
+            return Ok(());
+        }
+
+        info!("Running log monitoring for {} nodes with individual patterns", tasks.len());
 
         let results = join_all(tasks).await;
         for result in results {
@@ -980,10 +998,15 @@ impl HealthMonitor {
             patterns.join("|")
         );
 
+        debug!("Checking log patterns for {}: {:?}", node_name, patterns);
+
         match self.execute_log_command(server_config, &command).await {
             Ok(output) => {
                 if !output.trim().is_empty() {
+                    info!("Log patterns detected for {}, sending alert", node_name);
                     self.send_log_alert(node_name, server_host, log_path, &output).await?;
+                } else {
+                    debug!("No log patterns found for {}", node_name);
                 }
             }
             Err(e) => {

@@ -64,6 +64,7 @@ impl SnapshotManager {
     pub async fn create_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
+        // UNCHANGED: Creating snapshots requires snapshots_enabled
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
@@ -121,10 +122,7 @@ impl SnapshotManager {
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
-        if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
-        }
-
+        // FIXED: Only require auto_restore_enabled for restore operations
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
@@ -156,7 +154,8 @@ impl SnapshotManager {
     pub async fn check_auto_restore_trigger(&self, node_name: &str) -> Result<bool> {
         let node_config = self.get_node_config(node_name)?;
 
-        if !node_config.auto_restore_enabled.unwrap_or(false) || !node_config.snapshots_enabled.unwrap_or(false) {
+        // FIXED: Only require auto_restore_enabled for checking auto-restore triggers
+        if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Ok(false);
         }
 
@@ -167,8 +166,9 @@ impl SnapshotManager {
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
-        if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+        // FIXED: Allow listing if either snapshots_enabled OR auto_restore_enabled
+        if !node_config.snapshots_enabled.unwrap_or(false) && !node_config.auto_restore_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!("Neither snapshots nor auto-restore enabled for node {}", node_name));
         }
 
         let backup_path = node_config.snapshot_backup_path
@@ -234,6 +234,7 @@ impl SnapshotManager {
     pub async fn cleanup_old_snapshots(&self, node_name: &str, retention_count: u32) -> Result<u32> {
         let node_config = self.get_node_config(node_name)?;
 
+        // UNCHANGED: Cleanup requires snapshots_enabled (only creators can manage snapshots)
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
@@ -290,6 +291,7 @@ impl SnapshotManager {
     pub async fn delete_snapshot(&self, node_name: &str, filename: &str) -> Result<()> {
         let node_config = self.get_node_config(node_name)?;
 
+        // UNCHANGED: Deleting requires snapshots_enabled (only creators can delete)
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }

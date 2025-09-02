@@ -31,6 +31,7 @@ impl SnapshotService {
 
     pub async fn create_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.validate_node_name(node_name)?;
+        // UNCHANGED: Creating snapshots requires snapshots_enabled
         self.validate_snapshots_enabled(node_name)?;
 
         info!("Creating LZ4 snapshot for node: {}", node_name);
@@ -39,14 +40,16 @@ impl SnapshotService {
 
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<crate::snapshot::SnapshotInfo>> {
         self.validate_node_name(node_name)?;
-        self.validate_snapshots_enabled(node_name)?;
+        // FIXED: Allow listing if either snapshots_enabled OR auto_restore_enabled
+        self.validate_snapshot_access(node_name)?;
 
         self.snapshot_manager.list_snapshots(node_name).await
     }
 
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.validate_node_name(node_name)?;
-        self.validate_snapshots_enabled(node_name)?;
+        // FIXED: Only require auto_restore_enabled for restore operations
+        self.validate_auto_restore_enabled(node_name)?;
 
         info!("Restoring latest snapshot for node: {}", node_name);
         self.snapshot_manager.restore_from_snapshot(node_name).await
@@ -54,6 +57,7 @@ impl SnapshotService {
 
     pub async fn delete_snapshot(&self, node_name: &str, filename: &str) -> Result<()> {
         self.validate_node_name(node_name)?;
+        // UNCHANGED: Deleting snapshots requires snapshots_enabled (only creators can delete)
         self.validate_snapshots_enabled(node_name)?;
 
         info!("Deleting snapshot {} for node: {}", filename, node_name);
@@ -62,6 +66,7 @@ impl SnapshotService {
 
     pub async fn check_auto_restore_trigger(&self, node_name: &str) -> Result<bool> {
         self.validate_node_name(node_name)?;
+        // UNCHANGED: Checking auto-restore triggers requires auto_restore_enabled
         self.validate_auto_restore_enabled(node_name)?;
 
         info!("Checking auto-restore triggers for node: {}", node_name);
@@ -70,13 +75,15 @@ impl SnapshotService {
 
     pub async fn get_snapshot_stats(&self, node_name: &str) -> Result<crate::snapshot::SnapshotStats> {
         self.validate_node_name(node_name)?;
-        self.validate_snapshots_enabled(node_name)?;
+        // FIXED: Allow stats if either snapshots_enabled OR auto_restore_enabled
+        self.validate_snapshot_access(node_name)?;
 
         self.snapshot_manager.get_snapshot_stats(node_name).await
     }
 
     pub async fn cleanup_old_snapshots(&self, node_name: &str, retention_count: u32) -> Result<serde_json::Value> {
         self.validate_node_name(node_name)?;
+        // UNCHANGED: Cleanup requires snapshots_enabled (only creators can manage snapshots)
         self.validate_snapshots_enabled(node_name)?;
 
         if retention_count == 0 {
@@ -119,10 +126,24 @@ impl SnapshotService {
     fn validate_auto_restore_enabled(&self, node_name: &str) -> Result<()> {
         let node_config = self.config.nodes.get(node_name).unwrap();
 
-        if node_config.auto_restore_enabled.unwrap_or(false) && node_config.snapshots_enabled.unwrap_or(false) {
+        // FIXED: Only require auto_restore_enabled, not snapshots_enabled
+        if node_config.auto_restore_enabled.unwrap_or(false) {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Auto-restore not enabled or snapshots not enabled for node {}", node_name))
+            Err(anyhow::anyhow!("Auto-restore not enabled for node {}", node_name))
+        }
+    }
+
+    // NEW: Validate access to snapshot functionality (for list/stats operations)
+    #[inline]
+    fn validate_snapshot_access(&self, node_name: &str) -> Result<()> {
+        let node_config = self.config.nodes.get(node_name).unwrap();
+
+        // FIXED: Allow access if either snapshots_enabled OR auto_restore_enabled
+        if node_config.snapshots_enabled.unwrap_or(false) || node_config.auto_restore_enabled.unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Neither snapshots nor auto-restore enabled for node {}", node_name))
         }
     }
 
@@ -136,9 +157,8 @@ impl SnapshotService {
     pub fn get_auto_restore_enabled_nodes(&self) -> Vec<(&String, &NodeConfig)> {
         self.config.nodes
             .iter()
-            .filter(|(_, node)| {
-                node.auto_restore_enabled.unwrap_or(false) && node.snapshots_enabled.unwrap_or(false)
-            })
+            // FIXED: Only require auto_restore_enabled, not snapshots_enabled
+            .filter(|(_, node)| node.auto_restore_enabled.unwrap_or(false))
             .collect()
     }
 
