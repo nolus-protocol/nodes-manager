@@ -122,7 +122,7 @@ impl SnapshotManager {
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
-        // FIXED: Only require auto_restore_enabled for restore operations
+        // FIXED: Only require auto_restore_enabled for restore operations (removed snapshots_enabled check)
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }

@@ -431,10 +431,7 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
-        }
-
+        // FIXED: Only require auto_restore_enabled for restore operations (removed snapshots_enabled check)
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
@@ -449,7 +446,7 @@ impl HttpAgentManager {
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
         // Find latest snapshot directory
-        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
+        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, &node_config.network).await?;
 
         info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
 
@@ -478,17 +475,17 @@ impl HttpAgentManager {
         Ok(snapshot_info)
     }
 
-    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, node_name: &str) -> Result<String> {
+    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, network: &str) -> Result<String> {
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | head -1",
-            backup_path, node_name
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | sort -r | head -1",
+            backup_path, network
         );
 
         let output = self.execute_single_command(server_host, &list_cmd).await?;
 
         let snapshot_dir = output.trim();
         if snapshot_dir.is_empty() {
-            return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
+            return Err(anyhow::anyhow!("No snapshots found for network {} in {}", network, backup_path));
         }
 
         // Verify the snapshot directory exists and contains data
