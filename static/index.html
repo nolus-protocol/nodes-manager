@@ -1139,19 +1139,19 @@
             }
 
             // Convert 6-field to human-readable display
-            // Format: sec min hour day month dow (Unix cron standard)
+            // Format: sec min hour day month dow
             const [sec, min, hour, day, month, dow] = parts;
 
             if (sec === '0' && min !== '*' && hour !== '*') {
                 // Most common case: 0 MM HH * * DOW
                 const dayName = getDayName(dow);
                 if (dayName && day === '*' && month === '*') {
-                    return `${dayName}s at ${hour.padStart(2, '0')}:${min.padStart(2, '0')} (dow=${dow})`;
+                    return `${dayName}s at ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
                 }
             }
 
             // Fallback: show the raw cron but make it clear it's 6-field
-            return `${cronSchedule} <span class="cron-debug">(6-field, dow=${parts[5]})</span>`;
+            return `${cronSchedule} <span class="cron-debug">(6-field)</span>`;
         }
 
         function getDayName(dow) {
