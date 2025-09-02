@@ -121,10 +121,11 @@ async fn main() -> Result<()> {
     scheduler.start().await?;
     info!("Scheduler started");
 
-    // Start periodic health monitoring (now includes auto-restore checking and log monitoring)
+    // Start periodic health monitoring with configurable interval
     let health_monitor_clone = health_monitor.clone();
+    let check_interval = config.check_interval_seconds;
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(90));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(check_interval));
         loop {
             interval.tick().await;
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
@@ -159,7 +160,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started (including auto-restore monitoring)");
+    info!("Background tasks started with {}s health check interval (including auto-restore monitoring)", check_interval);
 
     // Start web server
     start_web_server(
