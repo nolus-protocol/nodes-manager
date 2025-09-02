@@ -78,6 +78,8 @@ struct AlertState {
     last_alert_sent: DateTime<Utc>,
     alert_count: u32,
     consecutive_unhealthy_count: u32,
+    // NEW: Track if we've sent at least one alert for this unhealthy period
+    has_sent_alert: bool,
 }
 
 // Auto-restore cooldown tracking
@@ -513,12 +515,17 @@ impl HealthMonitor {
             }
 
             (Some(false), true, _) => {
-                info!("Node {} recovered - sending recovery notification", status.node_name);
+                info!("Node {} recovered - checking if recovery notification should be sent", status.node_name);
                 // FIXED: Clear auto-restore checked flag when node recovers
                 self.clear_auto_restore_checked(&status.node_name).await;
 
-                if let Err(e) = self.send_recovery_notification(status).await {
-                    error!("Failed to send recovery notification for {}: {}", status.node_name, e);
+                // FIXED: Only send recovery notification if we actually sent an alert for the unhealthy state
+                if self.should_send_recovery_notification(&status.node_name).await {
+                    if let Err(e) = self.send_recovery_notification(status).await {
+                        error!("Failed to send recovery notification for {}: {}", status.node_name, e);
+                    }
+                } else {
+                    debug!("No recovery notification needed for {} - no alert was sent during unhealthy period", status.node_name);
                 }
             }
 
@@ -541,7 +548,19 @@ impl HealthMonitor {
         Ok(())
     }
 
-    // MODIFIED: Only send alerts after 3 consecutive unhealthy checks
+    // NEW: Check if we should send a recovery notification (only if we sent an alert during the unhealthy period)
+    async fn should_send_recovery_notification(&self, node_name: &str) -> bool {
+        let alert_states = self.alert_states.lock().await;
+        if let Some(alert_state) = alert_states.get(node_name) {
+            // Only send recovery if we actually sent at least one alert during the unhealthy period
+            alert_state.has_sent_alert
+        } else {
+            // No alert state means no alerts were sent
+            false
+        }
+    }
+
+    // MODIFIED: Only send alerts after 3 consecutive unhealthy checks, and track if we've sent alerts
     async fn send_progressive_alert(&self, status: &HealthStatus) -> Result<()> {
         let mut alert_states = self.alert_states.lock().await;
         let now = Utc::now();
@@ -554,6 +573,7 @@ impl HealthMonitor {
                     last_alert_sent: DateTime::<Utc>::MIN_UTC, // Haven't sent any alerts yet
                     alert_count: 0,
                     consecutive_unhealthy_count: 1,
+                    has_sent_alert: false, // NEW: Track if we've sent any alerts
                 };
                 alert_states.insert(status.node_name.clone(), alert_state);
                 info!("Node {} unhealthy check 1/3 - no alert sent yet", status.node_name);
@@ -570,6 +590,7 @@ impl HealthMonitor {
                         // Send first alert after 3 consecutive unhealthy checks
                         alert_state.alert_count = 1;
                         alert_state.last_alert_sent = now;
+                        alert_state.has_sent_alert = true; // NEW: Mark that we've sent an alert
                         info!("Node {} unhealthy for 3 consecutive checks - sending first alert", status.node_name);
                         true
                     } else {
@@ -592,6 +613,7 @@ impl HealthMonitor {
                     if should_alert {
                         alert_state.last_alert_sent = now;
                         alert_state.alert_count += 1;
+                        alert_state.has_sent_alert = true; // NEW: Ensure this is set for additional alerts too
                         true
                     } else {
                         false
@@ -610,6 +632,7 @@ impl HealthMonitor {
     }
 
     async fn send_recovery_notification(&self, status: &HealthStatus) -> Result<()> {
+        // FIXED: Clear alert state when sending recovery notification
         let mut alert_states = self.alert_states.lock().await;
         alert_states.remove(&status.node_name);
         drop(alert_states);
@@ -656,8 +679,6 @@ impl HealthMonitor {
 
     // Enhanced health check with block progression tracking
     pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
-        // REMOVED: In-function maintenance check since we now skip maintenance nodes entirely in check_all_nodes()
-
         let mut status = HealthStatus {
             node_name: node_name.to_string(),
             rpc_url: node_config.rpc_url.clone(),
@@ -671,7 +692,7 @@ impl HealthMonitor {
             network: node_config.network.clone(),
             server_host: node_config.server_host.clone(),
             enabled: node_config.enabled,
-            in_maintenance: false, // This should never be true here since maintenance nodes are filtered out
+            in_maintenance: false,
         };
 
         match self.fetch_node_status(&node_config.rpc_url).await {
@@ -824,6 +845,17 @@ impl HealthMonitor {
             }
             None => Ok(None),
         }
+    }
+
+    pub async fn force_check_node(&self, node_name: &str) -> Result<HealthStatus> {
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow!("Node {} not found", node_name))?;
+
+        self.check_node_health(node_name, node_config).await
+    }
+
+    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<crate::database::HealthRecord>> {
+        self.database.get_health_history(node_name, limit).await
     }
 
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
