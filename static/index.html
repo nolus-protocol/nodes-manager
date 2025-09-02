@@ -448,6 +448,13 @@
             font-weight: 500;
         }
 
+        .timezone-note {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 0.25rem;
+        }
+
         .action-buttons {
             display: flex;
             gap: 0.5rem;
@@ -642,13 +649,6 @@
             font-size: 0.75rem;
             font-weight: 500;
         }
-
-        .cron-debug {
-            font-size: 0.65rem;
-            color: var(--warning-color);
-            font-style: italic;
-            margin-top: 0.25rem;
-        }
     </style>
 </head>
 <body>
@@ -785,6 +785,9 @@
         let currentNodesData = null;
         let currentHermesData = null;
         let maintenanceData = null;
+
+        // FIXED: Server timezone offset (EEST is UTC+3)
+        const SERVER_TIMEZONE_OFFSET = 3; // Hours ahead of UTC
 
         document.addEventListener('DOMContentLoaded', function() {
             loadAllData();
@@ -988,15 +991,10 @@
                                             <div class="schedule-item">
                                                 <div class="schedule-label">Pruning</div>
                                                 ${nodeConfig.pruning_schedule ? `
-                                                    <div class="schedule-cron">${formatCronDisplay(nodeConfig.pruning_schedule)}</div>
+                                                    <div class="schedule-cron">${nodeConfig.pruning_schedule}</div>
                                                 ` : '<div class="schedule-empty">Not scheduled</div>'}
                                             </div>
-                                            <div class="schedule-item">
-                                                <div class="schedule-label">Snapshot</div>
-                                                ${nodeConfig.snapshot_schedule ? `
-                                                    <div class="schedule-cron">${formatCronDisplay(nodeConfig.snapshot_schedule)}</div>
-                                                ` : '<div class="schedule-empty">Not scheduled</div>'}
-                                            </div>
+                                            ${renderSnapshotScheduleItem(nodeConfig)}
                                         </div>
                                     </td>
                                     <td style="width: 20%;">
@@ -1005,10 +1003,7 @@
                                                 <div class="next-run-label">Next Pruning</div>
                                                 ${nodeConfig.pruning_schedule ? renderNextRun(nodeConfig.pruning_schedule) : '<div class="next-run-empty">Not scheduled</div>'}
                                             </div>
-                                            <div class="next-run-item">
-                                                <div class="next-run-label">Next Snapshot</div>
-                                                ${nodeConfig.snapshot_schedule ? renderNextRun(nodeConfig.snapshot_schedule) : '<div class="next-run-empty">Not scheduled</div>'}
-                                            </div>
+                                            ${renderSnapshotNextRunItem(nodeConfig)}
                                         </div>
                                     </td>
                                     <td style="width: 20%;">
@@ -1056,6 +1051,46 @@
             container.innerHTML = tableHtml;
         }
 
+        // FIXED: Only show snapshot schedule if snapshots_enabled=true
+        function renderSnapshotScheduleItem(nodeConfig) {
+            if (!nodeConfig.snapshots_enabled) {
+                return `
+                    <div class="schedule-item">
+                        <div class="schedule-label">Snapshot</div>
+                        <div class="schedule-empty">Disabled</div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="schedule-item">
+                    <div class="schedule-label">Snapshot</div>
+                    ${nodeConfig.snapshot_schedule ? `
+                        <div class="schedule-cron">${nodeConfig.snapshot_schedule}</div>
+                    ` : '<div class="schedule-empty">Not scheduled</div>'}
+                </div>
+            `;
+        }
+
+        // FIXED: Only show snapshot next run if snapshots_enabled=true
+        function renderSnapshotNextRunItem(nodeConfig) {
+            if (!nodeConfig.snapshots_enabled) {
+                return `
+                    <div class="next-run-item">
+                        <div class="next-run-label">Next Snapshot</div>
+                        <div class="next-run-empty">Disabled</div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="next-run-item">
+                    <div class="next-run-label">Next Snapshot</div>
+                    ${nodeConfig.snapshot_schedule ? renderNextRun(nodeConfig.snapshot_schedule) : '<div class="next-run-empty">Not scheduled</div>'}
+                </div>
+            `;
+        }
+
         function renderHermesInstances(instances) {
             const container = document.getElementById('hermes-container');
 
@@ -1094,7 +1129,7 @@
                                             <div class="schedule-item">
                                                 <div class="schedule-label">Restart Schedule</div>
                                                 ${hermesConfig.restart_schedule ? `
-                                                    <div class="schedule-cron">${formatCronDisplay(hermesConfig.restart_schedule)}</div>
+                                                    <div class="schedule-cron">${hermesConfig.restart_schedule}</div>
                                                 ` : '<div class="schedule-empty">Not scheduled</div>'}
                                             </div>
                                         </div>
@@ -1129,48 +1164,11 @@
             container.innerHTML = tableHtml;
         }
 
-        // FIXED: Display cron format better (show human readable format)
-        function formatCronDisplay(cronSchedule) {
-            if (!cronSchedule) return '';
-
-            const parts = cronSchedule.trim().split(/\s+/);
-            if (parts.length !== 6) {
-                return `<span class="cron-debug">Invalid: ${cronSchedule}</span>`;
-            }
-
-            // Convert 6-field to human-readable display
-            // Format: sec min hour day month dow
-            const [sec, min, hour, day, month, dow] = parts;
-
-            if (sec === '0' && min !== '*' && hour !== '*') {
-                // Most common case: 0 MM HH * * DOW
-                const dayName = getDayName(dow);
-                if (dayName && day === '*' && month === '*') {
-                    return `${dayName}s at ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-                }
-            }
-
-            // Fallback: show the raw cron but make it clear it's 6-field
-            return `${cronSchedule} <span class="cron-debug">(6-field)</span>`;
-        }
-
-        function getDayName(dow) {
-            // Unix cron standard: Sunday=0, Monday=1, Tuesday=2, ..., Saturday=6
-            // Some systems also accept Sunday=7
-            const days = {
-                '0': 'Sunday', '7': 'Sunday',
-                '1': 'Monday', '2': 'Tuesday', '3': 'Wednesday',
-                '4': 'Thursday', '5': 'Friday', '6': 'Saturday'
-            };
-            return days[dow] || `Day-${dow}`;
-        }
-
-        // FIXED: Proper 6-field cron parsing and calculation
+        // FIXED: Proper 6-field cron parsing with server timezone handling
         function parseCron(cronExpression) {
             try {
                 const parts = cronExpression.trim().split(/\s+/);
                 if (parts.length !== 6) {
-                    console.warn(`Invalid cron format: expected 6 fields, got ${parts.length}: ${cronExpression}`);
                     return null;
                 }
 
@@ -1183,118 +1181,88 @@
                     dayOfWeek: parts[5]
                 };
             } catch (error) {
-                console.warn(`Cron parsing error for "${cronExpression}":`, error);
                 return null;
             }
         }
 
-        // FIXED: Correct next run calculation for 6-field cron with proper day-of-week handling
+        // FIXED: Calculate next cron run in server timezone (EEST)
         function getNextCronRun(cronExpression) {
             const cron = parseCron(cronExpression);
-            if (!cron) {
-                console.warn('Failed to parse cron:', cronExpression);
-                return null;
+            if (!cron) return null;
+
+            // Get current time in server timezone (EEST = UTC+3)
+            const nowUTC = new Date();
+            const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
+
+            // Start with current server time
+            let next = new Date(nowServer);
+
+            // Handle seconds (ignore for simplicity, assume 0)
+            next.setSeconds(0, 0);
+
+            // Handle minutes
+            if (cron.minute !== '*') {
+                const targetMinute = parseInt(cron.minute);
+                if (targetMinute >= 0 && targetMinute <= 59) {
+                    next.setMinutes(targetMinute);
+                }
             }
 
-            console.log('Calculating next run for cron:', cron, 'Original:', cronExpression);
-
-            const now = new Date();
-            let next = new Date(now);
-
-            try {
-                // Handle seconds - for most schedules this is 0
-                if (cron.second !== '*') {
-                    const targetSecond = parseInt(cron.second);
-                    if (!isNaN(targetSecond) && targetSecond >= 0 && targetSecond < 60) {
-                        next.setSeconds(targetSecond, 0);
-                    }
+            // Handle hours
+            if (cron.hour !== '*') {
+                const targetHour = parseInt(cron.hour);
+                if (targetHour >= 0 && targetHour <= 23) {
+                    next.setHours(targetHour);
                 }
+            }
 
-                // Handle minutes
-                if (cron.minute !== '*') {
-                    const targetMinute = parseInt(cron.minute);
-                    if (!isNaN(targetMinute) && targetMinute >= 0 && targetMinute < 60) {
-                        next.setMinutes(targetMinute);
-                        if (next <= now) {
-                            next.setHours(next.getHours() + 1);
-                        }
-                    }
-                }
-
-                // Handle hours
-                if (cron.hour !== '*') {
-                    const targetHour = parseInt(cron.hour);
-                    if (!isNaN(targetHour) && targetHour >= 0 && targetHour < 24) {
-                        next.setHours(targetHour);
-                        if (next <= now) {
-                            next.setDate(next.getDate() + 1);
-                        }
-                    }
-                }
-
-                // FIXED: Handle day of week with proper Unix cron compatibility
+            // If the calculated time is in the past, move to next occurrence
+            if (next <= nowServer) {
+                // Handle day of week
                 if (cron.dayOfWeek !== '*') {
-                    const targetDowStr = cron.dayOfWeek;
-                    let targetDow;
+                    const targetDay = parseInt(cron.dayOfWeek) === 0 ? 7 : parseInt(cron.dayOfWeek); // Convert Sunday from 0 to 7
+                    const currentDay = next.getDay() === 0 ? 7 : next.getDay();
+                    let daysToAdd = targetDay - currentDay;
 
-                    // Unix cron standard: Sunday=0, Monday=1, Tuesday=2, ..., Saturday=6
-                    // Some systems allow Sunday=7 as well
-                    if (targetDowStr === '0' || targetDowStr === '7') {
-                        targetDow = 0; // Sunday
-                    } else {
-                        targetDow = parseInt(targetDowStr);
-                        if (isNaN(targetDow) || targetDow < 0 || targetDow > 7) {
-                            console.warn('Invalid day of week:', targetDowStr);
-                            return null;
-                        }
-                        // Convert 7 to 0 for Sunday if needed
-                        if (targetDow === 7) targetDow = 0;
+                    if (daysToAdd <= 0) {
+                        daysToAdd += 7; // Move to next week
                     }
 
-                    // JavaScript getDay(): Sunday=0, Monday=1, Tuesday=2, ..., Saturday=6
-                    // This matches Unix cron standard, so no conversion needed
-                    const currentDow = next.getDay();
-                    let daysToAdd = targetDow - currentDow;
-
-                    if (daysToAdd < 0) {
-                        daysToAdd += 7; // Next week
-                    } else if (daysToAdd === 0) {
-                        // Same day - check if target time already passed
-                        if (next <= now) {
-                            daysToAdd = 7; // Same day next week
-                        }
-                    }
-
-                    if (daysToAdd > 0) {
-                        next.setDate(next.getDate() + daysToAdd);
-                    }
-
-                    console.log(`Day of week calculation: current=${currentDow}, target=${targetDow}, daysToAdd=${daysToAdd}`);
+                    next.setDate(next.getDate() + daysToAdd);
+                } else {
+                    // No specific day, just add one day
+                    next.setDate(next.getDate() + 1);
                 }
-
-                console.log('Calculated next run:', next.toISOString(), 'for cron:', cronExpression);
-                return next;
-
-            } catch (error) {
-                console.error('Error calculating next cron run:', error, 'for cron:', cronExpression);
-                return null;
             }
+
+            // Handle day of week constraint
+            if (cron.dayOfWeek !== '*') {
+                const targetDay = parseInt(cron.dayOfWeek) === 0 ? 7 : parseInt(cron.dayOfWeek);
+                const nextDay = next.getDay() === 0 ? 7 : next.getDay();
+
+                if (nextDay !== targetDay) {
+                    let daysToAdd = targetDay - nextDay;
+                    if (daysToAdd <= 0) {
+                        daysToAdd += 7;
+                    }
+                    next.setDate(next.getDate() + daysToAdd);
+                }
+            }
+
+            return next;
         }
 
         function renderNextRun(cronSchedule) {
             const nextRun = getNextCronRun(cronSchedule);
 
             if (!nextRun) {
-                return '<div class="next-run-empty cron-debug">Parse error</div>';
+                return '<div class="next-run-empty">Invalid schedule</div>';
             }
 
-            const now = new Date();
-            const diffMs = nextRun - now;
-
-            if (diffMs < 0) {
-                return '<div class="next-run-empty cron-debug">Past due</div>';
-            }
-
+            // Calculate time difference from current server time
+            const nowUTC = new Date();
+            const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
+            const diffMs = nextRun - nowServer;
             const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
             const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
             const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -1304,13 +1272,16 @@
                 countdown = `${diffDays}d ${diffHours}h`;
             } else if (diffHours > 0) {
                 countdown = `${diffHours}h ${diffMinutes}m`;
-            } else {
+            } else if (diffMinutes > 0) {
                 countdown = `${diffMinutes}m`;
+            } else {
+                countdown = 'soon';
             }
 
             return `
                 <div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                 <div class="next-run-countdown">in ${countdown}</div>
+                <div class="timezone-note">Server time (EEST)</div>
             `;
         }
 
@@ -1557,9 +1528,26 @@
             }
         }
 
+        // FIXED: Filter scheduled operations to only count enabled ones
         function updateScheduleMetrics(scheduleData) {
-            const scheduledCount = scheduleData.scheduled ? scheduleData.scheduled.length : 0;
-            const activeCount = maintenanceData ? maintenanceData.total_active : 0;
+            let scheduledCount = 0;
+            let activeCount = maintenanceData ? maintenanceData.total_active : 0;
+
+            // Count only operations for nodes that have the relevant feature enabled
+            if (scheduleData.scheduled) {
+                scheduledCount = scheduleData.scheduled.filter(op => {
+                    const nodeConfig = nodeConfigs[op.target];
+                    if (!nodeConfig) return false;
+
+                    if (op.type === 'pruning') {
+                        return nodeConfig.pruning_enabled === true;
+                    } else if (op.type === 'snapshot') {
+                        return nodeConfig.snapshots_enabled === true;
+                    } else {
+                        return true; // Other operation types (like hermes_restart)
+                    }
+                }).length;
+            }
 
             const scheduledEl = document.getElementById('scheduled-operations');
             const nextScheduledEl = document.getElementById('next-scheduled');
@@ -1572,19 +1560,30 @@
                 maintenanceSubtitleEl.textContent = activeCount === 1 ? 'Operation running' : 'Operations running';
             }
 
-            // Calculate next scheduled operation time
+            // Calculate next scheduled operation time from enabled operations only
             let nextScheduledTime = 'None scheduled';
             if (scheduledCount > 0) {
                 const allSchedules = [];
 
-                // Collect all scheduled operations
+                // Collect enabled scheduled operations
                 if (scheduleData.scheduled) {
                     scheduleData.scheduled.forEach(op => {
-                        const nextRun = getNextCronRun(op.schedule);
-                        if (nextRun) {
-                            allSchedules.push(nextRun);
-                        } else {
-                            console.warn('Failed to calculate next run for operation:', op);
+                        const nodeConfig = nodeConfigs[op.target];
+                        let shouldInclude = false;
+
+                        if (op.type === 'pruning' && nodeConfig?.pruning_enabled === true) {
+                            shouldInclude = true;
+                        } else if (op.type === 'snapshot' && nodeConfig?.snapshots_enabled === true) {
+                            shouldInclude = true;
+                        } else if (op.type === 'hermes_restart') {
+                            shouldInclude = true; // Hermes restarts don't need specific enable flags
+                        }
+
+                        if (shouldInclude) {
+                            const nextRun = getNextCronRun(op.schedule);
+                            if (nextRun) {
+                                allSchedules.push(nextRun);
+                            }
                         }
                     });
                 }
@@ -1592,15 +1591,18 @@
                 if (allSchedules.length > 0) {
                     allSchedules.sort((a, b) => a - b);
                     const nextRun = allSchedules[0];
-                    const now = new Date();
-                    const diffMs = nextRun - now;
+                    const nowUTC = new Date();
+                    const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
+                    const diffMs = nextRun - nowServer;
                     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
                     const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
 
                     if (diffHours > 0) {
                         nextScheduledTime = `${diffHours}h ${diffMinutes}m`;
-                    } else {
+                    } else if (diffMinutes > 0) {
                         nextScheduledTime = `${diffMinutes}m`;
+                    } else {
+                        nextScheduledTime = 'soon';
                     }
                 }
             }
