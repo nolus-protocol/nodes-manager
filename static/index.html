@@ -786,8 +786,10 @@
         let currentHermesData = null;
         let maintenanceData = null;
 
-        // FIXED: Server timezone offset (EEST is UTC+3)
-        const SERVER_TIMEZONE_OFFSET = 3; // Hours ahead of UTC
+        // FIXED: Cron jobs run in UTC timezone
+        const SERVER_TIMEZONE_OFFSET = 0; // Crons run in UTC
+
+        // Day numbering: Your system uses 1=Sunday, 2=Monday, 3=Tuesday format
 
         document.addEventListener('DOMContentLoaded', function() {
             loadAllData();
@@ -1185,26 +1187,27 @@
             }
         }
 
-        // FIXED: Calculate next cron run in server timezone (EEST)
+        // FIXED: Calculate next cron run in UTC time with proper day handling
         function getNextCronRun(cronExpression) {
             const cron = parseCron(cronExpression);
             if (!cron) return null;
 
-            // Get current time in server timezone (EEST = UTC+3)
-            const nowUTC = new Date();
-            const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
+            // Use UTC time since crons run in UTC
+            const now = new Date();
+            let next = new Date(now);
 
-            // Start with current server time
-            let next = new Date(nowServer);
-
-            // Handle seconds (ignore for simplicity, assume 0)
-            next.setSeconds(0, 0);
+            // Handle seconds (set to 0 for cron)
+            if (cron.second !== '*') {
+                next.setUTCSeconds(parseInt(cron.second) || 0, 0);
+            } else {
+                next.setUTCSeconds(0, 0);
+            }
 
             // Handle minutes
             if (cron.minute !== '*') {
                 const targetMinute = parseInt(cron.minute);
                 if (targetMinute >= 0 && targetMinute <= 59) {
-                    next.setMinutes(targetMinute);
+                    next.setUTCMinutes(targetMinute);
                 }
             }
 
@@ -1212,40 +1215,41 @@
             if (cron.hour !== '*') {
                 const targetHour = parseInt(cron.hour);
                 if (targetHour >= 0 && targetHour <= 23) {
-                    next.setHours(targetHour);
+                    next.setUTCHours(targetHour);
                 }
             }
 
-            // If the calculated time is in the past, move to next occurrence
-            if (next <= nowServer) {
-                // Handle day of week
-                if (cron.dayOfWeek !== '*') {
-                    const targetDay = parseInt(cron.dayOfWeek) === 0 ? 7 : parseInt(cron.dayOfWeek); // Convert Sunday from 0 to 7
-                    const currentDay = next.getDay() === 0 ? 7 : next.getDay();
-                    let daysToAdd = targetDay - currentDay;
-
-                    if (daysToAdd <= 0) {
-                        daysToAdd += 7; // Move to next week
-                    }
-
-                    next.setDate(next.getDate() + daysToAdd);
-                } else {
-                    // No specific day, just add one day
-                    next.setDate(next.getDate() + 1);
-                }
-            }
-
-            // Handle day of week constraint
+            // Handle day of week - using 1=Sunday system as indicated by user
             if (cron.dayOfWeek !== '*') {
-                const targetDay = parseInt(cron.dayOfWeek) === 0 ? 7 : parseInt(cron.dayOfWeek);
-                const nextDay = next.getDay() === 0 ? 7 : next.getDay();
+                const targetDayNum = parseInt(cron.dayOfWeek);
 
-                if (nextDay !== targetDay) {
-                    let daysToAdd = targetDay - nextDay;
-                    if (daysToAdd <= 0) {
-                        daysToAdd += 7;
-                    }
-                    next.setDate(next.getDate() + daysToAdd);
+                // Convert from 1=Sunday system to JavaScript's 0=Sunday system
+                let targetJSDay;
+                if (targetDayNum === 1) {
+                    targetJSDay = 0; // Sunday
+                } else {
+                    targetJSDay = targetDayNum - 1; // Mon=2->1, Tue=3->2, etc.
+                }
+
+                const currentJSDay = next.getUTCDay();
+                let daysToAdd = targetJSDay - currentJSDay;
+
+                // Debug logging
+                console.log(`Cron day calculation: ${cronExpression} - target=${targetDayNum} (JS=${targetJSDay}), current=${currentJSDay}, daysToAdd=${daysToAdd}`);
+
+                // If target day is today but time has passed, or target day is in the past
+                if (daysToAdd < 0 || (daysToAdd === 0 && next <= now)) {
+                    daysToAdd += 7; // Move to next week
+                    console.log(`Moving to next week: daysToAdd=${daysToAdd}`);
+                }
+
+                if (daysToAdd > 0) {
+                    next.setUTCDate(next.getUTCDate() + daysToAdd);
+                }
+            } else {
+                // No specific day constraint, but if time has passed today, move to tomorrow
+                if (next <= now) {
+                    next.setUTCDate(next.getUTCDate() + 1);
                 }
             }
 
@@ -1259,10 +1263,9 @@
                 return '<div class="next-run-empty">Invalid schedule</div>';
             }
 
-            // Calculate time difference from current server time
-            const nowUTC = new Date();
-            const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
-            const diffMs = nextRun - nowServer;
+            // Calculate time difference from current UTC time
+            const now = new Date();
+            const diffMs = nextRun - now;
             const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
             const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
             const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -1281,7 +1284,7 @@
             return `
                 <div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                 <div class="next-run-countdown">in ${countdown}</div>
-                <div class="timezone-note">Server time (EEST)</div>
+                <div class="timezone-note">UTC time</div>
             `;
         }
 
@@ -1591,9 +1594,8 @@
                 if (allSchedules.length > 0) {
                     allSchedules.sort((a, b) => a - b);
                     const nextRun = allSchedules[0];
-                    const nowUTC = new Date();
-                    const nowServer = new Date(nowUTC.getTime() + (SERVER_TIMEZONE_OFFSET * 60 * 60 * 1000));
-                    const diffMs = nextRun - nowServer;
+                    const now = new Date(); // Use current UTC time
+                    const diffMs = nextRun - now;
                     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
                     const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
 
