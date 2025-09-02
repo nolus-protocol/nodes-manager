@@ -847,17 +847,6 @@ impl HealthMonitor {
         }
     }
 
-    pub async fn force_check_node(&self, node_name: &str) -> Result<HealthStatus> {
-        let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow!("Node {} not found", node_name))?;
-
-        self.check_node_health(node_name, node_config).await
-    }
-
-    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<crate::database::HealthRecord>> {
-        self.database.get_health_history(node_name, limit).await
-    }
-
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
         let record = HealthRecord {
             node_name: status.node_name.clone(),
