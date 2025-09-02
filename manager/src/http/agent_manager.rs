@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::info;
 use chrono::{DateTime, Utc};
 
-use crate::config::{Config, HermesConfig, NodeConfig};
+use crate::config::{Config, HermesConfig};
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::maintenance_tracker::MaintenanceTracker;
 
@@ -350,34 +350,6 @@ impl HttpAgentManager {
         };
 
         Ok(snapshot_info)
-    }
-
-    pub async fn run_pruning(&self, node_config: &NodeConfig) -> Result<()> {
-        if !node_config.pruning_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Pruning not enabled for node"));
-        }
-
-        let deploy_path = node_config.pruning_deploy_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No deploy path configured"))?;
-
-        let service_name = node_config.pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured"))?;
-
-        let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
-        let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
-
-        let payload = json!({
-            "deploy_path": deploy_path,
-            "keep_blocks": keep_blocks,
-            "keep_versions": keep_versions,
-            "service_name": service_name,
-            "log_path": node_config.log_path
-        });
-
-        self.execute_operation(&node_config.server_host, "/pruning/execute", payload).await?;
-        Ok(())
     }
 
     // UPDATED: Enhanced hermes restart with log deletion support
