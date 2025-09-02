@@ -257,27 +257,11 @@
             font-weight: 400;
         }
 
-        .recovery-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.25rem;
-            margin-top: 0.25rem;
-            padding: 0.125rem 0.375rem;
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 0.25rem;
-            font-size: 0.625rem;
-            font-weight: 500;
+        .auto-restore-indicator {
+            font-size: 0.7rem;
             color: var(--success-color);
-            text-transform: uppercase;
-            letter-spacing: 0.025em;
-        }
-
-        .recovery-dot {
-            width: 3px;
-            height: 3px;
-            border-radius: 50%;
-            background-color: currentColor;
+            font-weight: 500;
+            margin-top: 0.25rem;
         }
 
         .status-info {
@@ -394,12 +378,6 @@
         .next-run-time {
             font-size: 0.75rem;
             color: var(--text-primary);
-            font-weight: 500;
-        }
-
-        .next-run-countdown {
-            font-size: 0.7rem;
-            color: var(--accent-color);
             font-weight: 500;
         }
 
@@ -629,24 +607,25 @@
 
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Scheduled Operations</div>
+                    <div class="metric-title">Uptime Statistics</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"/>
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"/>
                     </svg>
                 </div>
-                <div class="metric-value" id="scheduled-operations">-</div>
-                <div class="metric-subtitle" id="next-scheduled">Next in -</div>
+                <div class="metric-value" id="average-uptime">-</div>
+                <div class="metric-subtitle" id="uptime-subtitle">Average uptime</div>
             </div>
 
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Active Operations</div>
+                    <div class="metric-title">Server Count</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/>
+                        <path fill-rule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z"/>
+                        <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V9a1 1 0 00-1-1h-1v4.5a1.5 1.5 0 01-3 0V7z"/>
                     </svg>
                 </div>
-                <div class="metric-value" id="active-maintenance">-</div>
-                <div class="metric-subtitle" id="maintenance-subtitle">Operations running</div>
+                <div class="metric-value" id="server-count">-</div>
+                <div class="metric-subtitle" id="server-subtitle">Infrastructure servers</div>
             </div>
         </div>
 
@@ -804,7 +783,6 @@
                 if (data.success) {
                     scheduledOperations = data.data;
                     console.log('Loaded scheduled operations:', scheduledOperations);
-                    updateScheduleMetrics(data.data);
                 }
             } catch (error) {
                 console.error('Failed to load scheduled operations:', error);
@@ -879,6 +857,20 @@
             }
         }
 
+        // Parse cron schedule for sorting
+        function getCronSortValue(cronSchedule) {
+            if (!cronSchedule) return 99999; // Put unscheduled items at the end
+
+            const parts = cronSchedule.trim().split(/\s+/);
+            if (parts.length !== 6) return 99999;
+
+            const hour = parseInt(parts[2]) || 0;
+            const dayOfWeek = parseInt(parts[5]) || 0;
+
+            // Sort by day of week, then by hour
+            return dayOfWeek * 100 + hour;
+        }
+
         function renderNodes(nodes) {
             const container = document.getElementById('nodes-container');
 
@@ -892,10 +884,21 @@
                 return;
             }
 
+            // Sort nodes by pruning schedule
+            const sortedNodes = [...nodes].sort((a, b) => {
+                const configA = nodeConfigs[a.node_name] || {};
+                const configB = nodeConfigs[b.node_name] || {};
+
+                const sortA = getCronSortValue(configA.pruning_schedule);
+                const sortB = getCronSortValue(configB.pruning_schedule);
+
+                return sortA - sortB;
+            });
+
             const tableHtml = `
                 <table class="infrastructure-table">
                     <tbody>
-                        ${nodes.map(node => {
+                        ${sortedNodes.map(node => {
                             const nodeConfig = nodeConfigs[node.node_name] || {};
 
                             return `
@@ -905,10 +908,7 @@
                                             <div class="node-name">${formatNodeName(node.node_name)}</div>
                                             <div class="node-server">${node.server_host}</div>
                                             ${nodeConfig.auto_restore_enabled ? `
-                                                <div class="recovery-indicator">
-                                                    <div class="recovery-dot"></div>
-                                                    Restore
-                                                </div>
+                                                <div class="auto-restore-indicator">Auto restore</div>
                                             ` : ''}
                                         </div>
                                     </td>
@@ -946,7 +946,7 @@
                                             ${nodeConfig.pruning_enabled ? `
                                                 <button class="btn btn-icon btn-warning"
                                                         onclick="executeManualNodePruning('${node.node_name}')"
-                                                        title="Execute pruning operation for this node">
+                                                        title="Execute pruning operation - stops node, runs cosmos-pruner, restarts node">
                                                     <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
                                                         <path fill-rule="evenodd" d="M4 5a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 3a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z"/>
@@ -956,7 +956,7 @@
                                             ${nodeConfig.snapshots_enabled ? `
                                                 <button class="btn btn-icon btn-snapshot"
                                                         onclick="executeCreateSnapshot('${node.node_name}')"
-                                                        title="Create manual snapshot for this node">
+                                                        title="Create network snapshot - stops node, creates compressed backup, restarts node">
                                                     <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm12 12V8l-2 2-2-2v8h4z"/>
                                                     </svg>
@@ -965,7 +965,7 @@
                                             ${nodeConfig.auto_restore_enabled ? `
                                                 <button class="btn btn-icon btn-restore"
                                                         onclick="executeManualRestore('${node.node_name}')"
-                                                        title="Restore from latest snapshot">
+                                                        title="Restore from latest network snapshot - replaces all data, preserves validator state">
                                                     <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                     </svg>
@@ -1036,10 +1036,21 @@
                 return;
             }
 
+            // Sort hermes instances by restart schedule
+            const sortedInstances = [...instances].sort((a, b) => {
+                const configA = hermesConfigs[a.name] || {};
+                const configB = hermesConfigs[b.name] || {};
+
+                const sortA = getCronSortValue(configA.restart_schedule);
+                const sortB = getCronSortValue(configB.restart_schedule);
+
+                return sortA - sortB;
+            });
+
             const tableHtml = `
                 <table class="infrastructure-table">
                     <tbody>
-                        ${instances.map(hermes => {
+                        ${sortedInstances.map(hermes => {
                             const hermesConfig = hermesConfigs[hermes.name] || {};
 
                             return `
@@ -1078,7 +1089,7 @@
                                         <div class="action-buttons">
                                             <button class="btn btn-icon btn-hermes"
                                                     onclick="executeManualHermesRestart('${hermes.name}')"
-                                                    title="Restart this Hermes relayer immediately">
+                                                    title="Restart Hermes relayer - stops service, clears logs (if enabled), starts service">
                                                 <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                     <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                 </svg>
@@ -1192,28 +1203,8 @@
                 return '<div class="next-run-empty">Invalid schedule</div>';
             }
 
-            // Calculate time difference from current UTC time
-            const now = new Date();
-            const diffMs = nextRun - now;
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-            let countdown = '';
-            if (diffDays > 0) {
-                countdown = `${diffDays}d ${diffHours}h`;
-            } else if (diffHours > 0) {
-                countdown = `${diffHours}h ${diffMinutes}m`;
-            } else if (diffMinutes > 0) {
-                countdown = `${diffMinutes}m`;
-            } else {
-                countdown = 'soon';
-            }
-
-            return `
-                <div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                <div class="next-run-countdown">in ${countdown}</div>
-            `;
+            // Only show date and time, no countdown
+            return `<div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>`;
         }
 
         // Action functions
@@ -1401,6 +1392,8 @@
 
         function updateAllMetrics() {
             updateHealthMetrics();
+            updateUptimeStatistics();
+            updateServerCount();
         }
 
         function updateHealthMetrics() {
@@ -1459,88 +1452,51 @@
             }
         }
 
-        // FIXED: Filter scheduled operations to only count enabled ones and show real data
-        function updateScheduleMetrics(scheduleData) {
-            let scheduledCount = 0;
-            let activeCount = maintenanceData ? maintenanceData.total_active : 0;
+        function updateUptimeStatistics() {
+            const totalComponents = (currentNodesData ? currentNodesData.length : 0) + (currentHermesData ? currentHermesData.length : 0);
+            const operationalComponents = (currentNodesData ? currentNodesData.filter(n => {
+                const status = n.status.toLowerCase();
+                return status === 'synced' || status === 'catching up' || status === 'healthy';
+            }).length : 0) + (currentHermesData ? currentHermesData.filter(h =>
+                getHermesStatusClass(h.status) === 'status-running'
+            ).length : 0);
 
-            console.log('Schedule data:', scheduleData);
-            console.log('Maintenance data:', maintenanceData);
+            const uptimePercentage = totalComponents > 0 ? Math.round((operationalComponents / totalComponents) * 100) : 0;
 
-            // Count only operations for nodes that have the relevant feature enabled
-            if (scheduleData && scheduleData.scheduled) {
-                scheduledCount = scheduleData.scheduled.filter(op => {
-                    const nodeConfig = nodeConfigs[op.target];
-                    if (!nodeConfig) return false;
+            const uptimeEl = document.getElementById('average-uptime');
+            const uptimeSubtitleEl = document.getElementById('uptime-subtitle');
 
-                    if (op.type === 'pruning') {
-                        return nodeConfig.pruning_enabled === true;
-                    } else if (op.type === 'snapshot') {
-                        return nodeConfig.snapshots_enabled === true;
-                    } else {
-                        return true; // Other operation types (like hermes_restart)
+            if (uptimeEl) uptimeEl.textContent = `${uptimePercentage}%`;
+            if (uptimeSubtitleEl) uptimeSubtitleEl.textContent = 'System availability';
+        }
+
+        function updateServerCount() {
+            // Get unique server hosts from both nodes and hermes
+            const serverHosts = new Set();
+
+            if (currentNodesData) {
+                currentNodesData.forEach(node => {
+                    if (node.server_host) {
+                        serverHosts.add(node.server_host);
                     }
-                }).length;
+                });
             }
 
-            const scheduledEl = document.getElementById('scheduled-operations');
-            const nextScheduledEl = document.getElementById('next-scheduled');
-            const activeMaintenanceEl = document.getElementById('active-maintenance');
-            const maintenanceSubtitleEl = document.getElementById('maintenance-subtitle');
-
-            if (scheduledEl) scheduledEl.textContent = scheduledCount;
-            if (activeMaintenanceEl) activeMaintenanceEl.textContent = activeCount;
-            if (maintenanceSubtitleEl) {
-                maintenanceSubtitleEl.textContent = activeCount === 1 ? 'Operation running' : 'Operations running';
-            }
-
-            // Calculate next scheduled operation time from enabled operations only
-            let nextScheduledTime = 'None scheduled';
-            if (scheduledCount > 0) {
-                const allSchedules = [];
-
-                // Collect enabled scheduled operations
-                if (scheduleData && scheduleData.scheduled) {
-                    scheduleData.scheduled.forEach(op => {
-                        const nodeConfig = nodeConfigs[op.target];
-                        let shouldInclude = false;
-
-                        if (op.type === 'pruning' && nodeConfig?.pruning_enabled === true) {
-                            shouldInclude = true;
-                        } else if (op.type === 'snapshot' && nodeConfig?.snapshots_enabled === true) {
-                            shouldInclude = true;
-                        } else if (op.type === 'hermes_restart') {
-                            shouldInclude = true; // Hermes restarts don't need specific enable flags
-                        }
-
-                        if (shouldInclude) {
-                            const nextRun = getNextCronRun(op.schedule);
-                            if (nextRun) {
-                                allSchedules.push(nextRun);
-                            }
-                        }
-                    });
-                }
-
-                if (allSchedules.length > 0) {
-                    allSchedules.sort((a, b) => a - b);
-                    const nextRun = allSchedules[0];
-                    const now = new Date(); // Use current UTC time
-                    const diffMs = nextRun - now;
-                    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-                    const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-                    if (diffHours > 0) {
-                        nextScheduledTime = `${diffHours}h ${diffMinutes}m`;
-                    } else if (diffMinutes > 0) {
-                        nextScheduledTime = `${diffMinutes}m`;
-                    } else {
-                        nextScheduledTime = 'soon';
+            if (currentHermesData) {
+                currentHermesData.forEach(hermes => {
+                    if (hermes.server_host) {
+                        serverHosts.add(hermes.server_host);
                     }
-                }
+                });
             }
 
-            if (nextScheduledEl) nextScheduledEl.textContent = nextScheduledTime;
+            const serverCount = serverHosts.size;
+
+            const serverCountEl = document.getElementById('server-count');
+            const serverSubtitleEl = document.getElementById('server-subtitle');
+
+            if (serverCountEl) serverCountEl.textContent = serverCount;
+            if (serverSubtitleEl) serverSubtitleEl.textContent = `Infrastructure servers`;
         }
 
         function updateLastUpdated() {
