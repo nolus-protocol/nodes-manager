@@ -39,8 +39,6 @@
             color: var(--text-primary);
             line-height: 1.6;
             min-height: 100vh;
-            width: 1200px;
-            margin: 0 auto;
         }
 
         .header {
@@ -48,6 +46,7 @@
             border-bottom: 1px solid var(--border-color);
             padding: 1.5rem 0;
             box-shadow: var(--shadow-sm);
+            width: 100%;
         }
 
         .header-content {
@@ -379,6 +378,7 @@
             font-size: 0.75rem;
             color: var(--text-primary);
             font-weight: 500;
+            line-height: 1.3;
         }
 
         .action-buttons {
@@ -1196,6 +1196,7 @@
             return next;
         }
 
+        // UPDATED: Enhanced user-friendly date formatting
         function renderNextRun(cronSchedule) {
             const nextRun = getNextCronRun(cronSchedule);
 
@@ -1203,8 +1204,25 @@
                 return '<div class="next-run-empty">Invalid schedule</div>';
             }
 
-            // Only show date and time, no countdown
-            return `<div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>`;
+            // Format: "11:00 AM, Monday, 07 Sep"
+            const timeString = nextRun.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+
+            const dayString = nextRun.toLocaleDateString([], {
+                weekday: 'long'
+            });
+
+            const dateString = nextRun.toLocaleDateString([], {
+                day: '2-digit',
+                month: 'short'
+            });
+
+            const formattedDateTime = `${timeString}, ${dayString}, ${dateString}`;
+
+            return `<div class="next-run-time">${formattedDateTime}</div>`;
         }
 
         // Action functions
