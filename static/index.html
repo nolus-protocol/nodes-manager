@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infrastructure Management Console</title>
+    <title>Infrastructure Console</title>
     <style>
         * {
             margin: 0;
@@ -11,53 +10,48 @@
             box-sizing: border-box;
         }
         :root {
-            --primary-color: #0f172a;
-            --secondary-color: #1e293b;
-            --accent-color: #3b82f6;
+            --primary-color: #1f2937;
+            --secondary-color: #374151;
+            --accent-color: #4f46e5;
             --success-color: #059669;
             --warning-color: #d97706;
             --error-color: #dc2626;
-            --maintenance-color: #3b82f6;
+            --maintenance-color: #6366f1;
             --hermes-color: #7c3aed;
-            --snapshot-color: #8b5cf6;
-            --restore-color: #0891b2;
-            --cancel-color: #dc2626;
-            --syncing-color: #0891b2;
-            --bg-primary: #f8fafc;
+            --snapshot-color: #0891b2;
+            --restore-color: #0f766e;
+            --bg-primary: #f9fafb;
             --bg-secondary: #ffffff;
-            --bg-tertiary: #f1f5f9;
-            --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --text-muted: #64748b;
-            --border-color: #e2e8f0;
-            --border-hover: #cbd5e1;
-            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --bg-tertiary: #f3f4f6;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --text-muted: #9ca3af;
+            --border-color: #e5e7eb;
+            --border-hover: #d1d5db;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-tertiary) 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.6;
             min-height: 100vh;
+            width: 1200px;
+            margin: 0 auto;
         }
 
         .header {
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            box-shadow: var(--shadow-lg);
-            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow-sm);
         }
 
         .header-content {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 0 2rem;
             display: flex;
@@ -65,18 +59,11 @@
             align-items: center;
         }
 
-        .header-title {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
         .header-title h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            color: white;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
             margin: 0;
-            letter-spacing: -0.025em;
         }
 
         .header-status {
@@ -89,86 +76,64 @@
         .status-indicator {
             display: flex;
             align-items: center;
-            gap: 0.75rem;
-            padding: 0.5rem 1rem;
-            border-radius: 0.75rem;
-            font-weight: 600;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 0.375rem;
+            font-weight: 500;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
         }
 
         .status-indicator.healthy {
-            background: linear-gradient(135deg, rgba(5, 150, 105, 0.2) 0%, rgba(5, 150, 105, 0.1) 100%);
-            color: #10b981;
+            background: #f0fdf4;
+            color: var(--success-color);
+            border-color: #bbf7d0;
         }
 
         .status-indicator.warning {
-            background: linear-gradient(135deg, rgba(217, 119, 6, 0.2) 0%, rgba(217, 119, 6, 0.1) 100%);
-            color: #f59e0b;
+            background: #fffbeb;
+            color: var(--warning-color);
+            border-color: #fed7aa;
         }
 
         .status-indicator.error {
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%);
-            color: #ef4444;
+            background: #fef2f2;
+            color: var(--error-color);
+            border-color: #fecaca;
         }
 
         .status-indicator.maintenance {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.1) 100%);
-            color: #3b82f6;
+            background: #eef2ff;
+            color: var(--maintenance-color);
+            border-color: #c7d2fe;
         }
 
         .status-dot {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background-color: currentColor;
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
         }
 
         .main-container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
-            padding: 2.5rem 2rem;
+            padding: 2rem;
         }
 
         .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-            margin-bottom: 3rem;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 2rem;
         }
 
         .metric-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: 1rem;
-            padding: 2rem;
-            box-shadow: var(--shadow-md);
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .metric-card:hover {
-            box-shadow: var(--shadow-xl);
-            transform: translateY(-2px);
-            border-color: var(--border-hover);
-        }
-
-        .metric-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--accent-color), var(--success-color));
-            border-radius: 1rem 1rem 0 0;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
         }
 
         .metric-header {
@@ -179,7 +144,7 @@
         }
 
         .metric-title {
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
@@ -187,15 +152,14 @@
         }
 
         .metric-icon {
-            width: 1.5rem;
-            height: 1.5rem;
+            width: 1.25rem;
+            height: 1.25rem;
             color: var(--accent-color);
-            opacity: 0.7;
         }
 
         .metric-value {
-            font-size: 2.5rem;
-            font-weight: 800;
+            font-size: 2rem;
+            font-weight: 700;
             color: var(--text-primary);
             line-height: 1;
             margin-bottom: 0.5rem;
@@ -204,60 +168,54 @@
         .metric-subtitle {
             font-size: 0.875rem;
             color: var(--text-muted);
-            font-weight: 500;
+            font-weight: 400;
         }
 
         .progress-bar {
             margin-top: 1rem;
-            height: 6px;
-            background-color: var(--border-color);
-            border-radius: 3px;
+            height: 4px;
+            background-color: var(--bg-tertiary);
+            border-radius: 2px;
             overflow: hidden;
         }
 
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, var(--success-color), #10b981);
+            background: var(--success-color);
             transition: width 0.5s ease;
-            border-radius: 3px;
+            border-radius: 2px;
         }
 
         .panel {
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: 1rem;
-            box-shadow: var(--shadow-md);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-sm);
             overflow: hidden;
-            margin-bottom: 2.5rem;
-            transition: all 0.3s ease;
-        }
-
-        .panel:hover {
-            box-shadow: var(--shadow-lg);
+            margin-bottom: 2rem;
         }
 
         .panel-header {
-            padding: 1.5rem 2rem;
+            padding: 1.25rem 1.5rem;
             border-bottom: 1px solid var(--border-color);
-            background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+            background: var(--bg-tertiary);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .panel-title {
-            font-size: 1.25rem;
-            font-weight: 700;
+            font-size: 1.125rem;
+            font-weight: 600;
             color: var(--text-primary);
             display: flex;
             align-items: center;
-            gap: 0.75rem;
-            letter-spacing: -0.025em;
+            gap: 0.5rem;
         }
 
         .panel-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .panel-content {
@@ -271,15 +229,14 @@
         }
 
         .infrastructure-table td {
-            padding: 1.5rem 1rem;
+            padding: 1.25rem 1rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
             vertical-align: top;
-            transition: background-color 0.2s ease;
         }
 
         .infrastructure-table tbody tr:hover {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.02) 0%, rgba(59, 130, 246, 0.05) 100%);
+            background: var(--bg-tertiary);
         }
 
         .node-info {
@@ -291,35 +248,34 @@
         .node-name {
             font-weight: 600;
             color: var(--text-primary);
-            font-size: 0.9rem;
-            letter-spacing: -0.01em;
+            font-size: 0.875rem;
         }
 
         .node-server {
             font-size: 0.75rem;
             color: var(--text-muted);
-            font-weight: 500;
+            font-weight: 400;
         }
 
         .recovery-indicator {
             display: inline-flex;
             align-items: center;
-            gap: 0.375rem;
-            margin-top: 0.5rem;
-            padding: 0.25rem 0.5rem;
-            background: linear-gradient(135deg, rgba(8, 145, 178, 0.1) 0%, rgba(8, 145, 178, 0.05) 100%);
-            border: 1px solid rgba(8, 145, 178, 0.2);
-            border-radius: 0.5rem;
-            font-size: 0.65rem;
-            font-weight: 600;
-            color: var(--restore-color);
+            gap: 0.25rem;
+            margin-top: 0.25rem;
+            padding: 0.125rem 0.375rem;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 0.25rem;
+            font-size: 0.625rem;
+            font-weight: 500;
+            color: var(--success-color);
             text-transform: uppercase;
             letter-spacing: 0.025em;
         }
 
         .recovery-dot {
-            width: 4px;
-            height: 4px;
+            width: 3px;
+            height: 3px;
             border-radius: 50%;
             background-color: currentColor;
         }
@@ -333,11 +289,11 @@
         .status-badge {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 0.375rem 0.75rem;
-            border-radius: 0.5rem;
+            gap: 0.375rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
             font-size: 0.75rem;
-            font-weight: 600;
+            font-weight: 500;
             width: fit-content;
             text-transform: uppercase;
             letter-spacing: 0.025em;
@@ -345,45 +301,45 @@
         }
 
         .status-healthy, .status-synced {
-            background: linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(5, 150, 105, 0.1) 100%);
+            background: #f0fdf4;
             color: var(--success-color);
-            border-color: rgba(5, 150, 105, 0.2);
+            border-color: #bbf7d0;
         }
 
         .status-catching.up {
-            background: linear-gradient(135deg, rgba(8, 145, 178, 0.15) 0%, rgba(8, 145, 178, 0.1) 100%);
-            color: var(--syncing-color);
-            border-color: rgba(8, 145, 178, 0.2);
+            background: #f0f9ff;
+            color: #0369a1;
+            border-color: #bae6fd;
         }
 
         .status-unhealthy {
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.15) 0%, rgba(220, 38, 38, 0.1) 100%);
+            background: #fef2f2;
             color: var(--error-color);
-            border-color: rgba(220, 38, 38, 0.2);
+            border-color: #fecaca;
         }
 
         .status-maintenance {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%);
+            background: #eef2ff;
             color: var(--maintenance-color);
-            border-color: rgba(59, 130, 246, 0.2);
+            border-color: #c7d2fe;
         }
 
         .status-unknown {
-            background: linear-gradient(135deg, rgba(100, 116, 139, 0.15) 0%, rgba(100, 116, 139, 0.1) 100%);
+            background: var(--bg-tertiary);
             color: var(--text-muted);
-            border-color: rgba(100, 116, 139, 0.2);
+            border-color: var(--border-color);
         }
 
         .status-running {
-            background: linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(5, 150, 105, 0.1) 100%);
+            background: #f0fdf4;
             color: var(--success-color);
-            border-color: rgba(5, 150, 105, 0.2);
+            border-color: #bbf7d0;
         }
 
         .status-stopped, .status-failed {
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.15) 0%, rgba(220, 38, 38, 0.1) 100%);
+            background: #fef2f2;
             color: var(--error-color);
-            border-color: rgba(220, 38, 38, 0.2);
+            border-color: #fecaca;
         }
 
         .status-dot-mini {
@@ -396,7 +352,7 @@
         .block-height {
             font-size: 0.75rem;
             color: var(--text-muted);
-            font-weight: 500;
+            font-weight: 400;
         }
 
         .schedule-info, .next-run-info {
@@ -412,7 +368,7 @@
         }
 
         .schedule-label, .next-run-label {
-            font-size: 0.65rem;
+            font-size: 0.625rem;
             font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
@@ -423,36 +379,28 @@
             font-size: 0.75rem;
             font-family: 'SF Mono', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             color: var(--text-muted);
-            background: rgba(100, 116, 139, 0.1);
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.375rem;
-            border: 1px solid rgba(100, 116, 139, 0.2);
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.375rem;
+            border-radius: 0.25rem;
+            border: 1px solid var(--border-color);
         }
 
         .schedule-empty, .next-run-empty {
             font-size: 0.75rem;
             color: var(--text-muted);
             font-style: italic;
-            opacity: 0.7;
         }
 
         .next-run-time {
             font-size: 0.75rem;
             color: var(--text-primary);
-            font-weight: 600;
+            font-weight: 500;
         }
 
         .next-run-countdown {
             font-size: 0.7rem;
             color: var(--accent-color);
             font-weight: 500;
-        }
-
-        .timezone-note {
-            font-size: 0.65rem;
-            color: var(--text-muted);
-            font-style: italic;
-            margin-top: 0.25rem;
         }
 
         .action-buttons {
@@ -466,117 +414,98 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            border: none;
-            border-radius: 0.5rem;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
             font-size: 0.75rem;
-            font-weight: 600;
+            font-weight: 500;
             text-decoration: none;
             cursor: pointer;
             transition: all 0.2s ease;
             white-space: nowrap;
-            position: relative;
-            overflow: hidden;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
         }
 
         .btn:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn-sm {
-            padding: 0.375rem 0.75rem;
-            font-size: 0.7rem;
-        }
-
-        .btn-icon {
-            padding: 0.625rem;
-            position: relative;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--accent-color) 0%, #2563eb 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-success {
-            background: linear-gradient(135deg, var(--success-color) 0%, #047857 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-warning {
-            background: linear-gradient(135deg, var(--warning-color) 0%, #b45309 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-hermes {
-            background: linear-gradient(135deg, var(--hermes-color) 0%, #6d28d9 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-snapshot {
-            background: linear-gradient(135deg, var(--snapshot-color) 0%, #7c2d12 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-restore {
-            background: linear-gradient(135deg, var(--restore-color) 0%, #0e7490 100%);
-            color: white;
-            border: 1px solid transparent;
-        }
-
-        .btn-secondary {
-            background: var(--bg-secondary);
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-        }
-
-        .btn-secondary:hover {
             background: var(--bg-tertiary);
             border-color: var(--border-hover);
         }
 
-        .tooltip {
-            position: absolute;
-            bottom: 120%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--secondary-color);
-            color: white;
-            padding: 0.5rem 0.75rem;
-            border-radius: 0.5rem;
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
             font-size: 0.7rem;
-            font-weight: 500;
-            white-space: nowrap;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-            z-index: 1000;
-            box-shadow: var(--shadow-lg);
         }
 
-        .tooltip::after {
-            content: '';
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            border: 6px solid transparent;
-            border-top-color: var(--secondary-color);
+        .btn-icon {
+            padding: 0.5rem;
         }
 
-        .btn-icon:hover .tooltip {
-            opacity: 1;
+        .btn-primary {
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+
+        .btn-primary:hover {
+            background: #4338ca;
+            border-color: #4338ca;
+        }
+
+        .btn-success {
+            background: var(--success-color);
+            color: white;
+            border-color: var(--success-color);
+        }
+
+        .btn-success:hover {
+            background: #047857;
+            border-color: #047857;
+        }
+
+        .btn-warning {
+            background: var(--warning-color);
+            color: white;
+            border-color: var(--warning-color);
+        }
+
+        .btn-warning:hover {
+            background: #b45309;
+            border-color: #b45309;
+        }
+
+        .btn-hermes {
+            background: var(--hermes-color);
+            color: white;
+            border-color: var(--hermes-color);
+        }
+
+        .btn-hermes:hover {
+            background: #6d28d9;
+            border-color: #6d28d9;
+        }
+
+        .btn-snapshot {
+            background: var(--snapshot-color);
+            color: white;
+            border-color: var(--snapshot-color);
+        }
+
+        .btn-snapshot:hover {
+            background: #0e7490;
+            border-color: #0e7490;
+        }
+
+        .btn-restore {
+            background: var(--restore-color);
+            color: white;
+            border-color: var(--restore-color);
+        }
+
+        .btn-restore:hover {
+            background: #134e4a;
+            border-color: #134e4a;
         }
 
         .loading {
@@ -590,9 +519,9 @@
         }
 
         .spinner {
-            width: 2rem;
-            height: 2rem;
-            border: 3px solid var(--border-color);
+            width: 1.5rem;
+            height: 1.5rem;
+            border: 2px solid var(--border-color);
             border-top-color: var(--accent-color);
             border-radius: 50%;
             animation: spin 1s linear infinite;
@@ -606,16 +535,15 @@
             position: fixed;
             top: 2rem;
             right: 2rem;
-            padding: 1rem 1.5rem;
-            border-radius: 0.75rem;
-            box-shadow: var(--shadow-xl);
+            padding: 1rem 1.25rem;
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-lg);
             z-index: 1000;
-            max-width: 450px;
+            max-width: 400px;
             opacity: 0;
             transform: translateX(100%);
             transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid;
         }
 
         .alert.show {
@@ -624,30 +552,33 @@
         }
 
         .alert-success {
-            background: linear-gradient(135deg, rgba(5, 150, 105, 0.9) 0%, rgba(5, 150, 105, 0.8) 100%);
-            color: white;
+            background: #f0fdf4;
+            color: var(--success-color);
+            border-color: #bbf7d0;
         }
 
         .alert-warning {
-            background: linear-gradient(135deg, rgba(217, 119, 6, 0.9) 0%, rgba(217, 119, 6, 0.8) 100%);
-            color: white;
+            background: #fffbeb;
+            color: var(--warning-color);
+            border-color: #fed7aa;
         }
 
         .alert-error {
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.9) 0%, rgba(220, 38, 38, 0.8) 100%);
-            color: white;
+            background: #fef2f2;
+            color: var(--error-color);
+            border-color: #fecaca;
         }
 
         .uptime {
             font-size: 0.75rem;
             color: var(--text-muted);
-            font-weight: 500;
+            font-weight: 400;
         }
 
         #last-updated {
-            color: rgba(255, 255, 255, 0.7);
+            color: var(--text-muted);
             font-size: 0.75rem;
-            font-weight: 500;
+            font-weight: 400;
         }
     </style>
 </head>
@@ -655,7 +586,7 @@
     <header class="header">
         <div class="header-content">
             <div class="header-title">
-                <h1>Infrastructure Management Console</h1>
+                <h1>Infrastructure Console</h1>
             </div>
             <div class="header-status">
                 <div class="status-indicator healthy" id="system-status">
@@ -709,7 +640,7 @@
 
             <div class="metric-card">
                 <div class="metric-header">
-                    <div class="metric-title">Active Maintenance</div>
+                    <div class="metric-title">Active Operations</div>
                     <svg class="metric-icon" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/>
                     </svg>
@@ -722,14 +653,14 @@
         <div class="panel">
             <div class="panel-header">
                 <div class="panel-title">
-                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
                     </svg>
                     Blockchain Nodes
                 </div>
                 <div class="panel-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="refreshNodes()">
-                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshNodes()" title="Refresh all node statuses">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                             <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                         </svg>
                         Refresh All
@@ -749,14 +680,14 @@
         <div class="panel">
             <div class="panel-header">
                 <div class="panel-title">
-                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"/>
                     </svg>
                     Hermes Relayers
                 </div>
                 <div class="panel-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="refreshHermes()">
-                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshHermes()" title="Refresh all Hermes relayer statuses">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                             <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                         </svg>
                         Refresh All
@@ -835,6 +766,7 @@
                 const data = await response.json();
                 if (data.success) {
                     maintenanceData = data.data;
+                    console.log('Loaded maintenance data:', maintenanceData);
                 }
             } catch (error) {
                 console.error('Failed to load maintenance data:', error);
@@ -871,6 +803,7 @@
                 const data = await response.json();
                 if (data.success) {
                     scheduledOperations = data.data;
+                    console.log('Loaded scheduled operations:', scheduledOperations);
                     updateScheduleMetrics(data.data);
                 }
             } catch (error) {
@@ -1013,32 +946,29 @@
                                             ${nodeConfig.pruning_enabled ? `
                                                 <button class="btn btn-icon btn-warning"
                                                         onclick="executeManualNodePruning('${node.node_name}')"
-                                                        title="Execute pruning">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                        title="Execute pruning operation for this node">
+                                                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
                                                         <path fill-rule="evenodd" d="M4 5a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 3a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z"/>
                                                     </svg>
-                                                    <div class="tooltip">Manual Pruning</div>
                                                 </button>
                                             ` : ''}
                                             ${nodeConfig.snapshots_enabled ? `
                                                 <button class="btn btn-icon btn-snapshot"
                                                         onclick="executeCreateSnapshot('${node.node_name}')"
-                                                        title="Create snapshot">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                        title="Create manual snapshot for this node">
+                                                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm12 12V8l-2 2-2-2v8h4z"/>
                                                     </svg>
-                                                    <div class="tooltip">Manual Snapshot</div>
                                                 </button>
                                             ` : ''}
-                                            ${(nodeConfig.snapshots_enabled && nodeConfig.auto_restore_enabled) ? `
+                                            ${nodeConfig.auto_restore_enabled ? `
                                                 <button class="btn btn-icon btn-restore"
                                                         onclick="executeManualRestore('${node.node_name}')"
                                                         title="Restore from latest snapshot">
-                                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                     </svg>
-                                                    <div class="tooltip">Manual Restore</div>
                                                 </button>
                                             ` : ''}
                                         </div>
@@ -1148,11 +1078,10 @@
                                         <div class="action-buttons">
                                             <button class="btn btn-icon btn-hermes"
                                                     onclick="executeManualHermesRestart('${hermes.name}')"
-                                                    title="Restart Hermes now">
-                                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                    title="Restart this Hermes relayer immediately">
+                                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
                                                     <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
                                                 </svg>
-                                                <div class="tooltip">Restart Hermes</div>
                                             </button>
                                         </div>
                                     </td>
@@ -1284,7 +1213,6 @@
             return `
                 <div class="next-run-time">${nextRun.toLocaleDateString()} ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                 <div class="next-run-countdown">in ${countdown}</div>
-                <div class="timezone-note">UTC time</div>
             `;
         }
 
@@ -1531,13 +1459,16 @@
             }
         }
 
-        // FIXED: Filter scheduled operations to only count enabled ones
+        // FIXED: Filter scheduled operations to only count enabled ones and show real data
         function updateScheduleMetrics(scheduleData) {
             let scheduledCount = 0;
             let activeCount = maintenanceData ? maintenanceData.total_active : 0;
 
+            console.log('Schedule data:', scheduleData);
+            console.log('Maintenance data:', maintenanceData);
+
             // Count only operations for nodes that have the relevant feature enabled
-            if (scheduleData.scheduled) {
+            if (scheduleData && scheduleData.scheduled) {
                 scheduledCount = scheduleData.scheduled.filter(op => {
                     const nodeConfig = nodeConfigs[op.target];
                     if (!nodeConfig) return false;
@@ -1569,7 +1500,7 @@
                 const allSchedules = [];
 
                 // Collect enabled scheduled operations
-                if (scheduleData.scheduled) {
+                if (scheduleData && scheduleData.scheduled) {
                     scheduleData.scheduled.forEach(op => {
                         const nodeConfig = nodeConfigs[op.target];
                         let shouldInclude = false;
