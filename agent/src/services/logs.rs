@@ -65,6 +65,59 @@ pub async fn truncate_log_directory(log_dir: &str) -> Result<()> {
     Ok(())
 }
 
+// NEW: Delete all files in a directory (keeping the directory structure)
+pub async fn delete_all_files_in_directory(log_dir: &str) -> Result<()> {
+    info!("Deleting all files in directory: {}", log_dir);
+
+    // First, verify the directory exists
+    let dir_check_output = AsyncCommand::new("test")
+        .arg("-d")
+        .arg(log_dir)
+        .output()
+        .await?;
+
+    if !dir_check_output.status.success() {
+        return Err(anyhow!("Directory does not exist: {}", log_dir));
+    }
+
+    // Delete all files (not directories) in the specified directory
+    let delete_command = format!(
+        "find '{}' -maxdepth 1 -type f -delete",
+        log_dir
+    );
+
+    let output = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&delete_command)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to delete files in directory {}: {}", log_dir, error));
+    }
+
+    // Count remaining files to verify deletion
+    let count_command = format!(
+        "find '{}' -maxdepth 1 -type f | wc -l",
+        log_dir
+    );
+
+    let count_output = AsyncCommand::new("sh")
+        .arg("-c")
+        .arg(&count_command)
+        .output()
+        .await?;
+
+    let remaining_files = String::from_utf8_lossy(&count_output.stdout)
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+
+    info!("All files deleted successfully from directory: {} (remaining files: {})", log_dir, remaining_files);
+    Ok(())
+}
+
 pub async fn truncate_log_path(log_path: &str) -> Result<()> {
     info!("Checking log path type: {}", log_path);
 

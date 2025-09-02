@@ -19,6 +19,12 @@ pub struct LogTruncateRequest {
     pub service_name: String,
 }
 
+// NEW: Request to delete all files in a directory
+#[derive(Debug, Deserialize)]
+pub struct LogDeleteAllRequest {
+    pub log_path: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PruningRequest {
     pub deploy_path: String,
@@ -31,7 +37,7 @@ pub struct PruningRequest {
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
-    pub network: String, // ADDED: Network name for proper snapshot naming
+    pub network: String,
     pub deploy_path: String,
     pub backup_path: String,
     pub service_name: String,
@@ -41,9 +47,8 @@ pub struct SnapshotRequest {
 #[derive(Debug, Deserialize)]
 pub struct RestoreRequest {
     pub node_name: String,
-    pub network: String, // ADDED: Network name for finding snapshots
     pub deploy_path: String,
-    pub snapshot_dir: String,
+    pub snapshot_dir: String, // FIXED: Changed from snapshot_file to snapshot_dir
     pub service_name: String,
     pub log_path: Option<String>,
 }
@@ -162,7 +167,7 @@ impl ApiResponse<()> {
             filename: Some(filename),
             size_bytes: Some(size_bytes),
             path: Some(path),
-            compression: Some("directory".to_string()),
+            compression: Some("directory".to_string()), // FIXED: Changed from gzip to directory
         }
     }
 }

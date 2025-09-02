@@ -34,32 +34,32 @@ struct BusyState {
 }
 
 impl AppState {
-    async fn try_start_operation(&self, service_name: &str, operation_type: &str) -> Result<(), String> {
+    async fn try_start_operation(&self, node_name: &str, operation_type: &str) -> Result<(), String> {
         let mut busy = self.busy_nodes.write().await;
 
-        if let Some(existing) = busy.get(service_name) {
+        if let Some(existing) = busy.get(node_name) {
             let duration = chrono::Utc::now().signed_duration_since(existing.started_at);
             return Err(format!(
-                "Service {} is busy with {} (started {}m ago)",
-                service_name, existing.operation_type, duration.num_minutes()
+                "Node {} is busy with {} (started {}m ago)",
+                node_name, existing.operation_type, duration.num_minutes()
             ));
         }
 
-        busy.insert(service_name.to_string(), BusyState {
+        busy.insert(node_name.to_string(), BusyState {
             operation_type: operation_type.to_string(),
             started_at: chrono::Utc::now(),
         });
 
-        info!("Service {} marked as busy with {}", service_name, operation_type);
+        info!("Node {} marked as busy with {}", node_name, operation_type);
         Ok(())
     }
 
-    async fn finish_operation(&self, service_name: &str) {
+    async fn finish_operation(&self, node_name: &str) {
         let mut busy = self.busy_nodes.write().await;
-        if let Some(state) = busy.remove(service_name) {
+        if let Some(state) = busy.remove(node_name) {
             let duration = chrono::Utc::now().signed_duration_since(state.started_at);
-            info!("Service {} operation {} completed after {}m",
-                  service_name, state.operation_type, duration.num_minutes());
+            info!("Node {} operation {} completed after {}m",
+                  node_name, state.operation_type, duration.num_minutes());
         }
     }
 
@@ -68,10 +68,10 @@ impl AppState {
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(max_hours);
         let initial_count = busy.len();
 
-        busy.retain(|service_name, state| {
+        busy.retain(|node_name, state| {
             let should_keep = state.started_at > cutoff;
             if !should_keep {
-                warn!("Cleaned up stuck operation on {} ({})", service_name, state.operation_type);
+                warn!("Cleaned up stuck operation on {} ({})", node_name, state.operation_type);
             }
             should_keep
         });
@@ -85,8 +85,8 @@ impl AppState {
 
     async fn get_busy_status(&self) -> HashMap<String, String> {
         let busy = self.busy_nodes.read().await;
-        busy.iter().map(|(service, state)| {
-            (service.clone(), state.operation_type.clone())
+        busy.iter().map(|(node, state)| {
+            (node.clone(), state.operation_type.clone())
         }).collect()
     }
 }
@@ -95,7 +95,7 @@ impl AppState {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    info!("Starting Blockchain Server Agent on 0.0.0.0:8745 with consistent busy tracking");
+    info!("Starting Blockchain Server Agent on 0.0.0.0:8745 with concurrency control");
 
     let api_key = std::env::var("AGENT_API_KEY")
         .unwrap_or_else(|_| "default-development-key".to_string());
@@ -126,10 +126,12 @@ async fn main() -> Result<()> {
         .route("/service/stop", post(stop_service))
         .route("/service/uptime", post(get_service_uptime))
         .route("/logs/truncate", post(truncate_logs))
+        .route("/logs/delete-all", post(delete_all_files_in_directory)) // NEW: Delete all files endpoint
         .route("/pruning/execute", post(execute_pruning))
         .route("/snapshot/create", post(create_snapshot))
         .route("/snapshot/restore", post(restore_snapshot))
         .route("/snapshot/check-triggers", post(check_restore_triggers))
+        // NEW: Status and cleanup endpoints
         .route("/status/busy", post(get_busy_status))
         .route("/status/cleanup", post(cleanup_operations))
         .with_state(Arc::new(app_state));
@@ -150,6 +152,18 @@ fn validate_api_key(headers: &axum::http::HeaderMap, expected_key: &str) -> bool
         }
     }
     false
+}
+
+// Extract node name from request (different operations have different request structures)
+fn extract_node_name_from_request(request: &serde_json::Value) -> Option<String> {
+    // Try different possible node name fields
+    if let Some(node_name) = request.get("node_name").and_then(|v| v.as_str()) {
+        return Some(node_name.to_string());
+    }
+    if let Some(service_name) = request.get("service_name").and_then(|v| v.as_str()) {
+        return Some(service_name.to_string());
+    }
+    None
 }
 
 // === BASIC COMMAND OPERATIONS ===
@@ -242,7 +256,7 @@ async fn truncate_logs(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // FIXED: Use service_name consistently for busy tracking
+    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.service_name, "log_truncation").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
@@ -256,7 +270,23 @@ async fn truncate_logs(
     }
 }
 
-// === COMPLEX OPERATIONS WITH CONSISTENT BUSY TRACKING ===
+// NEW: Delete all files in directory endpoint
+async fn delete_all_files_in_directory(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<LogDeleteAllRequest>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    match services::logs::delete_all_files_in_directory(&request.log_path).await {
+        Ok(_) => Ok(ResponseJson(ApiResponse::success())),
+        Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
+    }
+}
+
+// === COMPLEX OPERATIONS WITH CONCURRENCY CONTROL ===
 
 async fn execute_pruning(
     State(state): State<Arc<AppState>>,
@@ -267,7 +297,7 @@ async fn execute_pruning(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // FIXED: Use service_name consistently for busy tracking
+    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.service_name, "pruning").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
@@ -293,17 +323,17 @@ async fn create_snapshot(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // FIXED: Use service_name consistently for busy tracking instead of node_name
-    if let Err(err) = state.try_start_operation(&request.service_name, "snapshot_creation").await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_creation").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
     let result = snapshots::execute_full_snapshot_sequence(&request).await;
-    state.finish_operation(&request.service_name).await;
+    state.finish_operation(&request.node_name).await;
 
     match result {
         Ok(snapshot_info) => {
-            // Spawn background LZ4 compression AFTER returning success
+            // IMPORTANT: Spawn background LZ4 compression AFTER returning success
             let backup_path = request.backup_path.clone();
             let snapshot_dirname = snapshot_info.filename.clone();
 
@@ -319,7 +349,7 @@ async fn create_snapshot(
             )))
         }
         Err(e) => {
-            error!("Snapshot creation failed for {}: {}", request.service_name, e);
+            error!("Snapshot creation failed for {}: {}", request.node_name, e);
             Ok(ResponseJson(ApiResponse::error(e.to_string())))
         }
     }
@@ -334,18 +364,18 @@ async fn restore_snapshot(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // FIXED: Use service_name consistently for busy tracking instead of node_name
-    if let Err(err) = state.try_start_operation(&request.service_name, "snapshot_restore").await {
+    // Check if node is busy
+    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_restore").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
     let result = restore::execute_full_restore_sequence(&request).await;
-    state.finish_operation(&request.service_name).await;
+    state.finish_operation(&request.node_name).await;
 
     match result {
         Ok(output) => Ok(ResponseJson(ApiResponse::success_with_output(output))),
         Err(e) => {
-            error!("Snapshot restore failed for {}: {}", request.service_name, e);
+            error!("Snapshot restore failed for {}: {}", request.node_name, e);
             Ok(ResponseJson(ApiResponse::error(e.to_string())))
         }
     }
@@ -382,7 +412,7 @@ async fn check_restore_triggers(
     }
 }
 
-// === STATUS AND CLEANUP ENDPOINTS ===
+// === NEW: STATUS AND CLEANUP ENDPOINTS ===
 
 async fn get_busy_status(
     State(state): State<Arc<AppState>>,
@@ -395,7 +425,7 @@ async fn get_busy_status(
 
     let busy_status = state.get_busy_status().await;
     let response = serde_json::json!({
-        "busy_services": busy_status,
+        "busy_nodes": busy_status,
         "total_busy": busy_status.len()
     });
 

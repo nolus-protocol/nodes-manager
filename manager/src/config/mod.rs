@@ -69,11 +69,6 @@ pub struct NodeConfig {
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
 
-    // Per-node log monitoring configuration
-    pub log_monitoring_enabled: Option<bool>,
-    pub log_monitoring_patterns: Option<Vec<String>>,
-    pub log_monitoring_context_lines: Option<i32>,
-
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,
     pub snapshot_backup_path: Option<String>,
@@ -89,4 +84,5 @@ pub struct HermesConfig {
     pub log_path: Option<String>,
     pub restart_schedule: Option<String>,
     pub dependent_nodes: Option<Vec<String>>,
+    pub truncate_logs_enabled: Option<bool>,  // NEW: Enable log deletion on restart
 }

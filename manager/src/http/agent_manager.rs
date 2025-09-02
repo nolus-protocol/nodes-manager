@@ -162,6 +162,14 @@ impl HttpAgentManager {
         Ok(output)
     }
 
+    // NEW: Delete all files in a directory (for hermes log cleanup)
+    pub async fn delete_all_files_in_directory(&self, server_name: &str, log_path: &str) -> Result<()> {
+        let payload = json!({"log_path": log_path});
+        self.execute_operation(server_name, "/logs/delete-all", payload).await?;
+        info!("All files deleted successfully from {} on {}", log_path, server_name);
+        Ok(())
+    }
+
     // === High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
@@ -320,7 +328,6 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // FIXED: Pass network field for network-based snapshot naming
         let payload = json!({
             "node_name": node_name,
             "network": node_config.network,
@@ -373,23 +380,52 @@ impl HttpAgentManager {
         Ok(())
     }
 
+    // UPDATED: Enhanced hermes restart with log deletion support
     pub async fn restart_hermes(&self, hermes_config: &HermesConfig) -> Result<()> {
-        info!("Restarting Hermes {}", hermes_config.service_name);
+        info!("Restarting Hermes {} with log cleanup: {}",
+              hermes_config.service_name,
+              hermes_config.truncate_logs_enabled.unwrap_or(false));
 
+        // Step 1: Stop the service
         self.stop_service(&hermes_config.server_host, &hermes_config.service_name).await?;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        // Step 2: Delete all log files if enabled
+        if hermes_config.truncate_logs_enabled.unwrap_or(false) {
+            if let Some(log_path) = &hermes_config.log_path {
+                info!("Deleting all log files in {} for Hermes {}", log_path, hermes_config.service_name);
+
+                match self.delete_all_files_in_directory(&hermes_config.server_host, log_path).await {
+                    Ok(_) => {
+                        info!("Successfully deleted all log files for Hermes {}", hermes_config.service_name);
+                    }
+                    Err(e) => {
+                        // Log the error but continue with restart - don't fail entire operation
+                        info!("Warning: Failed to delete log files for Hermes {}: {}. Continuing with restart.",
+                              hermes_config.service_name, e);
+                    }
+                }
+            } else {
+                info!("Log truncation enabled for Hermes {} but no log_path configured", hermes_config.service_name);
+            }
+        }
+
+        // Step 3: Start the service
         self.start_service(&hermes_config.server_host, &hermes_config.service_name).await?;
 
+        // Step 4: Verify service started successfully
         let status = self.check_service_status(&hermes_config.server_host, &hermes_config.service_name).await?;
         if !status.is_running() {
             return Err(anyhow::anyhow!("Hermes {} failed to start after restart", hermes_config.service_name));
         }
 
-        info!("Hermes {} restarted successfully", hermes_config.service_name);
+        info!("Hermes {} restarted successfully with log cleanup: {}",
+              hermes_config.service_name,
+              hermes_config.truncate_logs_enabled.unwrap_or(false));
         Ok(())
     }
 
-    // === RESTORE FUNCTIONALITY ===
+    // === NEW: RESTORE FUNCTIONALITY ===
 
     pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
@@ -440,15 +476,13 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // FIXED: Find latest network snapshot directory (not node-specific)
-        let latest_snapshot_dir = self.find_latest_network_snapshot_directory(&node_config.server_host, backup_path, &node_config.network).await?;
+        // Find latest snapshot directory
+        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
 
-        info!("Restoring node {} from network snapshot: {}", node_name, latest_snapshot_dir);
+        info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
 
-        // FIXED: Pass network field for restore
         let payload = json!({
             "node_name": node_name,
-            "network": node_config.network,
             "deploy_path": deploy_path,
             "snapshot_dir": latest_snapshot_dir,
             "service_name": service_name,
@@ -468,28 +502,27 @@ impl HttpAgentManager {
             compression_type: "directory".to_string(),
         };
 
-        info!("Restore completed successfully for node {} (validator state preserved)", node_name);
+        info!("Restore completed successfully for node {}", node_name);
         Ok(snapshot_info)
     }
 
-    // FIXED: Find latest network snapshot (not node-specific)
-    async fn find_latest_network_snapshot_directory(&self, server_host: &str, backup_path: &str, network: &str) -> Result<String> {
+    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, node_name: &str) -> Result<String> {
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | sort -r | head -1",
-            backup_path, network
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | head -1",
+            backup_path, node_name
         );
 
         let output = self.execute_single_command(server_host, &list_cmd).await?;
 
         let snapshot_dir = output.trim();
         if snapshot_dir.is_empty() {
-            return Err(anyhow::anyhow!("No network snapshots found for {} in {}", network, backup_path));
+            return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
         }
 
         // Verify the snapshot directory exists and contains data
         let verify_cmd = format!("test -d '{}/data'", snapshot_dir);
         self.execute_single_command(server_host, &verify_cmd).await
-            .map_err(|_| anyhow::anyhow!("Network snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
+            .map_err(|_| anyhow::anyhow!("Snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
 
         Ok(snapshot_dir.to_string())
     }
