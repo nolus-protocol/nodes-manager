@@ -1017,17 +1017,20 @@ impl HealthMonitor {
         Ok(())
     }
 
+    // CRITICAL FIX: Corrected authentication for HTTP agent requests
     async fn execute_log_command(&self, server_config: &ServerConfig, command: &str) -> Result<String> {
         let agent_url = format!("http://{}:{}/command/execute", server_config.host, server_config.agent_port);
 
         let payload = serde_json::json!({
-            "command": command,
-            "api_key": server_config.api_key
+            "command": command
         });
 
         let response = timeout(
             Duration::from_secs(server_config.request_timeout_seconds),
-            self.client.post(&agent_url).json(&payload).send(),
+            self.client.post(&agent_url)
+                .header("Authorization", format!("Bearer {}", server_config.api_key)) // FIXED: Correct authentication
+                .json(&payload)
+                .send(),
         )
         .await
         .map_err(|_| anyhow!("Log command timeout"))?
