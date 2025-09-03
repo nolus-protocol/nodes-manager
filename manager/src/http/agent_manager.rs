@@ -173,7 +173,7 @@ impl HttpAgentManager {
     // === High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
-        // FIXED: Check operation tracker first, before starting maintenance
+        // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -187,7 +187,7 @@ impl HttpAgentManager {
                 anyhow::anyhow!("Node {} not found", node_name)
             })?;
 
-        // FIXED: Track if maintenance was successfully started
+        // Track if maintenance was successfully started
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "node_restart",
@@ -240,7 +240,7 @@ impl HttpAgentManager {
     }
 
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
-        // FIXED: Check operation tracker first, before starting maintenance
+        // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -254,7 +254,7 @@ impl HttpAgentManager {
                 anyhow::anyhow!("Node {} not found", node_name)
             })?;
 
-        // FIXED: Track if maintenance was successfully started
+        // Track if maintenance was successfully started
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "pruning",
@@ -318,7 +318,7 @@ impl HttpAgentManager {
     }
 
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // FIXED: Check operation tracker first, before starting maintenance
+        // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -332,7 +332,7 @@ impl HttpAgentManager {
                 anyhow::anyhow!("Node {} not found", node_name)
             })?;
 
-        // FIXED: Track if maintenance was successfully started
+        // Track if maintenance was successfully started
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_creation",
@@ -448,10 +448,10 @@ impl HttpAgentManager {
         Ok(())
     }
 
-    // === NEW: RESTORE FUNCTIONALITY ===
+    // === RESTORE FUNCTIONALITY ===
 
     pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
-        // FIXED: Check operation tracker first, before starting maintenance
+        // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -465,7 +465,7 @@ impl HttpAgentManager {
                 anyhow::anyhow!("Node {} not found", node_name)
             })?;
 
-        // FIXED: Track if maintenance was successfully started
+        // Track if maintenance was successfully started
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_restore",
@@ -499,10 +499,6 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
-        }
-
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
@@ -516,10 +512,10 @@ impl HttpAgentManager {
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
-        // Find latest snapshot directory
-        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
+        // FIXED: Find latest NETWORK snapshot directory instead of node-specific
+        let latest_snapshot_dir = self.find_latest_network_snapshot_directory(&node_config.server_host, backup_path, &node_config.network).await?;
 
-        info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
+        info!("Restoring node {} from network snapshot: {}", node_name, latest_snapshot_dir);
 
         let payload = json!({
             "node_name": node_name,
@@ -546,23 +542,28 @@ impl HttpAgentManager {
         Ok(snapshot_info)
     }
 
-    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, node_name: &str) -> Result<String> {
+    // FIXED: Find latest NETWORK snapshot instead of node-specific snapshot
+    async fn find_latest_network_snapshot_directory(&self, server_host: &str, backup_path: &str, network: &str) -> Result<String> {
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | head -1",
-            backup_path, node_name
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | sort | tail -1",
+            backup_path, network
         );
 
         let output = self.execute_single_command(server_host, &list_cmd).await?;
 
         let snapshot_dir = output.trim();
         if snapshot_dir.is_empty() {
-            return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
+            return Err(anyhow::anyhow!("No network snapshots found for network {} in {}", network, backup_path));
         }
 
-        // Verify the snapshot directory exists and contains data
-        let verify_cmd = format!("test -d '{}/data'", snapshot_dir);
-        self.execute_single_command(server_host, &verify_cmd).await
-            .map_err(|_| anyhow::anyhow!("Snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
+        // Verify the snapshot directory exists and contains both data and wasm
+        let verify_data_cmd = format!("test -d '{}/data'", snapshot_dir);
+        self.execute_single_command(server_host, &verify_data_cmd).await
+            .map_err(|_| anyhow::anyhow!("Network snapshot directory {} does not contain data subdirectory", snapshot_dir))?;
+
+        let verify_wasm_cmd = format!("test -d '{}/wasm'", snapshot_dir);
+        self.execute_single_command(server_host, &verify_wasm_cmd).await
+            .map_err(|_| anyhow::anyhow!("Network snapshot directory {} does not contain wasm subdirectory", snapshot_dir))?;
 
         Ok(snapshot_dir.to_string())
     }

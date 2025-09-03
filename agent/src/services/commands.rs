@@ -122,7 +122,7 @@ pub async fn delete_directory(path: &str) -> Result<()> {
     Ok(())
 }
 
-// FIXED: NEW - Remove file if it exists (for cleaning validator state from snapshots)
+// NEW - Remove file if it exists (for cleaning validator state from snapshots)
 pub async fn remove_file_if_exists(file_path: &str) -> Result<()> {
     let command = format!(
         "if [ -f '{}' ]; then rm '{}' && echo 'removed'; else echo 'not found'; fi",
@@ -134,7 +134,7 @@ pub async fn remove_file_if_exists(file_path: &str) -> Result<()> {
     Ok(())
 }
 
-// FIXED: NEW - Backup current validator state before restore
+// NEW - Backup current validator state before restore
 pub async fn backup_current_validator_state(source: &str, backup_path: &str) -> Result<()> {
     info!("Backing up current validator state from {} to {}", source, backup_path);
 
@@ -152,7 +152,7 @@ pub async fn backup_current_validator_state(source: &str, backup_path: &str) -> 
     Ok(())
 }
 
-// FIXED: NEW - Restore current validator state after snapshot restore
+// NEW - Restore current validator state after snapshot restore
 pub async fn restore_current_validator_state(backup_path: &str, destination: &str) -> Result<()> {
     info!("Restoring current validator state from {} to {}", backup_path, destination);
 
@@ -197,6 +197,38 @@ pub async fn copy_snapshot_directories(snapshot_dir: &str, target_dir: &str) -> 
     Ok(())
 }
 
+// NEW: MANDATORY copy function that REQUIRES both data and wasm directories for restore
+pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
+    info!("MANDATORY copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
+
+    // MANDATORY: Copy data directory - MUST succeed
+    let data_copy_cmd = format!(
+        "if [ -d '{}/data' ]; then cp -r '{}/data' '{}/' && echo 'data_copied'; else echo 'data_not_found'; fi",
+        snapshot_dir, snapshot_dir, target_dir
+    );
+
+    let data_result = execute_shell_command(&data_copy_cmd).await?;
+    if !data_result.contains("data_copied") {
+        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY data directory from snapshot {}/data", snapshot_dir));
+    }
+    info!("✓ Data directory copied successfully");
+
+    // MANDATORY: Copy wasm directory - MUST succeed
+    let wasm_copy_cmd = format!(
+        "if [ -d '{}/wasm' ]; then cp -r '{}/wasm' '{}/' && echo 'wasm_copied'; else echo 'wasm_not_found'; fi",
+        snapshot_dir, snapshot_dir, target_dir
+    );
+
+    let wasm_result = execute_shell_command(&wasm_copy_cmd).await?;
+    if !wasm_result.contains("wasm_copied") {
+        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY wasm directory from snapshot {}/wasm", snapshot_dir));
+    }
+    info!("✓ Wasm directory copied successfully");
+
+    info!("✓ MANDATORY copy completed - both data and wasm directories copied successfully");
+    Ok(())
+}
+
 pub async fn copy_directories_to_snapshot(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
     info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
 
@@ -218,6 +250,39 @@ pub async fn copy_directories_to_snapshot(source_dir: &str, snapshot_dir: &str, 
     }
 
     info!("Directory copying to snapshot completed");
+    Ok(())
+}
+
+// NEW: MANDATORY copy function for snapshot creation that REQUIRES both data and wasm directories
+pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
+    info!("MANDATORY copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
+
+    for dir in directories {
+        let source_path = format!("{}/{}", source_dir, dir);
+        let target_path = format!("{}/{}", snapshot_dir, dir);
+
+        // Check if source directory exists BEFORE copying
+        let source_exists_cmd = format!("test -d '{}'", source_path);
+        execute_shell_command(&source_exists_cmd).await
+            .map_err(|_| anyhow!("CRITICAL: Source {} directory missing at: {}", dir, source_path))?;
+
+        let copy_cmd = format!(
+            "cp -r '{}' '{}'",
+            source_path, target_path
+        );
+
+        execute_shell_command(&copy_cmd).await
+            .map_err(|e| anyhow!("CRITICAL: Failed to copy MANDATORY {} directory from {} to {}: {}", dir, source_path, target_path, e))?;
+
+        // Verify the copy was successful
+        let target_exists_cmd = format!("test -d '{}'", target_path);
+        execute_shell_command(&target_exists_cmd).await
+            .map_err(|_| anyhow!("CRITICAL: {} directory not found after copy at: {}", dir, target_path))?;
+
+        info!("✓ Successfully copied MANDATORY {} directory to snapshot", dir);
+    }
+
+    info!("✓ MANDATORY directory copying to snapshot completed successfully");
     Ok(())
 }
 
