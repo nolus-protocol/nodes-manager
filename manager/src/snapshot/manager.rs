@@ -71,16 +71,29 @@ impl SnapshotManager {
 
         info!("Starting network snapshot creation for {} network via node {} (HTTP agent)", node_config.network, node_name);
 
-        // Start maintenance tracking with 24-hour timeout for all snapshots
-        self.maintenance_tracker
+        // FIXED: Track if we successfully started maintenance
+        let maintenance_started = match self.maintenance_tracker
             .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
-            .await?;
+            .await {
+                Ok(()) => {
+                    info!("Maintenance mode started for snapshot creation: {}", node_name);
+                    true
+                },
+                Err(e) => {
+                    // If we can't start maintenance (e.g., node already in maintenance),
+                    // we should not proceed with the snapshot
+                    warn!("Could not start maintenance for snapshot creation on {}: {}", node_name, e);
+                    return Err(e);
+                }
+            };
 
         let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
 
-        // End maintenance tracking
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            error!("Failed to end maintenance mode for {}: {}", node_name, e);
+        // FIXED: Only end maintenance if we actually started it
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                error!("Failed to end maintenance mode for {}: {}", node_name, e);
+            }
         }
 
         // Handle result and cleanup
@@ -122,7 +135,7 @@ impl SnapshotManager {
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
-        // FIXED: Only require auto_restore_enabled for restore operations (removed snapshots_enabled check)
+        // FIXED: Only require auto_restore_enabled for restore operations
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }

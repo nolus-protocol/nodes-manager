@@ -173,31 +173,48 @@ impl HttpAgentManager {
     // === High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
+        // FIXED: Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+            .ok_or_else(|| {
+                // Operation failed to get config - clean up operation tracker
+                let tracker = self.operation_tracker.clone();
+                let node_name_clone = node_name.to_string();
+                tokio::spawn(async move {
+                    tracker.finish_operation(&node_name_clone).await;
+                });
+                anyhow::anyhow!("Node {} not found", node_name)
+            })?;
 
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
+        // FIXED: Track if maintenance was successfully started
+        let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "node_restart",
             15,
             &node_config.server_host
-        ).await;
+        ).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Failed to start maintenance - clean up operation tracker
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(e);
+            }
+        };
 
-        if let Err(e) = maintenance_result {
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
+        let result = self.restart_node_impl(node_name).await;
 
-        let _result = self.restart_node_impl(node_name).await;
-
+        // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
+
+        // Only clean up maintenance if we started it
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                info!("Failed to end maintenance for {}: {}", node_name, e);
+            }
         }
 
-        _result
+        result
     }
 
     async fn restart_node_impl(&self, node_name: &str) -> Result<()> {
@@ -223,28 +240,45 @@ impl HttpAgentManager {
     }
 
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
+        // FIXED: Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+            .ok_or_else(|| {
+                // Operation failed to get config - clean up operation tracker
+                let tracker = self.operation_tracker.clone();
+                let node_name_clone = node_name.to_string();
+                tokio::spawn(async move {
+                    tracker.finish_operation(&node_name_clone).await;
+                });
+                anyhow::anyhow!("Node {} not found", node_name)
+            })?;
 
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
+        // FIXED: Track if maintenance was successfully started
+        let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "pruning",
             300,
             &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
+        ).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Failed to start maintenance - clean up operation tracker
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(e);
+            }
+        };
 
         let result = self.execute_node_pruning_impl(node_name).await;
 
+        // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
+
+        // Only clean up maintenance if we started it
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                info!("Failed to end maintenance for {}: {}", node_name, e);
+            }
         }
 
         result
@@ -284,28 +318,45 @@ impl HttpAgentManager {
     }
 
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        // FIXED: Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+            .ok_or_else(|| {
+                // Operation failed to get config - clean up operation tracker
+                let tracker = self.operation_tracker.clone();
+                let node_name_clone = node_name.to_string();
+                tokio::spawn(async move {
+                    tracker.finish_operation(&node_name_clone).await;
+                });
+                anyhow::anyhow!("Node {} not found", node_name)
+            })?;
 
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
+        // FIXED: Track if maintenance was successfully started
+        let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_creation",
             1440,
             &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
+        ).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Failed to start maintenance - clean up operation tracker
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(e);
+            }
+        };
 
         let result = self.create_node_snapshot_impl(node_name).await;
 
+        // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
+
+        // Only clean up maintenance if we started it
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                info!("Failed to end maintenance for {}: {}", node_name, e);
+            }
         }
 
         result
@@ -400,28 +451,45 @@ impl HttpAgentManager {
     // === NEW: RESTORE FUNCTIONALITY ===
 
     pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+        // FIXED: Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
-            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+            .ok_or_else(|| {
+                // Operation failed to get config - clean up operation tracker
+                let tracker = self.operation_tracker.clone();
+                let node_name_clone = node_name.to_string();
+                tokio::spawn(async move {
+                    tracker.finish_operation(&node_name_clone).await;
+                });
+                anyhow::anyhow!("Node {} not found", node_name)
+            })?;
 
-        let maintenance_result = self.maintenance_tracker.start_maintenance(
+        // FIXED: Track if maintenance was successfully started
+        let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_restore",
             1440,
             &node_config.server_host
-        ).await;
-
-        if let Err(e) = maintenance_result {
-            self.operation_tracker.finish_operation(node_name).await;
-            return Err(e);
-        }
+        ).await {
+            Ok(()) => true,
+            Err(e) => {
+                // Failed to start maintenance - clean up operation tracker
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(e);
+            }
+        };
 
         let result = self.restore_node_from_snapshot_impl(node_name).await;
 
+        // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
-        if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-            info!("Failed to end maintenance for {}: {}", node_name, e);
+
+        // Only clean up maintenance if we started it
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                info!("Failed to end maintenance for {}: {}", node_name, e);
+            }
         }
 
         result
@@ -431,7 +499,10 @@ impl HttpAgentManager {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        // FIXED: Only require auto_restore_enabled for restore operations (removed snapshots_enabled check)
+        if !node_config.snapshots_enabled.unwrap_or(false) {
+            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+        }
+
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
@@ -446,7 +517,7 @@ impl HttpAgentManager {
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
         // Find latest snapshot directory
-        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, &node_config.network).await?;
+        let latest_snapshot_dir = self.find_latest_snapshot_directory(&node_config.server_host, backup_path, node_name).await?;
 
         info!("Restoring node {} from snapshot: {}", node_name, latest_snapshot_dir);
 
@@ -475,17 +546,17 @@ impl HttpAgentManager {
         Ok(snapshot_info)
     }
 
-    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, network: &str) -> Result<String> {
+    async fn find_latest_snapshot_directory(&self, server_host: &str, backup_path: &str, node_name: &str) -> Result<String> {
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | sort -r | head -1",
-            backup_path, network
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | head -1",
+            backup_path, node_name
         );
 
         let output = self.execute_single_command(server_host, &list_cmd).await?;
 
         let snapshot_dir = output.trim();
         if snapshot_dir.is_empty() {
-            return Err(anyhow::anyhow!("No snapshots found for network {} in {}", network, backup_path));
+            return Err(anyhow::anyhow!("No snapshots found for node {} in {}", node_name, backup_path));
         }
 
         // Verify the snapshot directory exists and contains data
