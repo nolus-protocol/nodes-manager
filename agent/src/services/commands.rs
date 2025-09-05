@@ -78,7 +78,8 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
                 }
             }
         }
-    }).await.map_err(|e| anyhow!("Task join error: {}", e))?
+    }).await
+    .map_err(|e| anyhow!("Task join error: {}", e))?
 }
 
 // NEW: LZ4 compression function for background execution
