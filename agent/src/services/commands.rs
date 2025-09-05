@@ -26,50 +26,59 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    // Spawn cosmos-pruner and ignore all streams - just wait for final exit
-    let mut command = AsyncCommand::new("cosmos-pruner");
-    command
-        .arg("prune")
-        .arg(deploy_path)
-        .arg("--blocks")
-        .arg(keep_blocks.to_string())
-        .arg("--versions")
-        .arg(keep_versions.to_string());
+    let deploy_path = deploy_path.to_string();
 
-    info!("Executing cosmos-pruner process - ignoring streams, waiting for final exit...");
+    // Move to blocking thread to avoid tokio process issues
+    tokio::task::spawn_blocking(move || -> Result<String> {
+        use std::process::{Command, Stdio};
 
-    let mut child = command.spawn()
-        .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
+        info!("Spawning cosmos-pruner process using std::process...");
 
-    // Use polling instead of infinite wait (child.wait().await has issues)
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                info!("cosmos-pruner process detected as completed");
-                break status;
-            }
-            Ok(None) => {
-                // Process still running, wait 1 second and check again
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            }
-            Err(e) => {
-                return Err(anyhow!("Error checking cosmos-pruner status: {}", e));
+        // Spawn cosmos-pruner using std::process instead of tokio::process
+        let mut command = Command::new("cosmos-pruner");
+        command
+            .arg("prune")
+            .arg(&deploy_path)
+            .arg("--blocks")
+            .arg(keep_blocks.to_string())
+            .arg("--versions")
+            .arg(keep_versions.to_string())
+            .stdout(Stdio::null())  // Ignore stdout to prevent hanging
+            .stderr(Stdio::null());  // Ignore stderr to prevent hanging
+
+        let mut child = command.spawn()
+            .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
+
+        info!("cosmos-pruner process spawned, polling for completion...");
+
+        // Use the same polling logic as before, but with std::process
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    info!("cosmos-pruner process detected as completed");
+                    let exit_code = status.code().unwrap_or(-1);
+                    let success = status.success();
+
+                    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
+
+                    if success {
+                        info!("cosmos-pruner completed successfully (exit code: {})", exit_code);
+                        return Ok(format!("cosmos-pruner completed successfully (exit code: {})", exit_code));
+                    } else {
+                        error!("cosmos-pruner failed with exit code: {}", exit_code);
+                        return Err(anyhow!("cosmos-pruner failed (exit code: {})", exit_code));
+                    }
+                }
+                Ok(None) => {
+                    // Process still running, wait 1 second and check again
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                Err(e) => {
+                    return Err(anyhow!("Error checking cosmos-pruner status: {}", e));
+                }
             }
         }
-    };
-
-    let exit_code = status.code().unwrap_or(-1);
-    let success = status.success();
-
-    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
-
-    if success {
-        info!("cosmos-pruner completed successfully (exit code: {})", exit_code);
-        Ok(format!("cosmos-pruner completed successfully (exit code: {})", exit_code))
-    } else {
-        error!("cosmos-pruner failed with exit code: {}", exit_code);
-        Err(anyhow!("cosmos-pruner failed (exit code: {})", exit_code))
-    }
+    }).await.map_err(|e| anyhow!("Task join error: {}", e))?
 }
 
 // NEW: LZ4 compression function for background execution
