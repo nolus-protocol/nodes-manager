@@ -314,13 +314,6 @@ impl HealthMonitor {
         debug!("Marked {} as checked for auto-restore triggers", node_name);
     }
 
-    async fn clear_auto_restore_checked(&self, node_name: &str) {
-        let mut checked_states = self.auto_restore_checked_states.lock().await;
-        if checked_states.remove(node_name).is_some() {
-            debug!("Cleared auto-restore checked flag for {} (node recovered)", node_name);
-        }
-    }
-
     async fn check_auto_restore_triggers_for_node(
         &self,
         node_name: &str,

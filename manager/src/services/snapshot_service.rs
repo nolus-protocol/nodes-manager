@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotManager;
-use crate::{Config, NodeConfig};
+use crate::config::{Config, NodeConfig};
 
 pub struct SnapshotService {
     config: Arc<Config>,

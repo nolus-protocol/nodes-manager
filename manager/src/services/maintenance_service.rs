@@ -63,9 +63,7 @@ impl MaintenanceService {
 
         match operation_type {
             "pruning" => {
-                let node_config = self.config.nodes.get(target_name)
-                    .ok_or_else(|| anyhow::anyhow!("Node {} not found", target_name))?;
-
+                // Removed unused node_config variable
                 match self.http_manager.execute_node_pruning(target_name).await {
                     Ok(_) => {
                         self.update_operation_status(&operation_id, "completed", None).await?;

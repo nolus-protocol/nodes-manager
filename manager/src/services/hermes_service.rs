@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::http::HttpAgentManager; // CHANGED: Use HTTP agent instead of SSH
-use crate::{Config, HermesConfig};
+use crate::config::{Config, HermesConfig};
 
 pub struct HermesService {
     config: Arc<Config>,

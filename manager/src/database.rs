@@ -268,14 +268,14 @@ impl Database {
 
         if let Some(row) = row {
             let record = HealthRecord {
-                node_name: row.get("node_name"),
-                is_healthy: row.get("is_healthy"),
-                error_message: row.get("error_message"),
-                timestamp: row.get("timestamp"),
-                block_height: row.get("block_height"),
-                is_syncing: row.get("is_syncing"),
-                is_catching_up: row.get("is_catching_up"),
-                validator_address: row.get("validator_address"),
+                node_name: row.try_get("node_name")?,
+                is_healthy: row.try_get("is_healthy")?,
+                error_message: row.try_get("error_message")?,
+                timestamp: row.try_get("timestamp")?,
+                block_height: row.try_get("block_height")?,
+                is_syncing: row.try_get("is_syncing")?,
+                is_catching_up: row.try_get("is_catching_up")?,
+                validator_address: row.try_get("validator_address")?,
             };
             debug!("✅ Found health record for: {}", node_name);
             Ok(Some(record))
@@ -304,16 +304,19 @@ impl Database {
         .fetch_all(&self.pool)
         .await?;
 
-        let records = rows.into_iter().map(|row| HealthRecord {
-            node_name: row.get("node_name"),
-            is_healthy: row.get("is_healthy"),
-            error_message: row.get("error_message"),
-            timestamp: row.get("timestamp"),
-            block_height: row.get("block_height"),
-            is_syncing: row.get("is_syncing"),
-            is_catching_up: row.get("is_catching_up"),
-            validator_address: row.get("validator_address"),
-        }).collect();
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(HealthRecord {
+                node_name: row.try_get("node_name")?,
+                is_healthy: row.try_get("is_healthy")?,
+                error_message: row.try_get("error_message")?,
+                timestamp: row.try_get("timestamp")?,
+                block_height: row.try_get("block_height")?,
+                is_syncing: row.try_get("is_syncing")?,
+                is_catching_up: row.try_get("is_catching_up")?,
+                validator_address: row.try_get("validator_address")?,
+            });
+        }
 
         debug!("✅ Found {} health records for: {}", records.len(), node_name);
         Ok(records)
@@ -369,16 +372,19 @@ impl Database {
         .fetch_all(&self.pool)
         .await?;
 
-        let operations = rows.into_iter().map(|row| MaintenanceOperation {
-            id: row.get("id"),
-            operation_type: row.get("operation_type"),
-            target_name: row.get("target_name"),
-            status: row.get("status"),
-            started_at: row.get("started_at"),
-            completed_at: row.get("completed_at"),
-            error_message: row.get("error_message"),
-            details: row.get("details"),
-        }).collect();
+        let mut operations = Vec::new();
+        for row in rows {
+            operations.push(MaintenanceOperation {
+                id: row.try_get("id")?,
+                operation_type: row.try_get("operation_type")?,
+                target_name: row.try_get("target_name")?,
+                status: row.try_get("status")?,
+                started_at: row.try_get("started_at")?,
+                completed_at: row.try_get("completed_at")?,
+                error_message: row.try_get("error_message")?,
+                details: row.try_get("details")?,
+            });
+        }
 
         debug!("✅ Found {} maintenance operations", operations.len());
         Ok(operations)
