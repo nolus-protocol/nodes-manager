@@ -130,43 +130,44 @@ impl AlertService {
                         info!("Node {} unhealthy for 3 consecutive checks - sending first alert", node_name);
                         true
                     } else {
-                        info!("Node {} unhealthy check {}/3 - no alert sent yet",
-                              node_name, alert_state.consecutive_failures);
+                        info!("Node {} unhealthy check {}/3 - no alert sent yet", node_name, alert_state.consecutive_failures);
                         false
                     }
                 } else {
-                    // Already sent first alert, use progressive timing
-                    let hours_since_first = (now - alert_state.first_alert_time).num_hours();
-                    let hours_since_last = (now - alert_state.last_alert_sent).num_hours();
+                    // Already sent at least one alert
+                    let time_since_last = now.signed_duration_since(alert_state.last_alert_sent);
+                    let hours_since_last = time_since_last.num_hours();
 
-                    let should_alert = match alert_state.alert_count {
-                        1 => hours_since_first >= 3,
-                        2 => hours_since_first >= 6,
-                        3 => hours_since_first >= 12,
-                        _ => hours_since_last >= 24,
+                    let should_send = match alert_state.alert_count {
+                        1 => hours_since_last >= 6,   // Second alert after 6 hours
+                        2 => hours_since_last >= 6,   // Third alert after 6 more hours (12 total)
+                        3 => hours_since_last >= 12,  // Fourth alert after 12 more hours (24 total)
+                        4 => hours_since_last >= 24,  // Fifth alert after 24 more hours (48 total)
+                        _ => hours_since_last >= 24,  // Subsequent alerts every 24 hours
                     };
 
-                    if should_alert {
-                        alert_state.last_alert_sent = now;
+                    if should_send {
                         alert_state.alert_count += 1;
-                        alert_state.has_sent_alert = true;
+                        alert_state.last_alert_sent = now;
+                        let total_hours = now.signed_duration_since(alert_state.first_alert_time).num_hours();
+                        info!("Sending follow-up alert #{} for {} (unhealthy for {} hours)", alert_state.alert_count, node_name, total_hours);
                         true
                     } else {
+                        debug!("Node {} still unhealthy but not yet time for next alert", node_name);
                         false
                     }
                 }
             }
         };
 
-        drop(alert_states);
-
         if should_send_alert {
+            let message = error_message.unwrap_or_else(|| "Node health check failed".to_string());
             let payload = AlertPayload {
                 timestamp: now,
                 alert_type: AlertType::NodeHealth,
                 severity: AlertSeverity::Critical,
                 node_name: node_name.to_string(),
-                message: error_message.unwrap_or_else(|| "Node is unhealthy".to_string()),
+                message,
                 server_host: server_host.to_string(),
                 details,
             };
@@ -234,17 +235,6 @@ impl AlertService {
         }
 
         Ok(())
-    }
-
-    /// Clear alert state for a specific node (when manually resolved)
-    pub async fn clear_alert_state(&self, node_name: &str) {
-        let mut alert_states = self.alert_states.lock().await;
-        let mut previous_states = self.previous_health_states.lock().await;
-
-        alert_states.remove(node_name);
-        previous_states.remove(node_name);
-
-        debug!("Cleared alert state for node: {}", node_name);
     }
 
     /// Private method to send webhook
