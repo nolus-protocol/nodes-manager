@@ -8,6 +8,7 @@ use tracing::{error, info, warn};
 use crate::config::{Config, NodeConfig};
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::http::HttpAgentManager;
+use crate::services::alert_service::{AlertService, AlertType, AlertSeverity};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotInfo {
@@ -30,21 +31,11 @@ pub struct SnapshotStats {
     pub compression_type: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct AlarmPayload {
-    pub timestamp: DateTime<Utc>,
-    pub alarm_type: String,
-    pub severity: String,
-    pub node_name: String,
-    pub message: String,
-    pub server_host: String,
-    pub details: Option<serde_json::Value>,
-}
-
 pub struct SnapshotManager {
     config: Arc<Config>,
     http_manager: Arc<HttpAgentManager>,
     maintenance_tracker: Arc<MaintenanceTracker>,
+    alert_service: Arc<AlertService>,
 }
 
 impl SnapshotManager {
@@ -52,11 +43,13 @@ impl SnapshotManager {
         config: Arc<Config>,
         http_manager: Arc<HttpAgentManager>,
         maintenance_tracker: Arc<MaintenanceTracker>,
+        alert_service: Arc<AlertService>,
     ) -> Self {
         Self {
             config,
             http_manager,
             maintenance_tracker,
+            alert_service,
         }
     }
 
@@ -64,14 +57,12 @@ impl SnapshotManager {
     pub async fn create_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
-        // UNCHANGED: Creating snapshots requires snapshots_enabled
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
 
         info!("Starting network snapshot creation for {} network via node {} (HTTP agent)", node_config.network, node_name);
 
-        // FIXED: Track if we successfully started maintenance
         let maintenance_started = match self.maintenance_tracker
             .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
             .await {
@@ -80,8 +71,6 @@ impl SnapshotManager {
                     true
                 },
                 Err(e) => {
-                    // If we can't start maintenance (e.g., node already in maintenance),
-                    // we should not proceed with the snapshot
                     warn!("Could not start maintenance for snapshot creation on {}: {}", node_name, e);
                     return Err(e);
                 }
@@ -89,20 +78,40 @@ impl SnapshotManager {
 
         let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
 
-        // FIXED: Only end maintenance if we actually started it
         if maintenance_started {
             if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
                 error!("Failed to end maintenance mode for {}: {}", node_name, e);
             }
         }
 
-        // Handle result and cleanup
+        // Handle result and send alerts using AlertService
         match &snapshot_result {
             Ok(snapshot_info) => {
                 info!("Network snapshot created successfully: {} (can be used by any node on {} network)",
                       snapshot_info.filename, snapshot_info.network);
 
-                // FIXED: Automatic cleanup based on retention count for NETWORK snapshots
+                // Send completion alert
+                if let Err(e) = self.alert_service.send_immediate_alert(
+                    AlertType::Snapshot,
+                    AlertSeverity::Info,
+                    node_name,
+                    &node_config.server_host,
+                    format!("Network snapshot created successfully: {} (can be used by any node on {} network)",
+                           snapshot_info.filename, snapshot_info.network),
+                    Some(serde_json::json!({
+                        "operation_type": "snapshot_creation",
+                        "operation_status": "completed",
+                        "snapshot_filename": snapshot_info.filename,
+                        "network": snapshot_info.network,
+                        "compression_type": "directory",
+                        "connection_type": "http_agent",
+                        "snapshot_type": "network_based"
+                    })),
+                ).await {
+                    warn!("Failed to send completion notification: {}", e);
+                }
+
+                // Automatic cleanup based on retention count for NETWORK snapshots
                 if let Some(retention_count) = node_config.snapshot_retention_count {
                     info!("Running automatic cleanup for {} network (keeping {} snapshots)", snapshot_info.network, retention_count);
                     match self.cleanup_old_network_snapshots(&snapshot_info.network, retention_count as u32).await {
@@ -116,14 +125,24 @@ impl SnapshotManager {
                         }
                     }
                 }
-
-                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_creation").await {
-                    warn!("Failed to send completion notification: {}", e);
-                }
             }
-            Err(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "snapshot_creation").await {
-                    warn!("Failed to send error notification: {}", e);
+            Err(e) => {
+                // Send failure alert
+                if let Err(alert_err) = self.alert_service.send_immediate_alert(
+                    AlertType::Snapshot,
+                    AlertSeverity::Critical,
+                    node_name,
+                    &node_config.server_host,
+                    format!("Network snapshot creation failed for {}: {}", node_name, e),
+                    Some(serde_json::json!({
+                        "operation_type": "snapshot_creation",
+                        "operation_status": "failed",
+                        "error_message": e.to_string(),
+                        "network": node_config.network,
+                        "connection_type": "http_agent"
+                    })),
+                ).await {
+                    warn!("Failed to send error notification: {}", alert_err);
                 }
             }
         }
@@ -135,7 +154,6 @@ impl SnapshotManager {
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
-        // FIXED: Only require auto_restore_enabled for restore operations
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
         }
@@ -143,19 +161,47 @@ impl SnapshotManager {
         info!("Starting snapshot restore for node {} from {} network snapshots (preserving validator state)",
               node_name, node_config.network);
 
-        // FIXED: Don't do maintenance tracking here - HttpAgentManager already does it
         let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
 
-        // Send notification based on result
+        // Send notification based on result using AlertService
         match &restore_result {
-            Ok(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "completed", "snapshot_restore").await {
+            Ok(snapshot_info) => {
+                if let Err(e) = self.alert_service.send_immediate_alert(
+                    AlertType::Snapshot,
+                    AlertSeverity::Info,
+                    node_name,
+                    &node_config.server_host,
+                    format!("Node {} restored successfully from network snapshot: {}", node_name, snapshot_info.filename),
+                    Some(serde_json::json!({
+                        "operation_type": "snapshot_restore",
+                        "operation_status": "completed",
+                        "snapshot_filename": snapshot_info.filename,
+                        "network": snapshot_info.network,
+                        "compression_type": "directory",
+                        "connection_type": "http_agent",
+                        "snapshot_type": "network_based",
+                        "validator_state_preserved": true
+                    })),
+                ).await {
                     warn!("Failed to send completion notification: {}", e);
                 }
             }
-            Err(_) => {
-                if let Err(e) = self.send_snapshot_notification(node_name, "failed", "snapshot_restore").await {
-                    warn!("Failed to send error notification: {}", e);
+            Err(e) => {
+                if let Err(alert_err) = self.alert_service.send_immediate_alert(
+                    AlertType::Snapshot,
+                    AlertSeverity::Critical,
+                    node_name,
+                    &node_config.server_host,
+                    format!("Snapshot restore failed for {}: {}", node_name, e),
+                    Some(serde_json::json!({
+                        "operation_type": "snapshot_restore",
+                        "operation_status": "failed",
+                        "error_message": e.to_string(),
+                        "network": node_config.network,
+                        "connection_type": "http_agent"
+                    })),
+                ).await {
+                    warn!("Failed to send error notification: {}", alert_err);
                 }
             }
         }
@@ -167,7 +213,6 @@ impl SnapshotManager {
     pub async fn check_auto_restore_trigger(&self, node_name: &str) -> Result<bool> {
         let node_config = self.get_node_config(node_name)?;
 
-        // FIXED: Only require auto_restore_enabled for checking auto-restore triggers
         if !node_config.auto_restore_enabled.unwrap_or(false) {
             return Ok(false);
         }
@@ -175,11 +220,10 @@ impl SnapshotManager {
         self.http_manager.check_auto_restore_triggers(node_name).await
     }
 
-    /// FIXED: List all snapshots for a NETWORK (not specific node) via HTTP agent
+    /// List all snapshots for a NETWORK (not specific node) via HTTP agent
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
-        // FIXED: Allow listing if either snapshots_enabled OR auto_restore_enabled
         if !node_config.snapshots_enabled.unwrap_or(false) && !node_config.auto_restore_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Neither snapshots nor auto-restore enabled for node {}", node_name));
         }
@@ -188,7 +232,6 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
-        // FIXED: List NETWORK snapshots instead of node-specific snapshots
         let list_cmd = format!(
             "find '{}' -maxdepth 1 -type d -name '{}_*' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
             backup_path, node_config.network
@@ -212,7 +255,6 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                // FIXED: Parse timestamp from network directory name
                 let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_config.network)) {
                     chrono::NaiveDateTime::parse_from_str(ts_part, "%Y%m%d_%H%M%S")
                         .ok()
@@ -229,7 +271,7 @@ impl SnapshotManager {
                 };
 
                 snapshots.push(SnapshotInfo {
-                    node_name: node_name.to_string(), // Keep original node name for API compatibility
+                    node_name: node_name.to_string(),
                     network: node_config.network.clone(),
                     filename,
                     created_at,
@@ -243,11 +285,10 @@ impl SnapshotManager {
         Ok(snapshots)
     }
 
-    /// FIXED: Clean up old NETWORK snapshots based on retention count via HTTP agent
+    /// Clean up old NETWORK snapshots based on retention count via HTTP agent
     pub async fn cleanup_old_snapshots(&self, node_name: &str, retention_count: u32) -> Result<u32> {
         let node_config = self.get_node_config(node_name)?;
 
-        // UNCHANGED: Cleanup requires snapshots_enabled (only creators can manage snapshots)
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
@@ -259,16 +300,14 @@ impl SnapshotManager {
         self.cleanup_old_network_snapshots(&node_config.network, retention_count).await
     }
 
-    /// FIXED: Clean up old snapshots for a specific NETWORK
+    /// Clean up old snapshots for a specific NETWORK
     async fn cleanup_old_network_snapshots(&self, network: &str, retention_count: u32) -> Result<u32> {
-        // Find a node on this network to use for the operation
         let (node_name, node_config) = self.config.nodes.iter()
             .find(|(_, config)| config.network == network && config.snapshots_enabled.unwrap_or(false))
             .ok_or_else(|| anyhow::anyhow!("No nodes found with snapshots enabled for network {}", network))?;
 
         let mut snapshots = self.list_snapshots(node_name).await?;
 
-        // Sort by creation time, newest first
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         if snapshots.len() <= retention_count as usize {
@@ -284,7 +323,6 @@ impl SnapshotManager {
               snapshots_to_delete.len(), network, retention_count);
 
         for snapshot in snapshots_to_delete {
-            // Delete network snapshot directory
             match self.delete_snapshot_directory(&node_config.server_host, &snapshot.snapshot_path).await {
                 Ok(_) => {
                     info!("Deleted old network snapshot directory via HTTP agent: {}", snapshot.filename);
@@ -304,7 +342,6 @@ impl SnapshotManager {
     pub async fn delete_snapshot(&self, node_name: &str, filename: &str) -> Result<()> {
         let node_config = self.get_node_config(node_name)?;
 
-        // UNCHANGED: Deleting requires snapshots_enabled (only creators can delete)
         if !node_config.snapshots_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
         }
@@ -344,7 +381,6 @@ impl SnapshotManager {
             *by_network.entry(snapshot.network.clone()).or_insert(0) += 1;
         }
 
-        // All snapshots are directories now
         let compression_type = "directory".to_string();
 
         Ok(SnapshotStats {
@@ -363,71 +399,6 @@ impl SnapshotManager {
             .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))
     }
-
-    // Send notifications only on completion or error, not on start
-    async fn send_snapshot_notification(&self, node_name: &str, status: &str, operation: &str) -> Result<()> {
-        if self.config.alarm_webhook_url.is_empty() {
-            return Ok(());
-        }
-
-        let server_host = self.get_server_for_node(node_name).await.unwrap_or_else(|| "unknown".to_string());
-        let server_host_clone = server_host.clone();
-
-        // Only send notifications for completion or failure, not for start
-        if status != "completed" && status != "failed" {
-            return Ok(());
-        }
-
-        let alarm = AlarmPayload {
-            timestamp: Utc::now(),
-            alarm_type: format!("node_{}", operation),
-            severity: if status == "failed" { "high".to_string() } else { "info".to_string() },
-            node_name: node_name.to_string(),
-            message: format!("Node {} {} operation {}: {} via HTTP agent", node_name, operation, status, operation),
-            server_host,
-            details: Some(serde_json::json!({
-                "operation_status": status,
-                "operation_type": operation,
-                "server_host": server_host_clone,
-                "compression_type": "directory",
-                "connection_type": "http_agent",
-                "snapshot_type": "network_based",
-                "timestamp": Utc::now().to_rfc3339()
-            })),
-        };
-
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.config.alarm_webhook_url)
-            .json(&alarm)
-            .send()
-            .await?;
-
-        if response.status().is_success() {
-            info!("Sent {} notification for {}: {} {} via HTTP agent", operation, node_name, operation, status);
-        } else {
-            warn!("Failed to send {} notification: HTTP {}", operation, response.status());
-        }
-
-        Ok(())
-    }
-
-    async fn get_server_for_node(&self, node_name: &str) -> Option<String> {
-        if let Some(dash_pos) = node_name.find('-') {
-            let server_part = &node_name[..dash_pos];
-            if self.config.servers.contains_key(server_part) {
-                return Some(server_part.to_string());
-            }
-        }
-
-        for (config_node_name, node_config) in &self.config.nodes {
-            if config_node_name == node_name {
-                return Some(node_config.server_host.clone());
-            }
-        }
-
-        None
-    }
 }
 
 impl Clone for SnapshotManager {
@@ -436,6 +407,7 @@ impl Clone for SnapshotManager {
             config: self.config.clone(),
             http_manager: self.http_manager.clone(),
             maintenance_tracker: self.maintenance_tracker.clone(),
+            alert_service: self.alert_service.clone(),
         }
     }
 }

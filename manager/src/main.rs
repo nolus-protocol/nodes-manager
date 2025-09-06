@@ -13,6 +13,7 @@ mod operation_tracker;
 mod scheduler;
 mod snapshot;
 mod web;
+mod services;
 
 use config::ConfigManager;
 use database::Database;
@@ -22,31 +23,8 @@ use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
 use snapshot::SnapshotManager;
+use services::AlertService;
 use web::start_web_server;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct MaintenanceOperation {
-    pub id: String,
-    pub operation_type: String,
-    pub target_name: String,
-    pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub error_message: Option<String>,
-    pub timeout_minutes: u32,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AlarmPayload {
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub alarm_type: String,
-    pub severity: String,
-    pub node_name: String,
-    pub message: String,
-    pub server_host: String,
-    pub details: Option<serde_json::Value>,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -83,6 +61,10 @@ async fn main() -> Result<()> {
     let maintenance_tracker = Arc::new(MaintenanceTracker::new());
     info!("Maintenance tracker initialized");
 
+    // Initialize centralized AlertService
+    let alert_service = Arc::new(AlertService::new(config.alarm_webhook_url.clone()));
+    info!("Centralized alert service initialized");
+
     // Initialize HTTP agent manager with operation tracking AND maintenance tracking
     let http_manager = Arc::new(HttpAgentManager::new(
         config.clone(),
@@ -91,22 +73,24 @@ async fn main() -> Result<()> {
     ));
     info!("HTTP agent manager initialized");
 
-    // Initialize snapshot manager FIRST (before health monitor)
+    // Initialize snapshot manager WITH AlertService
     let snapshot_manager = Arc::new(SnapshotManager::new(
         config.clone(),
         http_manager.clone(),
         maintenance_tracker.clone(),
+        alert_service.clone(),
     ));
-    info!("Snapshot manager initialized");
+    info!("Snapshot manager initialized with centralized alerting");
 
-    // Initialize health monitor WITH snapshot manager (for auto-restore)
+    // Initialize health monitor WITH AlertService (for auto-restore and health alerts)
     let health_monitor = Arc::new(HealthMonitor::new(
         config.clone(),
         database.clone(),
         maintenance_tracker.clone(),
-        snapshot_manager.clone(), // NEW: Pass snapshot manager for auto-restore
+        snapshot_manager.clone(),
+        alert_service.clone(),
     ));
-    info!("Health monitor initialized with auto-restore capability");
+    info!("Health monitor initialized with centralized alerting and auto-restore capability");
 
     // Initialize scheduler
     let scheduler = Arc::new(MaintenanceScheduler::new(
@@ -160,7 +144,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started with {}s health check interval (including auto-restore monitoring)", check_interval);
+    info!("Background tasks started with {}s health check interval (including auto-restore monitoring and centralized alerting)", check_interval);
 
     // Start web server
     start_web_server(

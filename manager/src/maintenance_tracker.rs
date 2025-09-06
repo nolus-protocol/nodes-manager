@@ -17,6 +17,22 @@ pub struct MaintenanceWindow {
     pub server_host: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceStats {
+    pub total_active: usize,
+    pub total_completed_today: usize,
+    pub average_duration_minutes: u32,
+    pub longest_running_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceReport {
+    pub active_operations: Vec<MaintenanceWindow>,
+    pub overdue_operations: Vec<MaintenanceWindow>,
+    pub stats: MaintenanceStats,
+    pub timestamp: DateTime<Utc>,
+}
+
 pub struct MaintenanceTracker {
     active_maintenance: Arc<RwLock<HashMap<String, MaintenanceWindow>>>,
 }
@@ -73,6 +89,74 @@ impl MaintenanceTracker {
     pub async fn is_in_maintenance(&self, node_name: &str) -> bool {
         let active = self.active_maintenance.read().await;
         active.contains_key(node_name)
+    }
+
+    pub async fn get_maintenance_status(&self, node_name: &str) -> Option<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        active.get(node_name).cloned()
+    }
+
+    pub async fn get_all_in_maintenance(&self) -> Vec<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        active.values().cloned().collect()
+    }
+
+    pub async fn get_maintenance_stats(&self) -> MaintenanceStats {
+        let active = self.active_maintenance.read().await;
+        let now = Utc::now();
+
+        let mut longest_running_minutes = 0;
+        for maintenance in active.values() {
+            let duration = (now - maintenance.started_at).num_minutes() as u32;
+            if duration > longest_running_minutes {
+                longest_running_minutes = duration;
+            }
+        }
+
+        MaintenanceStats {
+            total_active: active.len(),
+            total_completed_today: 0, // Would need database to track this
+            average_duration_minutes: 60, // Default estimate
+            longest_running_minutes,
+        }
+    }
+
+    pub async fn get_maintenance_report(&self) -> MaintenanceReport {
+        let active_operations = self.get_all_in_maintenance().await;
+        let overdue_operations = self.get_overdue_maintenance().await;
+        let stats = self.get_maintenance_stats().await;
+
+        MaintenanceReport {
+            active_operations,
+            overdue_operations,
+            stats,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub async fn get_overdue_maintenance(&self) -> Vec<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        let now = Utc::now();
+
+        active.values()
+            .filter(|maintenance| {
+                let duration = (now - maintenance.started_at).num_minutes() as u32;
+                duration > (maintenance.estimated_duration_minutes * 3) // 3x estimated duration
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub async fn emergency_clear_all_maintenance(&self) -> u32 {
+        let mut active = self.active_maintenance.write().await;
+        let count = active.len() as u32;
+        active.clear();
+
+        if count > 0 {
+            warn!("Emergency cleared all {} maintenance operations", count);
+        }
+
+        count
     }
 
     pub async fn cleanup_expired_maintenance(&self, max_duration_hours: u32) -> u32 {

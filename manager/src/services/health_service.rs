@@ -30,7 +30,7 @@ impl HealthService {
         }
     }
 
-    // OPTIMIZED: Use references instead of owned values where possible
+    // Use references instead of owned values where possible
     pub async fn get_all_health(&self, include_disabled: bool) -> Result<Vec<crate::web::NodeHealthSummary>> {
         let health_records = self.health_monitor.check_all_nodes().await?;
 
@@ -64,7 +64,7 @@ impl HealthService {
     pub async fn get_node_health_history(&self, node_name: &str, limit: i32) -> Result<Vec<crate::web::NodeHealthSummary>> {
         self.validate_node_name(node_name)?;
 
-        let history = self.health_monitor.get_health_history(node_name, Some(limit)).await?;
+        let history = self.database.get_health_history(node_name, Some(limit)).await?;
 
         let mut summaries = Vec::with_capacity(history.len());
         for record in history.iter() {
@@ -104,13 +104,17 @@ impl HealthService {
 
         info!("Forcing health check for node: {}", node_name);
 
-        let health_status = self.health_monitor.force_check_node(node_name).await?;
+        // Get the node config and perform a direct health check
+        let node_config = self.config.nodes.get(node_name)
+            .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
+
+        let health_status = self.health_monitor.check_node_health(node_name, node_config).await?;
         let summary = self.transform_health_status_to_summary(&health_status).await;
 
         Ok(summary)
     }
 
-    // OPTIMIZED: Inline simple validations to reduce function call overhead
+    // Inline simple validations to reduce function call overhead
     #[inline]
     fn validate_node_name(&self, node_name: &str) -> Result<()> {
         if self.config.nodes.contains_key(node_name) {
@@ -127,7 +131,7 @@ impl HealthService {
             .unwrap_or(false)
     }
 
-    // OPTIMIZED: Reduce allocations and use more efficient data access
+    // Reduce allocations and use more efficient data access
     async fn transform_health_status_to_summary(&self, health: &crate::health::monitor::HealthStatus) -> crate::web::NodeHealthSummary {
         let node_config = self.config.nodes.get(&health.node_name);
         let server_host = node_config
@@ -194,7 +198,7 @@ impl HealthService {
         }
     }
 
-    // NEW: Get health statistics for monitoring
+    // Get health statistics for monitoring
     pub async fn get_health_statistics(&self) -> Result<serde_json::Value> {
         let health_records = self.health_monitor.check_all_nodes().await?;
 
