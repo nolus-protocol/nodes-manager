@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertType {
@@ -53,6 +53,7 @@ pub struct AlertService {
     client: Client,
     alert_states: Arc<Mutex<HashMap<String, AlertState>>>,
     previous_health_states: Arc<Mutex<HashMap<String, bool>>>,
+    is_enabled: bool,
 }
 
 impl AlertService {
@@ -62,12 +63,32 @@ impl AlertService {
             .build()
             .expect("Failed to create HTTP client for AlertService");
 
+        let is_enabled = !webhook_url.trim().is_empty();
+
+        if is_enabled {
+            info!("AlertService initialized with webhook URL: {}", webhook_url);
+        } else {
+            warn!("AlertService initialized WITHOUT webhook URL - alerts will be disabled!");
+            warn!("To enable alerts, set 'alarm_webhook_url' in your configuration file");
+        }
+
         Self {
-            webhook_url,
+            webhook_url: webhook_url.trim().to_string(),
             client,
             alert_states: Arc::new(Mutex::new(HashMap::new())),
             previous_health_states: Arc::new(Mutex::new(HashMap::new())),
+            is_enabled,
         }
+    }
+
+    /// Check if alert service is properly configured
+    pub fn is_enabled(&self) -> bool {
+        self.is_enabled
+    }
+
+    /// Get webhook URL for debugging
+    pub fn get_webhook_url(&self) -> &str {
+        &self.webhook_url
     }
 
     /// Send progressive alerts for ongoing failures with rate limiting
@@ -239,14 +260,18 @@ impl AlertService {
 
     /// Private method to send webhook
     async fn send_webhook(&self, payload: &AlertPayload) -> Result<()> {
-        if self.webhook_url.is_empty() {
-            debug!("No webhook URL configured, skipping alert");
+        if !self.is_enabled {
+            warn!("Alert service disabled - webhook URL not configured. Alert would be: {} - {}", payload.node_name, payload.message);
+            warn!("Set 'alarm_webhook_url' in config/main.toml to enable alerts");
             return Ok(());
         }
+
+        info!("Sending alert for {}: {:?} to {}", payload.node_name, payload.alert_type, self.webhook_url);
 
         match timeout(
             Duration::from_secs(10),
             self.client.post(&self.webhook_url)
+                .header("Content-Type", "application/json")
                 .json(payload)
                 .send(),
         )
@@ -254,20 +279,42 @@ impl AlertService {
         {
             Ok(Ok(response)) => {
                 if response.status().is_success() {
-                    info!("Alert sent successfully for {}: {:?}", payload.node_name, payload.alert_type);
+                    info!("Alert sent successfully for {}: {:?} (status: {})", payload.node_name, payload.alert_type, response.status());
                 } else {
-                    warn!("Alert webhook returned status: {} for {}", response.status(), payload.node_name);
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_else(|_| "Failed to read response body".to_string());
+                    error!("Alert webhook returned status: {} for {} - Response: {}", status, payload.node_name, body);
                 }
             }
             Ok(Err(e)) => {
-                warn!("Failed to send alert for {}: {}", payload.node_name, e);
+                error!("Failed to send alert for {}: {} - Webhook URL: {}", payload.node_name, e, self.webhook_url);
             }
             Err(_) => {
-                warn!("Alert webhook timeout for {}", payload.node_name);
+                error!("Alert webhook timeout for {} - URL: {}", payload.node_name, self.webhook_url);
             }
         }
 
         Ok(())
+    }
+
+    /// Test webhook connectivity
+    pub async fn test_webhook(&self) -> Result<()> {
+        if !self.is_enabled {
+            return Err(anyhow::anyhow!("Alert service is disabled - no webhook URL configured"));
+        }
+
+        let test_payload = AlertPayload {
+            timestamp: Utc::now(),
+            alert_type: AlertType::Maintenance,
+            severity: AlertSeverity::Info,
+            node_name: "test-node".to_string(),
+            message: "Test alert from AlertService".to_string(),
+            server_host: "test-server".to_string(),
+            details: Some(serde_json::json!({"test": true})),
+        };
+
+        info!("Testing webhook connectivity to: {}", self.webhook_url);
+        self.send_webhook(&test_payload).await
     }
 }
 
@@ -278,6 +325,7 @@ impl Clone for AlertService {
             client: self.client.clone(),
             alert_states: self.alert_states.clone(),
             previous_health_states: self.previous_health_states.clone(),
+            is_enabled: self.is_enabled,
         }
     }
 }

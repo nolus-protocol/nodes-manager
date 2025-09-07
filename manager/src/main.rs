@@ -1,7 +1,7 @@
 // File: manager/src/main.rs
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use tracing_subscriber::{EnvFilter, fmt};
 
 mod config;
@@ -61,9 +61,26 @@ async fn main() -> Result<()> {
     let maintenance_tracker = Arc::new(MaintenanceTracker::new());
     info!("Maintenance tracker initialized");
 
-    // Initialize centralized AlertService
+    // Initialize centralized AlertService with enhanced validation
     let alert_service = Arc::new(AlertService::new(config.alarm_webhook_url.clone()));
-    info!("Centralized alert service initialized");
+
+    // Validate alert service configuration
+    if alert_service.is_enabled() {
+        info!("Alert service enabled with webhook: {}", alert_service.get_webhook_url());
+
+        // Test webhook connectivity on startup
+        match alert_service.test_webhook().await {
+            Ok(()) => info!("Alert webhook test successful!"),
+            Err(e) => {
+                error!("Alert webhook test failed: {}", e);
+                warn!("Alerts may not work properly. Check your webhook URL and network connectivity.");
+            }
+        }
+    } else {
+        warn!("⚠️  ALERT SERVICE DISABLED ⚠️");
+        warn!("No webhook URL configured in config/main.toml");
+        warn!("Set 'alarm_webhook_url = \"your-webhook-url\"' to enable alerts");
+    }
 
     // Initialize HTTP agent manager with operation tracking AND maintenance tracking
     let http_manager = Arc::new(HttpAgentManager::new(
@@ -107,11 +124,21 @@ async fn main() -> Result<()> {
 
     // Start periodic health monitoring with configurable interval (including ETL services)
     let health_monitor_clone = health_monitor.clone();
+    let alert_service_clone = alert_service.clone();
     let check_interval = config.check_interval_seconds;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(check_interval));
+        let mut check_count = 0u64;
+
         loop {
             interval.tick().await;
+            check_count += 1;
+
+            // Log periodic health check status for debugging
+            if check_count % 10 == 0 {
+                info!("Health monitoring cycle #{} - Alert service enabled: {}",
+                      check_count, alert_service_clone.is_enabled());
+            }
 
             // Check blockchain nodes
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
@@ -152,6 +179,15 @@ async fn main() -> Result<()> {
     });
 
     info!("Background tasks started with {}s health check interval (including nodes, ETL services, auto-restore monitoring and centralized alerting)", check_interval);
+
+    // Additional startup alert validation
+    if alert_service.is_enabled() {
+        info!("✅ Alert system ready - alerts will be sent to: {}", alert_service.get_webhook_url());
+    } else {
+        error!("❌ Alert system NOT configured - no alerts will be sent!");
+        error!("Add this to your config/main.toml file:");
+        error!("alarm_webhook_url = \"https://n8n-hooks.kostovster.io/webhook/nodes\"");
+    }
 
     // Start web server
     start_web_server(
