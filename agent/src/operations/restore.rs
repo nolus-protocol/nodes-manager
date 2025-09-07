@@ -47,11 +47,11 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     systemctl::stop_service(&request.service_name).await?;
     info!("✓ Node service stopped");
 
-    // Step 5: Backup CURRENT validator state (inside data directory)
+    // Step 5: Backup CURRENT validator state (to preserve individual node's signing state)
     let current_validator_path = format!("{}/data/priv_validator_state.json", request.deploy_path);
     let validator_backup_path = format!("{}/priv_validator_state_backup.json", request.deploy_path);
 
-    info!("Backing up current validator state to preserve latest signing information");
+    info!("Backing up current validator state to preserve individual signing information");
     commands::backup_current_validator_state(&current_validator_path, &validator_backup_path).await?;
     info!("✓ Current validator state backed up");
 
@@ -77,10 +77,10 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
         info!("✓ Existing wasm directory deleted");
     }
 
-    // Step 8: MANDATORY - Copy BOTH data and wasm directories from network snapshot
-    info!("Copying network snapshot data and wasm directories...");
+    // Step 8: MANDATORY - Copy BOTH data and wasm directories from network snapshot (includes snapshot's validator state)
+    info!("Copying network snapshot data and wasm directories (including snapshot's validator state)...");
     commands::copy_snapshot_directories_mandatory(&request.snapshot_dir, &request.deploy_path).await?;
-    info!("✓ Both data and wasm directories copied successfully");
+    info!("✓ Both data and wasm directories copied successfully from snapshot");
 
     // Step 9: MANDATORY - Verify both directories were copied successfully
     let verify_data_cmd = format!("test -d '{}/data'", request.deploy_path);
@@ -93,10 +93,10 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
 
     info!("✓ Verified both data and wasm directories exist after copy");
 
-    // Step 10: Restore the CURRENT node's validator state (inside data directory)
-    info!("Restoring current node's validator state (preserving latest signing information)");
+    // Step 10: Overwrite snapshot's validator state with CURRENT node's validator state (preserving individual signing state)
+    info!("Overwriting snapshot's validator state with current node's individual validator state");
     commands::restore_current_validator_state(&validator_backup_path, &current_validator_path).await?;
-    info!("✓ Current validator state restored to data directory");
+    info!("✓ Current validator state restored, overwriting snapshot's validator state to prevent double-signing");
 
     // Step 11: Set proper ownership/permissions
     let chown_cmd = format!("chown -R $(stat -c '%U:%G' '{}') '{}/data'",
@@ -126,7 +126,7 @@ pub async fn execute_full_restore_sequence(request: &RestoreRequest) -> Result<S
     }
     info!("✓ Service verified as active");
 
-    info!("Network snapshot restore completed successfully for node: {} (validator state preserved)", request.node_name);
+    info!("Network snapshot restore completed successfully for node: {} (individual validator state preserved by overwriting snapshot's validator state)", request.node_name);
 
-    Ok(format!("Network snapshot restore completed for {} (validator state preserved, both data and wasm restored)", request.node_name))
+    Ok(format!("Network snapshot restore completed for {} (individual validator state preserved, snapshot's validator state overwritten)", request.node_name))
 }

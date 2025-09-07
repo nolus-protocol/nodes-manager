@@ -185,33 +185,6 @@ pub async fn restore_current_validator_state(backup_path: &str, destination: &st
     Ok(())
 }
 
-pub async fn copy_snapshot_directories(snapshot_dir: &str, target_dir: &str) -> Result<()> {
-    info!("Copying snapshot directories from {} to {}", snapshot_dir, target_dir);
-
-    // Copy data directory
-    let data_copy_cmd = format!(
-        "if [ -d '{}/data' ]; then cp -r '{}/data' '{}/' && echo 'data_copied'; else echo 'data_not_found'; fi",
-        snapshot_dir, snapshot_dir, target_dir
-    );
-
-    let data_result = execute_shell_command(&data_copy_cmd).await?;
-    if !data_result.contains("data_copied") {
-        return Err(anyhow!("Failed to copy data directory from snapshot"));
-    }
-
-    // Copy wasm directory (if exists)
-    let wasm_copy_cmd = format!(
-        "if [ -d '{}/wasm' ]; then cp -r '{}/wasm' '{}/' && echo 'wasm_copied'; else echo 'wasm_not_found'; fi",
-        snapshot_dir, snapshot_dir, target_dir
-    );
-
-    let wasm_result = execute_shell_command(&wasm_copy_cmd).await?;
-    debug!("Wasm copy result: {}", wasm_result.trim());
-
-    info!("Snapshot directories copied successfully");
-    Ok(())
-}
-
 // NEW: MANDATORY copy function that REQUIRES both data and wasm directories for restore
 pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
     info!("MANDATORY copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
@@ -241,30 +214,6 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     info!("✓ Wasm directory copied successfully");
 
     info!("✓ MANDATORY copy completed - both data and wasm directories copied successfully");
-    Ok(())
-}
-
-pub async fn copy_directories_to_snapshot(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
-    info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
-
-    for dir in directories {
-        let source_path = format!("{}/{}", source_dir, dir);
-        let target_path = format!("{}/{}", snapshot_dir, dir);
-
-        let copy_cmd = format!(
-            "if [ -d '{}' ]; then cp -r '{}' '{}' && echo '{}_copied'; else echo '{}_not_found'; fi",
-            source_path, source_path, target_path, dir, dir
-        );
-
-        let result = execute_shell_command(&copy_cmd).await?;
-        if result.contains(&format!("{}_copied", dir)) {
-            info!("Successfully copied {} directory to snapshot", dir);
-        } else {
-            warn!("Directory {} not found in source, skipping", dir);
-        }
-    }
-
-    info!("Directory copying to snapshot completed");
     Ok(())
 }
 

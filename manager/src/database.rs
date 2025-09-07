@@ -285,43 +285,6 @@ impl Database {
         }
     }
 
-    pub async fn get_health_history(&self, node_name: &str, limit: Option<i32>) -> Result<Vec<HealthRecord>> {
-        debug!("Querying health history for: {} (limit: {:?})", node_name, limit);
-
-        let limit_value = limit.unwrap_or(100);
-        let rows = sqlx::query(
-            r#"
-            SELECT node_name, is_healthy, error_message, timestamp,
-                   block_height, is_syncing, is_catching_up, validator_address
-            FROM health_records
-            WHERE node_name = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(node_name)
-        .bind(limit_value)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut records = Vec::new();
-        for row in rows {
-            records.push(HealthRecord {
-                node_name: row.try_get("node_name")?,
-                is_healthy: row.try_get("is_healthy")?,
-                error_message: row.try_get("error_message")?,
-                timestamp: row.try_get("timestamp")?,
-                block_height: row.try_get("block_height")?,
-                is_syncing: row.try_get("is_syncing")?,
-                is_catching_up: row.try_get("is_catching_up")?,
-                validator_address: row.try_get("validator_address")?,
-            });
-        }
-
-        debug!("✅ Found {} health records for: {}", records.len(), node_name);
-        Ok(records)
-    }
-
     pub async fn store_maintenance_operation(&self, operation: &MaintenanceOperation) -> Result<()> {
         debug!("Storing maintenance operation: {}", operation.id);
 
@@ -353,40 +316,5 @@ impl Database {
                 Err(e.into())
             }
         }
-    }
-
-    pub async fn get_maintenance_operations(&self, limit: Option<i32>) -> Result<Vec<MaintenanceOperation>> {
-        debug!("Querying maintenance operations (limit: {:?})", limit);
-
-        let limit_value = limit.unwrap_or(100);
-        let rows = sqlx::query(
-            r#"
-            SELECT id, operation_type, target_name, status, started_at,
-                   completed_at, error_message, details
-            FROM maintenance_operations
-            ORDER BY started_at DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(limit_value)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut operations = Vec::new();
-        for row in rows {
-            operations.push(MaintenanceOperation {
-                id: row.try_get("id")?,
-                operation_type: row.try_get("operation_type")?,
-                target_name: row.try_get("target_name")?,
-                status: row.try_get("status")?,
-                started_at: row.try_get("started_at")?,
-                completed_at: row.try_get("completed_at")?,
-                error_message: row.try_get("error_message")?,
-                details: row.try_get("details")?,
-            });
-        }
-
-        debug!("✅ Found {} maintenance operations", operations.len());
-        Ok(operations)
     }
 }

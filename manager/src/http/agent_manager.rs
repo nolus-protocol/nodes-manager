@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use crate::config::{Config, HermesConfig};
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::maintenance_tracker::MaintenanceTracker;
-use crate::http::operations::{BatchOperationResult, OperationResult};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ServiceStatus {
@@ -151,122 +150,6 @@ impl HttpAgentManager {
         self.execute_operation(server_name, "/logs/delete-all", payload).await?;
         info!("All files deleted successfully from {} on {}", log_path, server_name);
         Ok(())
-    }
-
-    // === NEW: Batch Hermes Operations ===
-
-    pub async fn restart_multiple_hermes(&self, hermes_configs: Vec<HermesConfig>) -> Result<BatchOperationResult> {
-        let mut success_count = 0;
-        let mut failure_count = 0;
-        let mut results = Vec::new();
-
-        for hermes_config in &hermes_configs {
-            let start_time = std::time::Instant::now();
-
-            match self.restart_hermes(hermes_config).await {
-                Ok(_) => {
-                    success_count += 1;
-                    results.push(OperationResult {
-                        target_name: hermes_config.service_name.clone(),
-                        operation_type: "hermes_restart".to_string(),
-                        success: true,
-                        message: "Hermes restart completed successfully".to_string(),
-                        duration_seconds: Some(start_time.elapsed().as_secs_f64()),
-                        details: None,
-                    });
-                }
-                Err(e) => {
-                    failure_count += 1;
-                    results.push(OperationResult {
-                        target_name: hermes_config.service_name.clone(),
-                        operation_type: "hermes_restart".to_string(),
-                        success: false,
-                        message: e.to_string(),
-                        duration_seconds: Some(start_time.elapsed().as_secs_f64()),
-                        details: None,
-                    });
-                }
-            }
-        }
-
-        let summary = format!("Batch hermes restart: {} successful, {} failed", success_count, failure_count);
-
-        Ok(BatchOperationResult {
-            success_count,
-            failure_count,
-            results,
-            summary,
-        })
-    }
-
-    // === NEW: Node Dependency Checking ===
-
-    pub async fn check_node_dependencies(&self, dependent_nodes: &Option<Vec<String>>) -> Result<bool> {
-        let nodes = match dependent_nodes {
-            Some(nodes) if !nodes.is_empty() => nodes,
-            _ => return Ok(true), // No dependencies means healthy
-        };
-
-        for node_name in nodes {
-            let node_config = match self.config.nodes.get(node_name) {
-                Some(config) => config,
-                None => {
-                    info!("Dependent node {} not found in config, considering unhealthy", node_name);
-                    return Ok(false);
-                }
-            };
-
-            // Check if node is healthy via RPC status
-            match self.check_node_rpc_status(&node_config.rpc_url).await {
-                Ok(is_healthy) => {
-                    if !is_healthy {
-                        info!("Dependent node {} is not healthy", node_name);
-                        return Ok(false);
-                    }
-                }
-                Err(_) => {
-                    info!("Failed to check dependent node {}, considering unhealthy", node_name);
-                    return Ok(false);
-                }
-            }
-        }
-
-        Ok(true)
-    }
-
-    // Helper method to check node RPC status
-    async fn check_node_rpc_status(&self, rpc_url: &str) -> Result<bool> {
-        let request_body = json!({
-            "jsonrpc": "2.0",
-            "method": "status",
-            "params": [],
-            "id": "health_check"
-        });
-
-        let response = self.client.post(rpc_url)
-            .json(&request_body)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Ok(false);
-        }
-
-        let rpc_response: Value = response.json().await?;
-
-        // Check if we got a valid RPC response with result
-        if let Some(result) = rpc_response.get("result") {
-            // Check if node is not catching up (is synced)
-            if let Some(sync_info) = result.get("sync_info") {
-                let catching_up = sync_info.get("catching_up")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                return Ok(!catching_up);
-            }
-        }
-
-        Ok(false)
     }
 
     // === High-Level Operations with Proper Maintenance Coordination ===

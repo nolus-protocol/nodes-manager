@@ -39,20 +39,12 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
         info!("✓ Logs truncated");
     }
 
-    // Step 5: Skip validator state backup - we don't want validator state in snapshots
-    info!("Skipping validator state backup (will be preserved on individual nodes during restore)");
-
-    // Step 6: MANDATORY - Copy BOTH data and wasm directories to snapshot directory (no validator state)
-    info!("Copying BOTH blockchain data and wasm directories to snapshot (excluding validator state)...");
+    // Step 5: MANDATORY - Copy BOTH data and wasm directories to snapshot directory (INCLUDING validator state)
+    info!("Copying BOTH blockchain data and wasm directories to snapshot (INCLUDING validator state)...");
     commands::copy_directories_to_snapshot_mandatory(&request.deploy_path, &snapshot_path, &["data", "wasm"]).await?;
-    info!("✓ Both data and wasm directories copied to snapshot");
+    info!("✓ Both data and wasm directories copied to snapshot with validator state included");
 
-    // Step 7: MANDATORY - Remove any validator state that might have been copied
-    let validator_in_snapshot = format!("{}/data/priv_validator_state.json", snapshot_path);
-    commands::remove_file_if_exists(&validator_in_snapshot).await?;
-    info!("✓ Validator state removed from snapshot");
-
-    // Step 8: MANDATORY - Verify snapshot contains both directories
+    // Step 6: MANDATORY - Verify snapshot contains both directories
     let snapshot_data_check = format!("test -d '{}/data'", snapshot_path);
     commands::execute_shell_command(&snapshot_data_check).await
         .map_err(|_| anyhow::anyhow!("CRITICAL: data directory missing from snapshot: {}/data", snapshot_path))?;
@@ -63,7 +55,15 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
 
     info!("✓ Verified both data and wasm directories exist in snapshot");
 
-    // Step 9: Get directory size and verify snapshot
+    // Step 7: Verify validator state is included in snapshot
+    let validator_in_snapshot = format!("{}/data/priv_validator_state.json", snapshot_path);
+    let validator_check_cmd = format!("test -f '{}'", validator_in_snapshot);
+    match commands::execute_shell_command(&validator_check_cmd).await {
+        Ok(_) => info!("✓ Validator state included in snapshot for external system compatibility"),
+        Err(_) => info!("! No validator state found in snapshot (node may not be a validator)"),
+    }
+
+    // Step 8: Get directory size and verify snapshot
     let size_bytes = commands::get_directory_size(&snapshot_path).await?;
     if size_bytes < 1024 {
         return Err(anyhow::anyhow!(
@@ -73,11 +73,11 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     }
     info!("✓ Snapshot size verified: {:.1} MB", size_bytes as f64 / 1024.0 / 1024.0);
 
-    // Step 10: Start the node service
+    // Step 9: Start the node service
     systemctl::start_service(&request.service_name).await?;
     info!("✓ Node service started");
 
-    // Step 11: Verify service is running
+    // Step 10: Verify service is running
     let status = systemctl::get_service_status(&request.service_name).await?;
     if status != "active" {
         return Err(anyhow::anyhow!(
@@ -87,7 +87,7 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     }
     info!("✓ Service verified as active");
 
-    info!("Network snapshot created successfully: {} ({:.1} MB) - contains both data and wasm, can be used by any node on {} network",
+    info!("Network snapshot created successfully: {} ({:.1} MB) - contains both data and wasm with validator state, can be used by any node on {} network",
           snapshot_dirname, size_bytes as f64 / 1024.0 / 1024.0, request.network);
 
     Ok(SnapshotInfo {
