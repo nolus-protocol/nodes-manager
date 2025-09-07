@@ -36,6 +36,7 @@ impl ConfigManager {
         let mut server_configs = HashMap::new();
         let mut all_nodes = HashMap::new();
         let mut all_hermes = HashMap::new();
+        let mut all_etl = HashMap::new();
 
         for entry in glob(&pattern).map_err(|e| anyhow!("Glob pattern error: {}", e))? {
             let path = entry.map_err(|e| anyhow!("Glob entry error: {}", e))?;
@@ -95,16 +96,36 @@ impl ConfigManager {
                     all_hermes.insert(final_hermes_name, hermes_config);
                 }
             }
+
+            // NEW: Collect ETL services from this server with smart naming
+            if let Some(etl_configs) = server_config_file.etl {
+                for (etl_name, mut etl_config) in etl_configs {
+                    etl_config.server_host = server_name.to_string();
+
+                    // Smart ETL naming - don't double-prefix if already prefixed
+                    let final_etl_name = if etl_name.starts_with(&format!("{}-", server_name)) {
+                        // ETL name already includes server prefix, use as-is
+                        etl_name
+                    } else {
+                        // ETL name doesn't include server prefix, add it
+                        format!("{}-{}", server_name, etl_name)
+                    };
+
+                    all_etl.insert(final_etl_name, etl_config);
+                }
+            }
         }
 
         config.servers = server_configs;
         config.nodes = all_nodes;
         config.hermes = all_hermes;
+        config.etl = all_etl;
 
-        info!("Loaded {} servers, {} nodes, {} hermes instances",
+        info!("Loaded {} servers, {} nodes, {} hermes instances, {} ETL services",
             config.servers.len(),
             config.nodes.len(),
-            config.hermes.len()
+            config.hermes.len(),
+            config.etl.len()
         );
 
         Ok(config)

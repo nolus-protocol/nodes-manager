@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 
 use crate::snapshot::{SnapshotInfo, SnapshotStats};
-use crate::web::{AppState, HermesInstance, NodeHealthSummary, MaintenanceInfo};
+use crate::web::{AppState, HermesInstance, NodeHealthSummary, MaintenanceInfo, EtlServiceSummary};
 use crate::operation_tracker::OperationStatus;
 
 // Helper type for API responses
@@ -105,6 +105,30 @@ async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus
         auto_restore_enabled: node_config.map(|c| c.auto_restore_enabled.unwrap_or(false)).unwrap_or(false),
         scheduled_snapshots_enabled: node_config.map(|c| c.snapshot_schedule.is_some()).unwrap_or(false),
         snapshot_retention_count: node_config.and_then(|c| c.snapshot_retention_count.map(|cnt| cnt as u32)),
+    }
+}
+
+// NEW: Convert ETL health status to summary
+async fn convert_etl_health_to_summary(health: &crate::health::monitor::EtlHealthStatus, config: &crate::config::Config) -> EtlServiceSummary {
+    let etl_config = config.etl.get(&health.service_name);
+
+    let status = if health.is_healthy {
+        "Healthy".to_string()
+    } else {
+        "Unhealthy".to_string()
+    };
+
+    EtlServiceSummary {
+        service_name: health.service_name.clone(),
+        status,
+        service_url: health.service_url.clone(),
+        response_time_ms: health.response_time_ms,
+        status_code: health.status_code,
+        last_check: health.last_check.to_rfc3339(),
+        error_message: health.error_message.clone(),
+        server_host: health.server_host.clone(),
+        enabled: health.enabled,
+        description: etl_config.and_then(|c| c.description.clone()),
     }
 }
 
@@ -223,6 +247,69 @@ pub async fn get_hermes_health(
     }
 }
 
+// === NEW: ETL SERVICE HEALTH ENDPOINTS ===
+
+pub async fn get_all_etl_health(
+    Query(query): Query<IncludeDisabledQuery>,
+    State(state): State<AppState>,
+) -> ApiResult<Vec<EtlServiceSummary>> {
+    match state.health_service.check_all_etl_services().await {
+        Ok(etl_statuses) => {
+            let mut summaries = Vec::new();
+
+            for etl_status in etl_statuses {
+                if query.include_disabled || etl_status.enabled {
+                    let summary = convert_etl_health_to_summary(&etl_status, &state.config).await;
+                    summaries.push(summary);
+                }
+            }
+
+            Ok(Json(ApiResponse::success(summaries)))
+        },
+        Err(e) => {
+            error!("Failed to get all ETL services health: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+        }
+    }
+}
+
+pub async fn get_etl_health(
+    Path(service_name): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<EtlServiceSummary> {
+    match state.health_service.get_etl_service_health(&service_name).await {
+        Ok(Some(etl_status)) => {
+            let summary = convert_etl_health_to_summary(&etl_status, &state.config).await;
+            Ok(Json(ApiResponse::success(summary)))
+        },
+        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("ETL service {} not found", service_name))))),
+        Err(e) => {
+            error!("Failed to get ETL service health for {}: {}", service_name, e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+        }
+    }
+}
+
+pub async fn refresh_etl_health(
+    State(state): State<AppState>,
+) -> ApiResult<Vec<EtlServiceSummary>> {
+    info!("Manual ETL health refresh requested");
+    match state.health_service.check_all_etl_services().await {
+        Ok(etl_statuses) => {
+            let mut summaries = Vec::new();
+            for etl_status in etl_statuses {
+                let summary = convert_etl_health_to_summary(&etl_status, &state.config).await;
+                summaries.push(summary);
+            }
+            Ok(Json(ApiResponse::success(summaries)))
+        },
+        Err(e) => {
+            error!("Failed to refresh ETL services health: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+        }
+    }
+}
+
 // === CONFIGURATION ENDPOINTS ===
 
 pub async fn get_all_node_configs(
@@ -238,6 +325,15 @@ pub async fn get_all_hermes_configs(
 ) -> ApiResult<Value> {
     Ok(Json(ApiResponse::success(json!({
         "hermes": state.config.hermes
+    }))))
+}
+
+// NEW: ETL configuration endpoint
+pub async fn get_all_etl_configs(
+    State(state): State<AppState>,
+) -> ApiResult<Value> {
+    Ok(Json(ApiResponse::success(json!({
+        "etl": state.config.etl
     }))))
 }
 

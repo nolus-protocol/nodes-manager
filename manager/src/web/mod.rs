@@ -77,3 +77,18 @@ pub struct HermesInstance {
     pub dependent_nodes: Vec<String>,
     pub in_maintenance: bool,
 }
+
+// NEW: ETL service summary for API responses
+#[derive(Debug, Clone, Serialize)]
+pub struct EtlServiceSummary {
+    pub service_name: String,
+    pub status: String, // "Healthy", "Unhealthy", "Unknown"
+    pub service_url: String,
+    pub response_time_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub last_check: String,
+    pub error_message: Option<String>,
+    pub server_host: String,
+    pub enabled: bool,
+    pub description: Option<String>,
+}

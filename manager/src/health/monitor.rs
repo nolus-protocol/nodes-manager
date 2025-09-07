@@ -1,5 +1,5 @@
 // File: manager/src/health/monitor.rs
-use crate::config::{Config, NodeConfig, ServerConfig};
+use crate::config::{Config, NodeConfig, ServerConfig, EtlConfig};
 use crate::database::{Database, HealthRecord};
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotManager;
@@ -32,6 +32,20 @@ pub struct HealthStatus {
     pub server_host: String,
     pub enabled: bool,
     pub in_maintenance: bool,
+}
+
+// NEW: ETL service health status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EtlHealthStatus {
+    pub service_name: String,
+    pub service_url: String,
+    pub is_healthy: bool,
+    pub error_message: Option<String>,
+    pub last_check: DateTime<Utc>,
+    pub response_time_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub server_host: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +113,7 @@ pub struct HealthMonitor {
     auto_restore_cooldowns: Arc<Mutex<HashMap<String, AutoRestoreCooldown>>>,
     block_height_states: Arc<Mutex<HashMap<String, BlockHeightState>>>,
     auto_restore_checked_states: Arc<Mutex<HashMap<String, bool>>>,
+    etl_client: HttpClient, // NEW: Separate client for ETL health checks
 }
 
 impl HealthMonitor {
@@ -114,6 +129,12 @@ impl HealthMonitor {
             .build()
             .expect("Failed to create HTTP client");
 
+        // NEW: ETL client with shorter timeout for quick health checks
+        let etl_client = HttpClient::builder()
+            .timeout(Duration::from_secs(10)) // 10 second timeout for ETL services
+            .build()
+            .expect("Failed to create ETL HTTP client");
+
         Self {
             config,
             database,
@@ -124,6 +145,7 @@ impl HealthMonitor {
             auto_restore_cooldowns: Arc::new(Mutex::new(HashMap::new())),
             block_height_states: Arc::new(Mutex::new(HashMap::new())),
             auto_restore_checked_states: Arc::new(Mutex::new(HashMap::new())),
+            etl_client,
         }
     }
 
@@ -214,6 +236,168 @@ impl HealthMonitor {
         }
 
         Ok(health_statuses)
+    }
+
+    // NEW: Check all ETL services health
+    pub async fn check_all_etl_services(&self) -> Result<Vec<EtlHealthStatus>> {
+        let mut etl_statuses = Vec::new();
+        let mut tasks = Vec::new();
+
+        for (service_name, etl_config) in &self.config.etl {
+            if !etl_config.enabled {
+                continue;
+            }
+
+            let task = {
+                let service_name = service_name.clone();
+                let etl_config = etl_config.clone();
+                let monitor = self.clone();
+                tokio::spawn(async move { monitor.check_etl_service_health(&service_name, &etl_config).await })
+            };
+            tasks.push(task);
+        }
+
+        let results = join_all(tasks).await;
+        for result in results {
+            match result {
+                Ok(Ok(status)) => etl_statuses.push(status),
+                Ok(Err(e)) => error!("ETL health check failed: {}", e),
+                Err(e) => error!("ETL health check task panicked: {}", e),
+            }
+        }
+
+        // Store results in database and handle alerts
+        for status in &etl_statuses {
+            if let Err(e) = self.store_etl_health_record(status).await {
+                error!("Failed to store ETL health record for {}: {}", status.service_name, e);
+            }
+
+            // Send alerts using centralized AlertService
+            if let Err(e) = self.handle_etl_health_alerts(status).await {
+                error!("Failed to handle ETL health alerts for {}: {}", status.service_name, e);
+            }
+        }
+
+        Ok(etl_statuses)
+    }
+
+    // NEW: Check individual ETL service health
+    pub async fn check_etl_service_health(&self, service_name: &str, etl_config: &EtlConfig) -> Result<EtlHealthStatus> {
+        let endpoint = etl_config.endpoint.as_deref().unwrap_or("/health");
+        let service_url = format!("https://{}:{}{}", etl_config.host, etl_config.port, endpoint);
+
+        let mut status = EtlHealthStatus {
+            service_name: service_name.to_string(),
+            service_url: service_url.clone(),
+            is_healthy: false,
+            error_message: None,
+            last_check: Utc::now(),
+            response_time_ms: None,
+            status_code: None,
+            server_host: etl_config.server_host.clone(),
+            enabled: etl_config.enabled,
+        };
+
+        let start_time = std::time::Instant::now();
+
+        match self.fetch_etl_health(&service_url, etl_config.timeout_seconds.unwrap_or(10)).await {
+            Ok(response_status) => {
+                let response_time = start_time.elapsed().as_millis() as u64;
+                status.response_time_ms = Some(response_time);
+                status.status_code = Some(response_status);
+
+                if response_status == 200 {
+                    status.is_healthy = true;
+                    debug!("ETL service {} is healthy ({}ms response)", service_name, response_time);
+                } else {
+                    status.error_message = Some(format!("HTTP status {}", response_status));
+                    debug!("ETL service {} returned status {} ({}ms response)", service_name, response_status, response_time);
+                }
+            }
+            Err(e) => {
+                let response_time = start_time.elapsed().as_millis() as u64;
+                status.response_time_ms = Some(response_time);
+                status.error_message = Some(e.to_string());
+                debug!("ETL service {} health check failed: {} ({}ms)", service_name, e, response_time);
+            }
+        }
+
+        Ok(status)
+    }
+
+    // NEW: Fetch ETL service health via HTTP
+    async fn fetch_etl_health(&self, url: &str, timeout_seconds: u64) -> Result<u16> {
+        let response = timeout(
+            Duration::from_secs(timeout_seconds),
+            self.etl_client.get(url).send(),
+        )
+        .await
+        .map_err(|_| anyhow!("ETL health check timeout"))?
+        .map_err(|e| anyhow!("ETL HTTP request failed: {}", e))?;
+
+        Ok(response.status().as_u16())
+    }
+
+    // NEW: Handle ETL health alerts
+    async fn handle_etl_health_alerts(&self, status: &EtlHealthStatus) -> Result<()> {
+        let details = Some(serde_json::json!({
+            "service_url": status.service_url,
+            "response_time_ms": status.response_time_ms,
+            "status_code": status.status_code,
+            "last_check": status.last_check.to_rfc3339()
+        }));
+
+        self.alert_service.send_progressive_alert(
+            &status.service_name,
+            &status.server_host,
+            status.is_healthy,
+            status.error_message.clone(),
+            details,
+        ).await
+    }
+
+    // NEW: Store ETL health record (reuse existing table with service type)
+    async fn store_etl_health_record(&self, status: &EtlHealthStatus) -> Result<()> {
+        let record = HealthRecord {
+            node_name: format!("etl:{}", status.service_name),
+            is_healthy: status.is_healthy,
+            error_message: status.error_message.clone(),
+            timestamp: status.last_check,
+            block_height: status.status_code.map(|code| code as i64),
+            is_syncing: None,
+            is_catching_up: None,
+            validator_address: Some(status.service_url.clone()),
+        };
+
+        self.database.store_health_record(&record).await
+    }
+
+    // NEW: Get ETL service health from database
+    pub async fn get_etl_service_health(&self, service_name: &str) -> Result<Option<EtlHealthStatus>> {
+        let etl_key = format!("etl:{}", service_name);
+        let record = self.database.get_latest_health_record(&etl_key).await?;
+
+        match record {
+            Some(record) => {
+                let etl_config = self.config.etl.get(service_name)
+                    .ok_or_else(|| anyhow!("ETL service {} not found in configuration", service_name))?;
+
+                let status = EtlHealthStatus {
+                    service_name: service_name.to_string(),
+                    service_url: record.validator_address.unwrap_or_default(),
+                    is_healthy: record.is_healthy,
+                    error_message: record.error_message,
+                    last_check: record.timestamp,
+                    response_time_ms: None, // Not stored in database
+                    status_code: record.block_height.map(|h| h as u16),
+                    server_host: etl_config.server_host.clone(),
+                    enabled: etl_config.enabled,
+                };
+
+                Ok(Some(status))
+            }
+            None => Ok(None),
+        }
     }
 
     // Handle health alerts using centralized AlertService
@@ -781,6 +965,7 @@ impl Clone for HealthMonitor {
             auto_restore_cooldowns: self.auto_restore_cooldowns.clone(),
             block_height_states: self.block_height_states.clone(),
             auto_restore_checked_states: self.auto_restore_checked_states.clone(),
+            etl_client: self.etl_client.clone(),
         }
     }
 }

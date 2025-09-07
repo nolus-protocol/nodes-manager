@@ -70,9 +70,15 @@ fn create_router(state: AppState) -> Router {
         .route("/api/health/hermes", get(handlers::get_all_hermes_health))
         .route("/api/health/hermes/:hermes_name", get(handlers::get_hermes_health))
 
+        // === NEW: ETL SERVICE HEALTH ROUTES ===
+        .route("/api/health/etl", get(handlers::get_all_etl_health))
+        .route("/api/health/etl/:service_name", get(handlers::get_etl_health))
+        .route("/api/health/etl/refresh", post(handlers::refresh_etl_health))
+
         // === CONFIGURATION ROUTES ===
         .route("/api/config/nodes", get(handlers::get_all_node_configs))
         .route("/api/config/hermes", get(handlers::get_all_hermes_configs))
+        .route("/api/config/etl", get(handlers::get_all_etl_configs))
 
         // === MANUAL OPERATION ROUTES (WITH OPERATION TRACKING) ===
         .route("/api/maintenance/nodes/:node_name/restart", post(handlers::execute_manual_node_restart))

@@ -20,6 +20,7 @@
             --hermes-color: #7c3aed;
             --snapshot-color: #0891b2;
             --restore-color: #0f766e;
+            --etl-color: #059669;
             --bg-primary: #f9fafb;
             --bg-secondary: #ffffff;
             --bg-tertiary: #f3f4f6;
@@ -486,6 +487,17 @@
             border-color: #134e4a;
         }
 
+        .btn-etl {
+            background: var(--etl-color);
+            color: white;
+            border-color: var(--etl-color);
+        }
+
+        .btn-etl:hover {
+            background: #047857;
+            border-color: #047857;
+        }
+
         .loading {
             display: flex;
             align-items: center;
@@ -553,6 +565,12 @@
             font-weight: 400;
         }
 
+        .response-time {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
         #last-updated {
             color: var(--text-muted);
             font-size: 0.75rem;
@@ -588,7 +606,7 @@
                     </svg>
                 </div>
                 <div class="metric-value" id="total-components">-</div>
-                <div class="metric-subtitle" id="components-breakdown">Nodes & Relayers</div>
+                <div class="metric-subtitle" id="components-breakdown">Nodes, Relayers & ETL</div>
             </div>
 
             <div class="metric-card">
@@ -682,18 +700,48 @@
                 </div>
             </div>
         </div>
+
+        <!-- NEW: ETL Services Panel -->
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM4.586 8L6 9.414 7.414 8H4.586zM5 12a1 1 0 100 2h10a1 1 0 100-2H5z"/>
+                    </svg>
+                    ETL Services
+                </div>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshEtl()" title="Refresh all ETL service statuses">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                        </svg>
+                        Refresh All
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <div id="etl-container">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <span>Loading ETL services...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
         let refreshInterval;
         let nodeConfigs = {};
         let hermesConfigs = {};
+        let etlConfigs = {};
         let scheduledOperations = {};
         let snapshotStats = {};
         let isLoadingData = false;
 
         let currentNodesData = null;
         let currentHermesData = null;
+        let currentEtlData = null;
         let maintenanceData = null;
 
         // FIXED: Cron jobs run in UTC timezone
@@ -718,6 +766,7 @@
                 await Promise.all([
                     loadNodeConfigs(),
                     loadHermesConfigs(),
+                    loadEtlConfigs(),
                     loadScheduledOperations(),
                     loadMaintenanceData()
                 ]);
@@ -726,7 +775,8 @@
 
                 await Promise.all([
                     loadNodes(),
-                    loadHermesInstances()
+                    loadHermesInstances(),
+                    loadEtlServices()
                 ]);
 
                 updateAllMetrics();
@@ -773,6 +823,19 @@
                 }
             } catch (error) {
                 console.error('Failed to load hermes configs:', error);
+            }
+        }
+
+        async function loadEtlConfigs() {
+            try {
+                const response = await fetch('/api/config/etl');
+                const data = await response.json();
+                if (data.success) {
+                    etlConfigs = data.data.etl || {};
+                    console.log('Loaded ETL configs:', etlConfigs);
+                }
+            } catch (error) {
+                console.error('Failed to load ETL configs:', error);
             }
         }
 
@@ -851,6 +914,27 @@
                 container.innerHTML = `
                     <div style="padding: 3rem; text-align: center; color: var(--error-color);">
                         <div style="font-weight: 600; margin-bottom: 0.5rem;">Failed to load hermes instances</div>
+                        <div style="font-size: 0.875rem; opacity: 0.8;">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+
+        async function loadEtlServices() {
+            try {
+                const response = await fetch('/api/health/etl?include_disabled=true');
+                const data = await response.json();
+                if (data.success) {
+                    currentEtlData = data.data;
+                    renderEtlServices(data.data);
+                    console.log('Loaded ETL services:', data.data);
+                }
+            } catch (error) {
+                console.error('Failed to load ETL services:', error);
+                const container = document.getElementById('etl-container');
+                container.innerHTML = `
+                    <div style="padding: 3rem; text-align: center; color: var(--error-color);">
+                        <div style="font-weight: 600; margin-bottom: 0.5rem;">Failed to load ETL services</div>
                         <div style="font-size: 0.875rem; opacity: 0.8;">${error.message}</div>
                     </div>
                 `;
@@ -1106,6 +1190,86 @@
             container.innerHTML = tableHtml;
         }
 
+        function renderEtlServices(services) {
+            const container = document.getElementById('etl-container');
+
+            if (!services || services.length === 0) {
+                container.innerHTML = `
+                    <div style="padding: 3rem; text-align: center; color: var(--text-muted);">
+                        <div style="font-weight: 600; margin-bottom: 0.5rem;">No ETL services configured</div>
+                        <div style="font-size: 0.875rem; opacity: 0.8;">Add ETL service configurations to get started</div>
+                    </div>
+                `;
+                return;
+            }
+
+            const tableHtml = `
+                <table class="infrastructure-table">
+                    <tbody>
+                        ${services.map(etl => {
+                            return `
+                                <tr>
+                                    <td style="width: 25%;">
+                                        <div class="node-info">
+                                            <div class="node-name">${formatEtlName(etl.service_name)}</div>
+                                            <div class="node-server">${etl.server_host}</div>
+                                            ${etl.description ? `
+                                                <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">${etl.description}</div>
+                                            ` : ''}
+                                        </div>
+                                    </td>
+                                    <td style="width: 20%;">
+                                        <div class="status-info">
+                                            <div class="status-badge ${getEtlStatusClass(etl.status)}">
+                                                <div class="status-dot-mini"></div>
+                                                ${etl.status}
+                                            </div>
+                                            ${etl.status_code ? `
+                                                <div class="block-height">Status: ${etl.status_code}</div>
+                                            ` : ''}
+                                        </div>
+                                    </td>
+                                    <td style="width: 25%;">
+                                        <div class="node-info">
+                                            <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">
+                                                ${etl.service_url}
+                                            </div>
+                                            ${etl.response_time_ms ? `
+                                                <div class="response-time">${etl.response_time_ms}ms response</div>
+                                            ` : ''}
+                                        </div>
+                                    </td>
+                                    <td style="width: 20%;">
+                                        <div style="font-size: 0.75rem; color: var(--text-muted);">
+                                            ${formatLastCheck(etl.last_check)}
+                                        </div>
+                                        ${etl.error_message ? `
+                                            <div style="font-size: 0.7rem; color: var(--error-color); margin-top: 0.25rem;">
+                                                ${etl.error_message}
+                                            </div>
+                                        ` : ''}
+                                    </td>
+                                    <td style="width: 10%;">
+                                        <div class="action-buttons">
+                                            <button class="btn btn-icon btn-etl"
+                                                    onclick="refreshEtlService('${etl.service_name}')"
+                                                    title="Refresh ETL service health status">
+                                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = tableHtml;
+        }
+
         // FIXED: Proper 6-field cron parsing with server timezone handling
         function parseCron(cronExpression) {
             try {
@@ -1338,6 +1502,24 @@
             }
         }
 
+        async function refreshEtlService(serviceName) {
+            try {
+                showAlert(`Refreshing ${formatEtlName(serviceName)}...`, 'warning');
+
+                const response = await fetch(`/api/health/etl/${serviceName}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`${formatEtlName(serviceName)} status refreshed`, 'success');
+                    await loadEtlServices();
+                } else {
+                    throw new Error(data.message || 'ETL refresh failed');
+                }
+            } catch (error) {
+                showAlert(`Failed to refresh ${formatEtlName(serviceName)}: ${error.message}`, 'error');
+            }
+        }
+
         async function refreshNodes() {
             try {
                 showAlert('Refreshing nodes status...', 'warning');
@@ -1358,6 +1540,16 @@
             }
         }
 
+        async function refreshEtl() {
+            try {
+                showAlert('Refreshing ETL services status...', 'warning');
+                await loadEtlServices();
+                showAlert('ETL services status refreshed', 'success');
+            } catch (error) {
+                showAlert('ETL refresh failed: ' + error.message, 'error');
+            }
+        }
+
         // Status class determination
         function getNodeStatusClass(status) {
             const cleanStatus = status.toLowerCase().replace(/\s+/g, '');
@@ -1373,6 +1565,13 @@
             const cleanStatus = status.replace(/[()]/g, '').toLowerCase();
             if (cleanStatus.includes('running')) return 'status-running';
             if (cleanStatus.includes('stopped') || cleanStatus.includes('failed')) return 'status-stopped';
+            return 'status-unknown';
+        }
+
+        function getEtlStatusClass(status) {
+            const cleanStatus = status.toLowerCase();
+            if (cleanStatus === 'healthy') return 'status-healthy';
+            if (cleanStatus === 'unhealthy') return 'status-unhealthy';
             return 'status-unknown';
         }
 
@@ -1404,8 +1603,35 @@
                 .join(' ');
         }
 
+        function formatEtlName(technicalName) {
+            if (!technicalName) return technicalName;
+
+            return technicalName
+                .split('-')
+                .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+                .join(' ');
+        }
+
         function formatStatusText(status) {
             return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+        }
+
+        function formatLastCheck(timestamp) {
+            if (!timestamp) return 'Never';
+
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+
+            const diffDays = Math.floor(diffHours / 24);
+            return `${diffDays}d ago`;
         }
 
         function updateAllMetrics() {
@@ -1417,7 +1643,8 @@
         function updateHealthMetrics() {
             const totalNodes = currentNodesData ? currentNodesData.length : 0;
             const totalHermes = currentHermesData ? currentHermesData.length : 0;
-            const totalComponents = totalNodes + totalHermes;
+            const totalEtl = currentEtlData ? currentEtlData.length : 0;
+            const totalComponents = totalNodes + totalHermes + totalEtl;
 
             // Count operational components (both "Synced" and "Catching Up" are operational)
             const operationalNodes = currentNodesData ? currentNodesData.filter(n => {
@@ -1429,7 +1656,11 @@
                 getHermesStatusClass(h.status) === 'status-running'
             ).length : 0;
 
-            const operationalComponents = operationalNodes + operationalHermes;
+            const operationalEtl = currentEtlData ? currentEtlData.filter(e =>
+                e.status.toLowerCase() === 'healthy'
+            ).length : 0;
+
+            const operationalComponents = operationalNodes + operationalHermes + operationalEtl;
 
             // Count maintenance nodes
             const maintenanceNodes = currentNodesData ? currentNodesData.filter(n =>
@@ -1448,7 +1679,7 @@
 
             if (totalEl) totalEl.textContent = totalComponents;
             if (healthyEl) healthyEl.textContent = operationalComponents;
-            if (breakdownEl) breakdownEl.textContent = `${totalNodes} Nodes & ${totalHermes} Relayers`;
+            if (breakdownEl) breakdownEl.textContent = `${totalNodes} Nodes, ${totalHermes} Relayers & ${totalEtl} ETL`;
             if (percentageEl) percentageEl.textContent = `${healthPercentage}% operational`;
             if (progressEl) progressEl.style.width = `${healthPercentage}%`;
 
@@ -1471,13 +1702,25 @@
         }
 
         function updateUptimeStatistics() {
-            const totalComponents = (currentNodesData ? currentNodesData.length : 0) + (currentHermesData ? currentHermesData.length : 0);
-            const operationalComponents = (currentNodesData ? currentNodesData.filter(n => {
+            const totalNodes = currentNodesData ? currentNodesData.length : 0;
+            const totalHermes = currentHermesData ? currentHermesData.length : 0;
+            const totalEtl = currentEtlData ? currentEtlData.length : 0;
+            const totalComponents = totalNodes + totalHermes + totalEtl;
+
+            const operationalNodes = currentNodesData ? currentNodesData.filter(n => {
                 const status = n.status.toLowerCase();
                 return status === 'synced' || status === 'catching up' || status === 'healthy';
-            }).length : 0) + (currentHermesData ? currentHermesData.filter(h =>
+            }).length : 0;
+
+            const operationalHermes = currentHermesData ? currentHermesData.filter(h =>
                 getHermesStatusClass(h.status) === 'status-running'
-            ).length : 0);
+            ).length : 0;
+
+            const operationalEtl = currentEtlData ? currentEtlData.filter(e =>
+                e.status.toLowerCase() === 'healthy'
+            ).length : 0;
+
+            const operationalComponents = operationalNodes + operationalHermes + operationalEtl;
 
             const uptimePercentage = totalComponents > 0 ? Math.round((operationalComponents / totalComponents) * 100) : 0;
 
@@ -1489,7 +1732,7 @@
         }
 
         function updateServerCount() {
-            // Get unique server hosts from both nodes and hermes
+            // Get unique server hosts from nodes, hermes, and ETL
             const serverHosts = new Set();
 
             if (currentNodesData) {
@@ -1504,6 +1747,14 @@
                 currentHermesData.forEach(hermes => {
                     if (hermes.server_host) {
                         serverHosts.add(hermes.server_host);
+                    }
+                });
+            }
+
+            if (currentEtlData) {
+                currentEtlData.forEach(etl => {
+                    if (etl.server_host) {
+                        serverHosts.add(etl.server_host);
                     }
                 });
             }

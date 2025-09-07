@@ -46,8 +46,8 @@ async fn main() -> Result<()> {
     // Load configuration
     let config_manager = ConfigManager::new("config".to_string()).await?;
     let config = config_manager.get_current_config();
-    info!("Configuration loaded: {} nodes, {} hermes instances, {} servers",
-          config.nodes.len(), config.hermes.len(), config.servers.len());
+    info!("Configuration loaded: {} nodes, {} hermes instances, {} servers, {} ETL services",
+          config.nodes.len(), config.hermes.len(), config.servers.len(), config.etl.len());
 
     // Initialize database
     let database = Arc::new(Database::new("data/nodes.db").await?);
@@ -105,15 +105,22 @@ async fn main() -> Result<()> {
     scheduler.start().await?;
     info!("Scheduler started");
 
-    // Start periodic health monitoring with configurable interval
+    // Start periodic health monitoring with configurable interval (including ETL services)
     let health_monitor_clone = health_monitor.clone();
     let check_interval = config.check_interval_seconds;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(check_interval));
         loop {
             interval.tick().await;
+
+            // Check blockchain nodes
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
-                warn!("Health monitoring error: {}", e);
+                warn!("Node health monitoring error: {}", e);
+            }
+
+            // NEW: Check ETL services
+            if let Err(e) = health_monitor_clone.check_all_etl_services().await {
+                warn!("ETL health monitoring error: {}", e);
             }
         }
     });
@@ -144,7 +151,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started with {}s health check interval (including auto-restore monitoring and centralized alerting)", check_interval);
+    info!("Background tasks started with {}s health check interval (including nodes, ETL services, auto-restore monitoring and centralized alerting)", check_interval);
 
     // Start web server
     start_web_server(
