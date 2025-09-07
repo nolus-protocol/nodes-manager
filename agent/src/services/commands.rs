@@ -2,6 +2,7 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn, error};
+use std::process::Stdio;
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -26,63 +27,47 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    let deploy_path = deploy_path.to_string();
-    let keep_blocks_str = keep_blocks.to_string();
-    let keep_versions_str = keep_versions.to_string();
+    // Use tokio::process::Command directly instead of spawn_blocking
+    let mut command = AsyncCommand::new("cosmos-pruner");
+    command
+        .arg("prune")
+        .arg(deploy_path)
+        .arg("--blocks")
+        .arg(&keep_blocks.to_string())
+        .arg("--versions")
+        .arg(&keep_versions.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    // Use spawn_blocking to run std::process::Command in a blocking thread
-    let result = tokio::task::spawn_blocking(move || {
-        info!("Executing cosmos-pruner process using std::process (blocking)...");
+    info!("Executing cosmos-pruner process using tokio::process (async)...");
 
-        let mut command = std::process::Command::new("cosmos-pruner");
-        command
-            .arg("prune")
-            .arg(&deploy_path)
-            .arg("--blocks")
-            .arg(&keep_blocks_str)
-            .arg("--versions")
-            .arg(&keep_versions_str);
+    match command.spawn() {
+        Ok(mut child) => {
+            info!("cosmos-pruner process spawned successfully, waiting for exit...");
 
-        info!("Starting cosmos-pruner process - waiting for completion...");
+            // Wait for the process to complete
+            match child.wait().await {
+                Ok(status) => {
+                    let exit_code = status.code().unwrap_or(-1);
+                    let success = status.success();
 
-        match command.spawn() {
-            Ok(mut child) => {
-                info!("cosmos-pruner process spawned successfully, waiting for exit...");
+                    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
 
-                match child.wait() {
-                    Ok(status) => {
-                        let exit_code = status.code().unwrap_or(-1);
-                        let success = status.success();
-
-                        info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
-
-                        // IMPORTANT: Always return success regardless of exit code
-                        // The workflow must continue no matter what cosmos-pruner returns
-                        Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
-                    }
-                    Err(e) => {
-                        error!("Failed to wait for cosmos-pruner process: {}", e);
-                        // Even if wait() fails, return success to continue workflow
-                        Ok(format!("cosmos-pruner wait failed but continuing workflow: {}", e))
-                    }
+                    // IMPORTANT: Always return success regardless of exit code
+                    // The workflow must continue no matter what cosmos-pruner returns
+                    Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
+                }
+                Err(e) => {
+                    error!("Failed to wait for cosmos-pruner process: {}", e);
+                    // Even if wait() fails, return success to continue workflow
+                    Ok(format!("cosmos-pruner wait failed but continuing workflow: {}", e))
                 }
             }
-            Err(e) => {
-                error!("Failed to spawn cosmos-pruner process: {}", e);
-                // Return error only if we can't even start the process
-                Err(anyhow!("Failed to spawn cosmos-pruner: {}", e))
-            }
-        }
-    }).await;
-
-    match result {
-        Ok(cosmos_result) => {
-            info!("cosmos-pruner execution completed via spawn_blocking");
-            cosmos_result
         }
         Err(e) => {
-            error!("spawn_blocking task failed: {}", e);
-            Err(anyhow!("spawn_blocking task failed: {}", e))
+            error!("Failed to spawn cosmos-pruner process: {}", e);
+            // Return error only if we can't even start the process
+            Err(anyhow!("Failed to spawn cosmos-pruner: {}", e))
         }
     }
 }
