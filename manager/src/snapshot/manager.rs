@@ -3,7 +3,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 
 use crate::config::{Config, NodeConfig};
 use crate::maintenance_tracker::MaintenanceTracker;
@@ -300,7 +300,7 @@ impl SnapshotManager {
         self.cleanup_old_network_snapshots(&node_config.network, retention_count).await
     }
 
-    /// Clean up old snapshots for a specific NETWORK
+    /// Clean up old snapshots for a specific NETWORK - ENHANCED with LZ4 cleanup
     async fn cleanup_old_network_snapshots(&self, network: &str, retention_count: u32) -> Result<u32> {
         let (node_name, node_config) = self.config.nodes.iter()
             .find(|(_, config)| config.network == network && config.snapshots_enabled.unwrap_or(false))
@@ -319,26 +319,27 @@ impl SnapshotManager {
         let snapshots_to_delete = &snapshots[(retention_count as usize)..];
         let mut deleted_count = 0;
 
-        info!("Cleaning up {} old network snapshot directories for {} (keeping {} most recent) via HTTP agent",
+        info!("Cleaning up {} old network snapshots for {} (keeping {} most recent) via HTTP agent",
               snapshots_to_delete.len(), network, retention_count);
 
         for snapshot in snapshots_to_delete {
-            match self.delete_snapshot_directory(&node_config.server_host, &snapshot.snapshot_path).await {
+            // ENHANCED: Delete both directory and LZ4 file
+            match self.delete_snapshot_with_lz4(&node_config.server_host, &snapshot.snapshot_path, &snapshot.filename).await {
                 Ok(_) => {
-                    info!("Deleted old network snapshot directory via HTTP agent: {}", snapshot.filename);
+                    info!("Deleted old network snapshot (directory + LZ4) via HTTP agent: {}", snapshot.filename);
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to delete network snapshot directory {} via HTTP agent: {}", snapshot.filename, e);
+                    warn!("Failed to delete network snapshot {} via HTTP agent: {}", snapshot.filename, e);
                 }
             }
         }
 
-        info!("Cleaned up {} old network snapshot directories for {} via HTTP agent", deleted_count, network);
+        info!("Cleaned up {} old network snapshots for {} via HTTP agent", deleted_count, network);
         Ok(deleted_count)
     }
 
-    /// Delete a specific snapshot via HTTP agent
+    /// Delete a specific snapshot via HTTP agent - ENHANCED to include LZ4 cleanup
     pub async fn delete_snapshot(&self, node_name: &str, filename: &str) -> Result<()> {
         let node_config = self.get_node_config(node_name)?;
 
@@ -351,13 +352,40 @@ impl SnapshotManager {
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
         let snapshot_path = format!("{}/{}", backup_path, filename);
-        self.delete_snapshot_directory(&node_config.server_host, &snapshot_path).await?;
+        self.delete_snapshot_with_lz4(&node_config.server_host, &snapshot_path, filename).await?;
 
-        info!("Deleted network snapshot directory {} via HTTP agent", filename);
+        info!("Deleted network snapshot (directory + LZ4) {} via HTTP agent", filename);
         Ok(())
     }
 
-    /// Helper method to delete a snapshot directory via HTTP agent
+    /// ENHANCED: Delete both snapshot directory and corresponding LZ4 file
+    async fn delete_snapshot_with_lz4(&self, server_host: &str, dir_path: &str, filename: &str) -> Result<()> {
+        // Extract the backup path from the full directory path
+        let backup_path = dir_path.rsplit_once('/').map(|(path, _)| path).unwrap_or("");
+        let lz4_path = format!("{}/{}.tar.lz4", backup_path, filename);
+
+        // Create a compound command to delete both directory and LZ4 file
+        let delete_cmd = format!(
+            "rm -rf '{}' && if [ -f '{}' ]; then rm -f '{}' && echo 'LZ4 deleted'; else echo 'LZ4 not found'; fi",
+            dir_path, lz4_path, lz4_path
+        );
+
+        debug!("Executing cleanup command: {}", delete_cmd);
+
+        let output = self.http_manager.execute_single_command(server_host, &delete_cmd).await?;
+
+        if output.contains("LZ4 deleted") {
+            info!("Successfully deleted both directory and LZ4 file for snapshot: {}", filename);
+        } else if output.contains("LZ4 not found") {
+            info!("Deleted directory for snapshot: {} (LZ4 file not found)", filename);
+        } else {
+            debug!("Cleanup output for {}: {}", filename, output.trim());
+        }
+
+        Ok(())
+    }
+
+    /// Helper method to delete a snapshot directory via HTTP agent (LEGACY - kept for compatibility)
     async fn delete_snapshot_directory(&self, server_host: &str, dir_path: &str) -> Result<()> {
         let delete_cmd = format!("rm -rf '{}'", dir_path);
         self.http_manager.execute_single_command(server_host, &delete_cmd).await?;
