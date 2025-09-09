@@ -284,7 +284,7 @@ impl HealthMonitor {
     // NEW: Check individual ETL service health
     pub async fn check_etl_service_health(&self, service_name: &str, etl_config: &EtlConfig) -> Result<EtlHealthStatus> {
         let endpoint = etl_config.endpoint.as_deref().unwrap_or("/health");
-        let service_url = format!("https://{}:{}{}", etl_config.host, etl_config.port, endpoint);
+        let service_url = format!("http://{}:{}{}", etl_config.host, etl_config.port, endpoint);
 
         let mut status = EtlHealthStatus {
             service_name: service_name.to_string(),
