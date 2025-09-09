@@ -2,7 +2,6 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn, error};
-use std::process::Stdio;
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -27,35 +26,25 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    // Use tokio::process::Command directly instead of spawn_blocking
-    let mut command = AsyncCommand::new("cosmos-pruner");
-    command
-        .arg("prune")
-        .arg(deploy_path)
-        .arg("--blocks")
-        .arg(&keep_blocks.to_string())
-        .arg("--versions")
-        .arg(&keep_versions.to_string())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    // Use the existing working execute_shell_command - simplest approach
+    let command = format!(
+        "cosmos-pruner prune '{}' --blocks={} --versions={}; echo \"Exit code: $?\"",
+        deploy_path, keep_blocks, keep_versions
+    );
 
-    info!("Executing cosmos-pruner process using tokio::process (async)...");
+    info!("Executing cosmos-pruner using shell command (simplest approach)...");
 
-    match command.output().await {
+    // Try to execute, but always return success to continue workflow
+    match execute_shell_command(&command).await {
         Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            let success = output.status.success();
-
-            info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
-
-            // IMPORTANT: Always return success regardless of exit code
-            // The workflow must continue no matter what cosmos-pruner returns
-            Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
+            info!("cosmos-pruner shell command completed: {}", output.trim());
+            // Always return success regardless of what happened
+            Ok(format!("cosmos-pruner completed: {}", output.trim()))
         }
         Err(e) => {
-            error!("Failed to execute cosmos-pruner process: {}", e);
-            // Return error only if we can't even start the process
-            Err(anyhow!("Failed to execute cosmos-pruner: {}", e))
+            warn!("cosmos-pruner shell command failed, but continuing workflow: {}", e);
+            // Even if shell command fails, return success to continue workflow
+            Ok(format!("cosmos-pruner completed with error, continuing workflow: {}", e))
         }
     }
 }
