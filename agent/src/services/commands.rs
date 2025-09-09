@@ -26,27 +26,46 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    // Use the existing working execute_shell_command - simplest approach
-    let command = format!(
-        "cosmos-pruner prune '{}' --blocks={} --versions={}; echo \"Exit code: $?\"",
-        deploy_path, keep_blocks, keep_versions
-    );
+    // Spawn cosmos-pruner and ignore all streams - just wait for final exit
+    let mut command = AsyncCommand::new("cosmos-pruner");
+    command
+        .arg("prune")
+        .arg(deploy_path)
+        .arg("--blocks")
+        .arg(keep_blocks.to_string())
+        .arg("--versions")
+        .arg(keep_versions.to_string());
 
-    info!("Executing cosmos-pruner using shell command (simplest approach)...");
+    info!("Executing cosmos-pruner process - ignoring streams, waiting for final exit...");
 
-    // Try to execute, but always return success to continue workflow
-    match execute_shell_command(&command).await {
-        Ok(output) => {
-            info!("cosmos-pruner shell command completed: {}", output.trim());
-            // Always return success regardless of what happened
-            Ok(format!("cosmos-pruner completed: {}", output.trim()))
+    let mut child = command.spawn()
+        .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
+
+    // Use polling instead of infinite wait (child.wait().await has issues)
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                info!("cosmos-pruner process detected as completed");
+                break status;
+            }
+            Ok(None) => {
+                // Process still running, wait 1 second and check again
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => {
+                return Err(anyhow!("Error checking cosmos-pruner status: {}", e));
+            }
         }
-        Err(e) => {
-            warn!("cosmos-pruner shell command failed, but continuing workflow: {}", e);
-            // Even if shell command fails, return success to continue workflow
-            Ok(format!("cosmos-pruner completed with error, continuing workflow: {}", e))
-        }
-    }
+    };
+
+    let exit_code = status.code().unwrap_or(-1);
+    let success = status.success();
+
+    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
+
+    // IMPORTANT: Always return success regardless of exit code
+    // The workflow must continue no matter what cosmos-pruner returns
+    Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
 }
 
 // NEW: LZ4 compression function for background execution
