@@ -41,33 +41,21 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     info!("Executing cosmos-pruner process using tokio::process (async)...");
 
-    match command.spawn() {
-        Ok(mut child) => {
-            info!("cosmos-pruner process spawned successfully, waiting for exit...");
+    match command.output().await {
+        Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
+            let success = output.status.success();
 
-            // Wait for the process to complete
-            match child.wait().await {
-                Ok(status) => {
-                    let exit_code = status.code().unwrap_or(-1);
-                    let success = status.success();
+            info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
 
-                    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
-
-                    // IMPORTANT: Always return success regardless of exit code
-                    // The workflow must continue no matter what cosmos-pruner returns
-                    Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
-                }
-                Err(e) => {
-                    error!("Failed to wait for cosmos-pruner process: {}", e);
-                    // Even if wait() fails, return success to continue workflow
-                    Ok(format!("cosmos-pruner wait failed but continuing workflow: {}", e))
-                }
-            }
+            // IMPORTANT: Always return success regardless of exit code
+            // The workflow must continue no matter what cosmos-pruner returns
+            Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
         }
         Err(e) => {
-            error!("Failed to spawn cosmos-pruner process: {}", e);
+            error!("Failed to execute cosmos-pruner process: {}", e);
             // Return error only if we can't even start the process
-            Err(anyhow!("Failed to spawn cosmos-pruner: {}", e))
+            Err(anyhow!("Failed to execute cosmos-pruner: {}", e))
         }
     }
 }
@@ -258,11 +246,11 @@ pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String
 
     match execute_shell_command(&command).await {
         Ok(_) => {
-            info!("Trigger words found in log file: {}", log_file);
+            info!("Auto-restore trigger words found in log: {}", log_file);
             Ok(true)
         }
         Err(_) => {
-            debug!("No trigger words found in log file: {}", log_file);
+            debug!("No trigger words found in log: {}", log_file);
             Ok(false)
         }
     }
