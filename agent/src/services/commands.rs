@@ -304,11 +304,16 @@ async fn execute_copy_with_monitoring(source_path: &str, target_path: &str, oper
 
     // Wait for rsync to complete with intelligent timeout monitoring
     let mut check_count = 0;
-    let status = loop {
+    let mut forced_termination = false;
+
+    loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                info!("{}: rsync process completed", operation_name);
-                break status;
+                info!("{}: rsync process completed normally", operation_name);
+                if !status.success() {
+                    return Err(anyhow!("{}: rsync failed with exit code: {}", operation_name, status.code().unwrap_or(-1)));
+                }
+                break;
             }
             Ok(None) => {
                 check_count += 1;
@@ -322,7 +327,8 @@ async fn execute_copy_with_monitoring(source_path: &str, target_path: &str, oper
                     if target_size >= source_size.saturating_sub(1024 * 1024) { // Within 1MB
                         warn!("{}: rsync appears hung but copy is complete - terminating process", operation_name);
                         let _ = child.kill().await;
-                        break child.wait().await.unwrap_or_else(|_| std::process::ExitStatus::from_raw(0));
+                        forced_termination = true;
+                        break;
                     }
                 }
 
@@ -332,14 +338,26 @@ async fn execute_copy_with_monitoring(source_path: &str, target_path: &str, oper
                 return Err(anyhow!("Error checking rsync status for {}: {}", operation_name, e));
             }
         }
-    };
+    }
 
     // Stop monitoring and stream tasks
     monitor_handle.abort();
     let _ = tokio::try_join!(stdout_handle, stderr_handle);
 
-    if !status.success() {
-        return Err(anyhow!("{}: rsync failed with exit code: {}", operation_name, status.code().unwrap_or(-1)));
+    // If we forced termination, verify the copy is actually complete
+    if forced_termination {
+        let source_size = get_directory_size(source_path).await.unwrap_or(0);
+        let target_size = get_directory_size(target_path).await.unwrap_or(0);
+
+        if target_size >= source_size.saturating_sub(1024 * 1024) { // Within 1MB
+            info!("{} completed successfully (forced termination but copy verified complete)", operation_name);
+            return Ok(());
+        } else {
+            return Err(anyhow!("{}: forced termination but copy incomplete ({} MB / {} MB)",
+                              operation_name,
+                              target_size / 1024 / 1024,
+                              source_size / 1024 / 1024));
+        }
     }
 
     info!("{} completed successfully", operation_name);
@@ -370,7 +388,7 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
 
     execute_copy_with_monitoring(&wasm_source, &wasm_target, "Wasm restore").await?;
 
-    info!("Copy completed - both data and wasm directories copied successfully");
+    info!("copy completed - both data and wasm directories copied successfully");
     Ok(())
 }
 
