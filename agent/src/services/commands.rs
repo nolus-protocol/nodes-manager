@@ -202,173 +202,22 @@ pub async fn restore_current_validator_state(backup_path: &str, destination: &st
     Ok(())
 }
 
-// SIMPLIFIED: Robust copy function using process spawning with proper monitoring
-async fn execute_copy_with_monitoring(source_path: &str, target_path: &str, operation_name: &str) -> Result<()> {
+// SIMPLIFIED: Simple copy function using cp -r like all other operations
+async fn copy_directory(source_path: &str, target_path: &str, operation_name: &str) -> Result<()> {
     info!("Starting {} - copying from {} to {}", operation_name, source_path, target_path);
 
-    // Start monitoring task in background
-    let source_clone = source_path.to_string();
-    let target_clone = target_path.to_string();
-    let op_name_clone = operation_name.to_string();
-
-    let monitor_handle = tokio::spawn(async move {
-        let mut last_size = 0u64;
-        let mut no_progress_count = 0;
-
-        loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-
-            // Check if target exists
-            let target_exists_cmd = format!("test -d '{}'", target_clone);
-            if execute_shell_command(&target_exists_cmd).await.is_err() {
-                debug!("{}: Target directory not created yet", op_name_clone);
-                continue;
-            }
-
-            let source_size = get_directory_size(&source_clone).await.unwrap_or(0);
-            let current_size = get_directory_size(&target_clone).await.unwrap_or(0);
-
-            if source_size > 0 {
-                let progress = (current_size * 100) / source_size;
-                info!("{}: {}% complete ({:.1} MB / {:.1} MB)",
-                      op_name_clone,
-                      progress,
-                      current_size as f64 / 1024.0 / 1024.0,
-                      source_size as f64 / 1024.0 / 1024.0);
-
-                // Check for completion
-                if current_size >= source_size.saturating_sub(1024 * 1024) { // Within 1MB
-                    info!("{}: Copy operation detected as completed", op_name_clone);
-                    break;
-                }
-
-                // Check for stalled progress
-                if current_size == last_size {
-                    no_progress_count += 1;
-                    if no_progress_count > 10 { // 5 minutes
-                        warn!("{}: No progress for 5 minutes - but continuing to monitor", op_name_clone);
-                        no_progress_count = 0; // Reset to avoid spam
-                    }
-                } else {
-                    no_progress_count = 0;
-                }
-                last_size = current_size;
-            }
-        }
-    });
-
-    // Execute the actual copy using rsync with a process group approach
-    let rsync_cmd = format!(
-        "rsync -av --progress --no-perms --no-owner --no-group '{}/' '{}'",
-        source_path, target_path
-    );
-
-    info!("Executing copy command with monitoring: {}", operation_name);
-    debug!("Copy command: {}", rsync_cmd);
-
-    // Spawn rsync process with stream handling
-    let mut command = AsyncCommand::new("sh");
-    command
-        .arg("-c")
-        .arg(&rsync_cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let mut child = command.spawn()
-        .map_err(|e| anyhow!("Failed to spawn rsync for {}: {}", operation_name, e))?;
-
-    // Drain stdout/stderr to prevent blocking
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    let stdout_handle = tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        while let Ok(bytes_read) = reader.read_line(&mut line).await {
-            if bytes_read == 0 { break; }
-            debug!("rsync stdout: {}", line.trim());
-            line.clear();
-        }
-    });
-
-    let stderr_handle = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr);
-        let mut line = String::new();
-        while let Ok(bytes_read) = reader.read_line(&mut line).await {
-            if bytes_read == 0 { break; }
-            debug!("rsync stderr: {}", line.trim());
-            line.clear();
-        }
-    });
-
-    // Wait for rsync to complete with intelligent timeout monitoring
-    let mut check_count = 0;
-    let mut forced_termination = false;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                info!("{}: rsync process completed normally", operation_name);
-                if !status.success() {
-                    return Err(anyhow!("{}: rsync failed with exit code: {}", operation_name, status.code().unwrap_or(-1)));
-                }
-                break;
-            }
-            Ok(None) => {
-                check_count += 1;
-
-                // After 30 minutes, start checking if copy is actually complete
-                if check_count > 360 { // 30 minutes
-                    // Check if copy appears complete based on size comparison
-                    let source_size = get_directory_size(source_path).await.unwrap_or(0);
-                    let target_size = get_directory_size(target_path).await.unwrap_or(0);
-
-                    if target_size >= source_size.saturating_sub(1024 * 1024) { // Within 1MB
-                        warn!("{}: rsync appears hung but copy is complete - terminating process", operation_name);
-                        let _ = child.kill().await;
-                        forced_termination = true;
-                        break;
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-            Err(e) => {
-                return Err(anyhow!("Error checking rsync status for {}: {}", operation_name, e));
-            }
-        }
-    }
-
-    // Stop monitoring and stream tasks
-    monitor_handle.abort();
-    let _ = tokio::try_join!(stdout_handle, stderr_handle);
-
-    // If we forced termination, verify the copy is actually complete
-    if forced_termination {
-        let source_size = get_directory_size(source_path).await.unwrap_or(0);
-        let target_size = get_directory_size(target_path).await.unwrap_or(0);
-
-        if target_size >= source_size.saturating_sub(1024 * 1024) { // Within 1MB
-            info!("{} completed successfully (forced termination but copy verified complete)", operation_name);
-            return Ok(());
-        } else {
-            return Err(anyhow!("{}: forced termination but copy incomplete ({} MB / {} MB)",
-                              operation_name,
-                              target_size / 1024 / 1024,
-                              source_size / 1024 / 1024));
-        }
-    }
+    let command = format!("cp -r '{}' '{}'", source_path, target_path);
+    execute_shell_command(&command).await?;
 
     info!("{} completed successfully", operation_name);
     Ok(())
 }
 
-// Copy function that REQUIRES both data and wasm directories for restore
+// Copy function that REQUIRES both data and wasm directories for restore - SYNCHRONOUS
 pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
-    info!("Copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
+    info!("Copying both data and wasm directories from {} to {}", snapshot_dir, target_dir);
 
-    // Copy data directory
+    // Copy data directory first
     let data_source = format!("{}/data", snapshot_dir);
     let data_target = format!("{}/data", target_dir);
 
@@ -376,9 +225,9 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     execute_shell_command(&data_exists_cmd).await
         .map_err(|_| anyhow!("CRITICAL: data directory missing from snapshot: {}", data_source))?;
 
-    execute_copy_with_monitoring(&data_source, &data_target, "Data restore").await?;
+    copy_directory(&data_source, &data_target, "Data restore").await?;
 
-    // Copy wasm directory
+    // Then copy wasm directory
     let wasm_source = format!("{}/wasm", snapshot_dir);
     let wasm_target = format!("{}/wasm", target_dir);
 
@@ -386,13 +235,13 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     execute_shell_command(&wasm_exists_cmd).await
         .map_err(|_| anyhow!("CRITICAL: wasm directory missing from snapshot: {}", wasm_source))?;
 
-    execute_copy_with_monitoring(&wasm_source, &wasm_target, "Wasm restore").await?;
+    copy_directory(&wasm_source, &wasm_target, "Wasm restore").await?;
 
-    info!("copy completed - both data and wasm directories copied successfully");
+    info!("Copy completed - both data and wasm directories copied successfully");
     Ok(())
 }
 
-// NEW: copy function for snapshot creation that REQUIRES both data and wasm directories
+// NEW: copy function for snapshot creation that REQUIRES both data and wasm directories - SYNCHRONOUS
 pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
     info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
 
@@ -405,7 +254,7 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
         execute_shell_command(&source_exists_cmd).await
             .map_err(|_| anyhow!("CRITICAL: Source {} directory missing at: {}", dir, source_path))?;
 
-        execute_copy_with_monitoring(&source_path, &target_path, &format!("{} snapshot copy", dir)).await
+        copy_directory(&source_path, &target_path, &format!("{} snapshot copy", dir)).await
             .map_err(|e| anyhow!("CRITICAL: Failed to copy {} directory: {}", dir, e))?;
 
         // Verify the copy was successful
