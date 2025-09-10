@@ -1,6 +1,9 @@
 // File: agent/src/services/commands.rs
 use anyhow::{anyhow, Result};
 use tokio::process::Command as AsyncCommand;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use std::process::Stdio;
+use std::time::Duration;
 use tracing::{debug, info, warn, error};
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
@@ -26,7 +29,7 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
 pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
     info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
 
-    // Spawn cosmos-pruner and ignore all streams - just wait for final exit
+    // Spawn cosmos-pruner with proper stream handling
     let mut command = AsyncCommand::new("cosmos-pruner");
     command
         .arg("prune")
@@ -34,14 +37,43 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
         .arg("--blocks")
         .arg(keep_blocks.to_string())
         .arg("--versions")
-        .arg(keep_versions.to_string());
+        .arg(keep_versions.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true); // Ensure cleanup
 
-    info!("Executing cosmos-pruner process - ignoring streams, waiting for final exit...");
+    info!("Executing cosmos-pruner process with stream monitoring...");
 
     let mut child = command.spawn()
         .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
-    // Use polling instead of infinite wait (child.wait().await has issues)
+    // Take streams for proper draining
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // Spawn task to continuously drain stdout
+    let stdout_handle = tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        while let Ok(bytes_read) = reader.read_line(&mut line).await {
+            if bytes_read == 0 { break; }
+            info!("cosmos-pruner stdout: {}", line.trim());
+            line.clear();
+        }
+    });
+
+    // Spawn task to continuously drain stderr
+    let stderr_handle = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        while let Ok(bytes_read) = reader.read_line(&mut line).await {
+            if bytes_read == 0 { break; }
+            info!("cosmos-pruner stderr: {}", line.trim());
+            line.clear();
+        }
+    });
+
+    // Monitor process completion with better detection
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -49,14 +81,18 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
                 break status;
             }
             Ok(None) => {
-                // Process still running, wait 1 second and check again
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                // Process still running, log progress and continue
+                debug!("cosmos-pruner still running...");
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
             Err(e) => {
                 return Err(anyhow!("Error checking cosmos-pruner status: {}", e));
             }
         }
     };
+
+    // Wait for stream tasks to complete
+    let _ = tokio::try_join!(stdout_handle, stderr_handle);
 
     let exit_code = status.code().unwrap_or(-1);
     let success = status.success();
@@ -166,31 +202,106 @@ pub async fn restore_current_validator_state(backup_path: &str, destination: &st
     Ok(())
 }
 
-// NEW: MANDATORY copy function that REQUIRES both data and wasm directories for restore
+// Monitor copy progress by checking destination size
+async fn monitor_copy_progress(source_path: &str, target_path: &str, operation_name: &str) {
+    let mut last_size = 0u64;
+    let mut stall_count = 0;
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+
+        // Check if target exists yet
+        let target_exists_cmd = format!("test -d '{}'", target_path);
+        if execute_shell_command(&target_exists_cmd).await.is_err() {
+            debug!("{}: Target directory not created yet", operation_name);
+            continue;
+        }
+
+        let source_size = get_directory_size(source_path).await.unwrap_or(0);
+        let current_size = get_directory_size(target_path).await.unwrap_or(0);
+
+        if source_size > 0 {
+            let progress = (current_size * 100) / source_size;
+            info!("{}: {}% complete ({:.1} MB / {:.1} MB)",
+                  operation_name,
+                  progress,
+                  current_size as f64 / 1024.0 / 1024.0,
+                  source_size as f64 / 1024.0 / 1024.0);
+
+            // Check for completion
+            if current_size >= source_size {
+                info!("{}: Copy operation completed", operation_name);
+                break;
+            }
+
+            // Check for stalled progress
+            if current_size == last_size {
+                stall_count += 1;
+                if stall_count > 10 { // 5 minutes of no progress
+                    warn!("{}: No progress detected for 5 minutes - operation may be stalled", operation_name);
+                    stall_count = 0; // Reset to avoid spam
+                }
+            } else {
+                stall_count = 0;
+            }
+            last_size = current_size;
+        }
+    }
+}
+
+// Copy function that REQUIRES both data and wasm directories for restore with progress monitoring
 pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
     info!("MANDATORY copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
 
-    // MANDATORY: Copy data directory - MUST succeed
+    // Copy data directory with rsync and progress monitoring
+    let data_source = format!("{}/data", snapshot_dir);
+    let data_target = format!("{}/data", target_dir);
+
+    info!("Starting data directory copy with progress monitoring...");
+
+    // Start progress monitoring in background
+    let data_source_clone = data_source.clone();
+    let data_target_clone = data_target.clone();
+    let data_monitor = tokio::spawn(async move {
+        monitor_copy_progress(&data_source_clone, &data_target_clone, "Data copy").await;
+    });
+
     let data_copy_cmd = format!(
-        "if [ -d '{}/data' ]; then cp -r '{}/data' '{}/' && echo 'data_copied'; else echo 'data_not_found'; fi",
-        snapshot_dir, snapshot_dir, target_dir
+        "if [ -d '{}' ]; then rsync -av '{}/' '{}' && echo 'data_copied'; else echo 'data_not_found'; fi",
+        data_source, data_source, data_target
     );
 
     let data_result = execute_shell_command(&data_copy_cmd).await?;
+    data_monitor.abort(); // Stop monitoring
+
     if !data_result.contains("data_copied") {
-        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY data directory from snapshot {}/data", snapshot_dir));
+        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY data directory from snapshot {}", data_source));
     }
     info!("✓ Data directory copied successfully");
 
-    // MANDATORY: Copy wasm directory - MUST succeed
+    // Copy wasm directory with rsync and progress monitoring
+    let wasm_source = format!("{}/wasm", snapshot_dir);
+    let wasm_target = format!("{}/wasm", target_dir);
+
+    info!("Starting wasm directory copy with progress monitoring...");
+
+    // Start progress monitoring in background
+    let wasm_source_clone = wasm_source.clone();
+    let wasm_target_clone = wasm_target.clone();
+    let wasm_monitor = tokio::spawn(async move {
+        monitor_copy_progress(&wasm_source_clone, &wasm_target_clone, "Wasm copy").await;
+    });
+
     let wasm_copy_cmd = format!(
-        "if [ -d '{}/wasm' ]; then cp -r '{}/wasm' '{}/' && echo 'wasm_copied'; else echo 'wasm_not_found'; fi",
-        snapshot_dir, snapshot_dir, target_dir
+        "if [ -d '{}' ]; then rsync -av '{}/' '{}' && echo 'wasm_copied'; else echo 'wasm_not_found'; fi",
+        wasm_source, wasm_source, wasm_target
     );
 
     let wasm_result = execute_shell_command(&wasm_copy_cmd).await?;
+    wasm_monitor.abort(); // Stop monitoring
+
     if !wasm_result.contains("wasm_copied") {
-        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY wasm directory from snapshot {}/wasm", snapshot_dir));
+        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY wasm directory from snapshot {}", wasm_source));
     }
     info!("✓ Wasm directory copied successfully");
 
@@ -198,7 +309,7 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     Ok(())
 }
 
-// NEW: MANDATORY copy function for snapshot creation that REQUIRES both data and wasm directories
+// NEW: MANDATORY copy function for snapshot creation that REQUIRES both data and wasm directories with progress monitoring
 pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
     info!("MANDATORY copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
 
@@ -211,13 +322,27 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
         execute_shell_command(&source_exists_cmd).await
             .map_err(|_| anyhow!("CRITICAL: Source {} directory missing at: {}", dir, source_path))?;
 
+        info!("Starting {} directory copy with progress monitoring...", dir);
+
+        // Start progress monitoring in background
+        let source_clone = source_path.clone();
+        let target_clone = target_path.clone();
+        let dir_name = dir.to_string();
+        let monitor_handle = tokio::spawn(async move {
+            monitor_copy_progress(&source_clone, &target_clone, &format!("{} copy", dir_name)).await;
+        });
+
+        // Use rsync instead of cp for better progress and reliability
         let copy_cmd = format!(
-            "cp -r '{}' '{}'",
+            "rsync -av '{}/' '{}'",
             source_path, target_path
         );
 
         execute_shell_command(&copy_cmd).await
             .map_err(|e| anyhow!("CRITICAL: Failed to copy MANDATORY {} directory from {} to {}: {}", dir, source_path, target_path, e))?;
+
+        // Stop monitoring
+        monitor_handle.abort();
 
         // Verify the copy was successful
         let target_exists_cmd = format!("test -d '{}'", target_path);
