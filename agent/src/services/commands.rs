@@ -251,7 +251,7 @@ async fn monitor_copy_progress(source_path: &str, target_path: &str, operation_n
 
 // Copy function that REQUIRES both data and wasm directories for restore with progress monitoring
 pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
-    info!("MANDATORY copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
+    info!("Copying of both data and wasm directories from {} to {}", snapshot_dir, target_dir);
 
     // Copy data directory with rsync and progress monitoring
     let data_source = format!("{}/data", snapshot_dir);
@@ -277,7 +277,7 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     if !data_result.contains("data_copied") {
         return Err(anyhow!("CRITICAL: Failed to copy MANDATORY data directory from snapshot {}", data_source));
     }
-    info!("✓ Data directory copied successfully");
+    info!("Data directory copied successfully");
 
     // Copy wasm directory with rsync and progress monitoring
     let wasm_source = format!("{}/wasm", snapshot_dir);
@@ -303,9 +303,9 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     if !wasm_result.contains("wasm_copied") {
         return Err(anyhow!("CRITICAL: Failed to copy MANDATORY wasm directory from snapshot {}", wasm_source));
     }
-    info!("✓ Wasm directory copied successfully");
+    info!("Wasm directory copied successfully");
 
-    info!("✓ MANDATORY copy completed - both data and wasm directories copied successfully");
+    info!("MANDATORY copy completed - both data and wasm directories copied successfully");
     Ok(())
 }
 
@@ -349,10 +349,10 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
         execute_shell_command(&target_exists_cmd).await
             .map_err(|_| anyhow!("CRITICAL: {} directory not found after copy at: {}", dir, target_path))?;
 
-        info!("✓ Successfully copied MANDATORY {} directory to snapshot", dir);
+        info!("Successfully copied MANDATORY {} directory to snapshot", dir);
     }
 
-    info!("✓ MANDATORY directory copying to snapshot completed successfully");
+    info!("MANDATORY directory copying to snapshot completed successfully");
     Ok(())
 }
 
