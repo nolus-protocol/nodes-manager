@@ -275,7 +275,7 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     data_monitor.abort(); // Stop monitoring
 
     if !data_result.contains("data_copied") {
-        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY data directory from snapshot {}", data_source));
+        return Err(anyhow!("CRITICAL: Failed to copy data directory from snapshot {}", data_source));
     }
     info!("Data directory copied successfully");
 
@@ -301,17 +301,17 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     wasm_monitor.abort(); // Stop monitoring
 
     if !wasm_result.contains("wasm_copied") {
-        return Err(anyhow!("CRITICAL: Failed to copy MANDATORY wasm directory from snapshot {}", wasm_source));
+        return Err(anyhow!("CRITICAL: Failed to copy wasm directory from snapshot {}", wasm_source));
     }
     info!("Wasm directory copied successfully");
 
-    info!("MANDATORY copy completed - both data and wasm directories copied successfully");
+    info!("Copy completed - both data and wasm directories copied successfully");
     Ok(())
 }
 
-// NEW: MANDATORY copy function for snapshot creation that REQUIRES both data and wasm directories with progress monitoring
+// NEW: copy function for snapshot creation that REQUIRES both data and wasm directories with progress monitoring
 pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
-    info!("MANDATORY copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
+    info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
 
     for dir in directories {
         let source_path = format!("{}/{}", source_dir, dir);
@@ -339,7 +339,7 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
         );
 
         execute_shell_command(&copy_cmd).await
-            .map_err(|e| anyhow!("CRITICAL: Failed to copy MANDATORY {} directory from {} to {}: {}", dir, source_path, target_path, e))?;
+            .map_err(|e| anyhow!("CRITICAL: Failed to copy {} directory from {} to {}: {}", dir, source_path, target_path, e))?;
 
         // Stop monitoring
         monitor_handle.abort();
@@ -349,10 +349,10 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
         execute_shell_command(&target_exists_cmd).await
             .map_err(|_| anyhow!("CRITICAL: {} directory not found after copy at: {}", dir, target_path))?;
 
-        info!("Successfully copied MANDATORY {} directory to snapshot", dir);
+        info!("Successfully copied {} directory to snapshot", dir);
     }
 
-    info!("MANDATORY directory copying to snapshot completed successfully");
+    info!("Directory copying to snapshot completed successfully");
     Ok(())
 }
 
