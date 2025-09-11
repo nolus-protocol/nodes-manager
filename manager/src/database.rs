@@ -77,6 +77,23 @@ impl Database {
             }
         }
 
+        // STARTUP CLEANUP: Clean up stuck maintenance operations on every restart
+        info!("Performing startup cleanup of stuck maintenance operations...");
+        match database.cleanup_stuck_maintenance_operations().await {
+            Ok(cleaned_count) => {
+                if cleaned_count > 0 {
+                    warn!("🧹 Cleaned up {} stuck maintenance operations on startup", cleaned_count);
+                } else {
+                    info!("✅ No stuck maintenance operations found");
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to cleanup stuck maintenance operations: {}", e);
+                // Don't fail startup for cleanup issues, just log
+                warn!("Continuing with startup despite cleanup failure");
+            }
+        }
+
         // Test database with a simple query
         info!("Testing database connectivity...");
         match database.test_database().await {
@@ -160,6 +177,77 @@ impl Database {
 
         info!("All database tables and indexes created successfully");
         Ok(())
+    }
+
+    // NEW: Startup cleanup method to fix stuck maintenance operations
+    async fn cleanup_stuck_maintenance_operations(&self) -> Result<u32> {
+        info!("Checking for stuck maintenance operations...");
+
+        // Find stuck operations (running/started for more than 1 hour)
+        let rows = sqlx::query(
+            r#"
+            SELECT id, operation_type, target_name, status, started_at
+            FROM maintenance_operations
+            WHERE status IN ('running', 'started')
+            AND started_at < datetime('now', '-1 hour')
+            ORDER BY started_at ASC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            debug!("No stuck maintenance operations found");
+            return Ok(0);
+        }
+
+        info!("Found {} stuck maintenance operations that need cleanup", rows.len());
+
+        let mut cleaned_count = 0u32;
+        let cleanup_time = Utc::now();
+
+        for row in &rows {
+            let operation_id: String = row.try_get("id")?;
+            let operation_type: String = row.try_get("operation_type")?;
+            let target_name: String = row.try_get("target_name")?;
+            let status: String = row.try_get("status")?;
+            let started_at: String = row.try_get("started_at")?;
+
+            warn!("Cleaning up stuck operation: {} ({}) on {} - started at {} (status: {})",
+                  operation_id, operation_type, target_name, started_at, status);
+
+            // Mark as failed with cleanup message
+            let result = sqlx::query(
+                r#"
+                UPDATE maintenance_operations
+                SET status = 'failed',
+                    completed_at = ?,
+                    error_message = 'Marked as failed during startup cleanup - operation was stuck in running/started state'
+                WHERE id = ?
+                "#
+            )
+            .bind(cleanup_time)
+            .bind(&operation_id)
+            .execute(&self.pool)
+            .await;
+
+            match result {
+                Ok(_) => {
+                    cleaned_count += 1;
+                    info!("Cleaned up stuck operation: {}", operation_id);
+                }
+                Err(e) => {
+                    error!("Failed to cleanup operation {}: {}", operation_id, e);
+                }
+            }
+        }
+
+        if cleaned_count > 0 {
+            warn!("Successfully cleaned up {} stuck maintenance operations", cleaned_count);
+            info!("These operations were stuck in 'running' or 'started' state and have been marked as 'failed'");
+        }
+
+        Ok(cleaned_count)
     }
 
     async fn test_database(&self) -> Result<()> {
@@ -316,5 +404,46 @@ impl Database {
                 Err(e.into())
             }
         }
+    }
+
+    pub async fn get_maintenance_operations(&self, limit: Option<i32>) -> Result<Vec<MaintenanceOperation>> {
+        debug!("Querying maintenance operations with limit: {:?}", limit);
+
+        let limit_val = limit.unwrap_or(100);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, operation_type, target_name, status, started_at,
+                   completed_at, error_message, details
+            FROM maintenance_operations
+            ORDER BY started_at DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit_val)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut operations = Vec::new();
+        for row in rows {
+            let operation = MaintenanceOperation {
+                id: row.try_get("id")?,
+                operation_type: row.try_get("operation_type")?,
+                target_name: row.try_get("target_name")?,
+                status: row.try_get("status")?,
+                started_at: row.try_get("started_at")?,
+                completed_at: row.try_get("completed_at")?,
+                error_message: row.try_get("error_message")?,
+                details: row.try_get("details")?,
+            };
+            operations.push(operation);
+        }
+
+        debug!("✅ Retrieved {} maintenance operations", operations.len());
+        Ok(operations)
+    }
+
+    pub async fn get_connection_pool(&self) -> &SqlitePool {
+        &self.pool
     }
 }
