@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{info, warn, error, debug};
 use chrono::{DateTime, Utc};
 use tokio::time::{sleep, Duration as TokioDuration};
 
@@ -111,8 +111,10 @@ impl HttpAgentManager {
         Ok(result)
     }
 
-    /// Poll agent for job completion - simple unlimited polling every 60s
+    /// Poll agent for job completion - bulletproof with extensive debugging
     async fn poll_for_completion(&self, server_name: &str, job_id: &str) -> Result<Value> {
+        info!("🔥 POLLING DEBUG: Starting poll_for_completion for job {} on {}", job_id, server_name);
+
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
 
@@ -121,29 +123,38 @@ impl HttpAgentManager {
 
         const POLL_INTERVAL_SECONDS: u64 = 60;
         let mut poll_count = 0;
+        let start_time = std::time::Instant::now();
 
-        info!("Starting unlimited polling for job {} on {} every {}s", job_id, server_name, POLL_INTERVAL_SECONDS);
+        info!("🔥 POLLING DEBUG: Starting unlimited polling for job {} on {} every {}s", job_id, server_name, POLL_INTERVAL_SECONDS);
 
         loop {
             poll_count += 1;
+            let elapsed_minutes = start_time.elapsed().as_secs() / 60;
 
-            info!("Poll #{} for job {} on {}", poll_count, job_id, server_name);
+            info!("🔥 POLLING DEBUG: Poll #{} for job {} on {} ({}m elapsed)", poll_count, job_id, server_name, elapsed_minutes);
 
-            let poll_response = self.client.get(&status_url)
+            // CRITICAL: Add task cancellation detection
+            tokio::task::yield_now().await; // Yield to detect cancellation
+            debug!("🔥 POLLING DEBUG: After yield_now() - task still alive");
+
+            let poll_result = self.client.get(&status_url)
                 .header("Authorization", format!("Bearer {}", server_config.api_key))
                 .send()
                 .await;
 
-            match poll_response {
+            debug!("🔥 POLLING DEBUG: HTTP request completed for poll #{}", poll_count);
+
+            match poll_result {
                 Ok(response) if response.status().is_success() => {
+                    debug!("🔥 POLLING DEBUG: Got successful HTTP response for poll #{}", poll_count);
                     match response.json::<Value>().await {
                         Ok(status_result) => {
-                            info!("Poll #{} response: {}", poll_count, status_result);
+                            info!("🔥 POLLING DEBUG: Poll #{} response: {}", poll_count, status_result);
 
                             if let Some(job_status) = status_result.get("job_status").and_then(|v| v.as_str()) {
                                 match job_status {
                                     "Completed" => {
-                                        info!("Job {} completed after {} polls", job_id, poll_count);
+                                        info!("🔥 POLLING DEBUG: Job {} completed after {} polls", job_id, poll_count);
                                         let output = status_result.get("output")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("{}");
@@ -162,34 +173,48 @@ impl HttpAgentManager {
                                         let error_msg = status_result.get("error")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("Job failed with unknown error");
+                                        error!("🔥 POLLING DEBUG: Job {} failed: {}", job_id, error_msg);
                                         return Err(anyhow::anyhow!("Job {} failed: {}", job_id, error_msg));
                                     }
                                     "Running" => {
-                                        info!("Poll #{}: Job {} still running, sleeping {}s until next poll", poll_count, job_id, POLL_INTERVAL_SECONDS);
+                                        info!("🔥 POLLING DEBUG: Poll #{}: Job {} still running, sleeping {}s until next poll", poll_count, job_id, POLL_INTERVAL_SECONDS);
                                     }
                                     _ => {
-                                        warn!("Poll #{}: Unexpected status '{}', treating as running", poll_count, job_status);
+                                        warn!("🔥 POLLING DEBUG: Poll #{}: Unexpected status '{}', treating as running", poll_count, job_status);
                                     }
                                 }
                             } else {
-                                warn!("Poll #{}: No job_status in response: {}", poll_count, status_result);
+                                warn!("🔥 POLLING DEBUG: Poll #{}: No job_status in response: {}", poll_count, status_result);
                             }
                         }
                         Err(e) => {
-                            warn!("Poll #{}: JSON parse error: {}", poll_count, e);
+                            warn!("🔥 POLLING DEBUG: Poll #{}: JSON parse error: {}", poll_count, e);
                         }
                     }
                 }
                 Ok(response) => {
-                    warn!("Poll #{}: HTTP error {}", poll_count, response.status());
+                    warn!("🔥 POLLING DEBUG: Poll #{}: HTTP error {}", poll_count, response.status());
                 }
                 Err(e) => {
-                    warn!("Poll #{}: Network error: {}", poll_count, e);
+                    warn!("🔥 POLLING DEBUG: Poll #{}: Network error: {}", poll_count, e);
                 }
             }
 
-            // Always sleep 60s before next poll
-            sleep(TokioDuration::from_secs(POLL_INTERVAL_SECONDS)).await;
+            // CRITICAL: Add debug before sleep
+            info!("🔥 POLLING DEBUG: Poll #{} completed, about to sleep for {}s", poll_count, POLL_INTERVAL_SECONDS);
+
+            // Use tokio::select! to detect cancellation during sleep
+            tokio::select! {
+                _ = sleep(TokioDuration::from_secs(POLL_INTERVAL_SECONDS)) => {
+                    info!("🔥 POLLING DEBUG: Sleep completed normally after poll #{}", poll_count);
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    error!("🔥 POLLING DEBUG: Received cancellation signal during sleep after poll #{}", poll_count);
+                    return Err(anyhow::anyhow!("Polling cancelled by signal"));
+                }
+            }
+
+            info!("🔥 POLLING DEBUG: About to start poll #{} (loop continuing)", poll_count + 1);
         }
     }
 
@@ -258,8 +283,11 @@ impl HttpAgentManager {
     // === High-Level Operations with Proper Maintenance Coordination ===
 
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
+        info!("🔥 OPERATION DEBUG: Starting restart_node for {}", node_name);
+
         // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
+        info!("🔥 OPERATION DEBUG: Operation tracker started for {}", node_name);
 
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| {
@@ -279,23 +307,32 @@ impl HttpAgentManager {
             15,
             &node_config.server_host
         ).await {
-            Ok(()) => true,
+            Ok(()) => {
+                info!("🔥 OPERATION DEBUG: Maintenance tracker started for {}", node_name);
+                true
+            }
             Err(e) => {
+                error!("🔥 OPERATION DEBUG: Failed to start maintenance for {}: {}", node_name, e);
                 // Failed to start maintenance - clean up operation tracker
                 self.operation_tracker.finish_operation(node_name).await;
                 return Err(e);
             }
         };
 
+        info!("🔥 OPERATION DEBUG: About to call restart_node_impl for {}", node_name);
         let result = self.restart_node_impl(node_name).await;
+        info!("🔥 OPERATION DEBUG: restart_node_impl completed for {}: {:?}", node_name, result.is_ok());
 
         // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
+        info!("🔥 OPERATION DEBUG: Operation tracker finished for {}", node_name);
 
         // Only clean up maintenance if we started it
         if maintenance_started {
             if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                info!("Failed to end maintenance for {}: {}", node_name, e);
+                error!("🔥 OPERATION DEBUG: Failed to end maintenance for {}: {}", node_name, e);
+            } else {
+                info!("🔥 OPERATION DEBUG: Maintenance tracker ended for {}", node_name);
             }
         }
 
@@ -325,8 +362,11 @@ impl HttpAgentManager {
     }
 
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
+        info!("🔥 OPERATION DEBUG: Starting execute_node_pruning for {}", node_name);
+
         // Check operation tracker first, before starting maintenance
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
+        info!("🔥 OPERATION DEBUG: Operation tracker started for pruning {}", node_name);
 
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| {
@@ -346,23 +386,32 @@ impl HttpAgentManager {
             300,
             &node_config.server_host
         ).await {
-            Ok(()) => true,
+            Ok(()) => {
+                info!("🔥 OPERATION DEBUG: Maintenance tracker started for pruning {} (300m timeout)", node_name);
+                true
+            }
             Err(e) => {
+                error!("🔥 OPERATION DEBUG: Failed to start maintenance for pruning {}: {}", node_name, e);
                 // Failed to start maintenance - clean up operation tracker
                 self.operation_tracker.finish_operation(node_name).await;
                 return Err(e);
             }
         };
 
+        info!("🔥 OPERATION DEBUG: About to call execute_node_pruning_impl for {}", node_name);
         let result = self.execute_node_pruning_impl(node_name).await;
+        info!("🔥 OPERATION DEBUG: execute_node_pruning_impl completed for {}: {:?}", node_name, result.is_ok());
 
         // Always clean up operation tracker
         self.operation_tracker.finish_operation(node_name).await;
+        info!("🔥 OPERATION DEBUG: Operation tracker finished for pruning {}", node_name);
 
         // Only clean up maintenance if we started it
         if maintenance_started {
             if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                info!("Failed to end maintenance for {}: {}", node_name, e);
+                error!("🔥 OPERATION DEBUG: Failed to end maintenance for pruning {}: {}", node_name, e);
+            } else {
+                info!("🔥 OPERATION DEBUG: Maintenance tracker ended for pruning {}", node_name);
             }
         }
 
@@ -370,6 +419,8 @@ impl HttpAgentManager {
     }
 
     async fn execute_node_pruning_impl(&self, node_name: &str) -> Result<()> {
+        info!("🔥 OPERATION DEBUG: Inside execute_node_pruning_impl for {}", node_name);
+
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
@@ -386,7 +437,7 @@ impl HttpAgentManager {
         let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
         let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
 
-        info!("Starting full pruning sequence for node {}", node_name);
+        info!("🔥 OPERATION DEBUG: Starting full pruning sequence for node {} (about to call execute_operation)", node_name);
 
         let payload = json!({
             "deploy_path": deploy_path,
@@ -396,10 +447,19 @@ impl HttpAgentManager {
             "log_path": node_config.log_path
         });
 
-        self.execute_operation(&node_config.server_host, "/pruning/execute", payload).await?;
+        let result = self.execute_operation(&node_config.server_host, "/pruning/execute", payload).await;
+        info!("🔥 OPERATION DEBUG: execute_operation completed for pruning {}: {:?}", node_name, result.is_ok());
 
-        info!("Full pruning sequence completed for node {}", node_name);
-        Ok(())
+        match result {
+            Ok(_) => {
+                info!("🔥 OPERATION DEBUG: Full pruning sequence completed successfully for node {}", node_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!("🔥 OPERATION DEBUG: Full pruning sequence failed for node {}: {}", node_name, e);
+                Err(e)
+            }
+        }
     }
 
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
