@@ -106,7 +106,7 @@ impl HttpAgentManager {
         Ok(result)
     }
 
-    /// Poll agent for job completion
+    /// Poll agent for job completion with enhanced error handling
     async fn poll_for_completion(&self, server_name: &str, job_id: &str) -> Result<Value> {
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
@@ -119,8 +119,12 @@ impl HttpAgentManager {
         let mut consecutive_failures = 0;
         const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
+        info!("Starting polling for job {} on {} at intervals of {}s", job_id, server_name, poll_interval);
+
         loop {
             sleep(Duration::from_secs(poll_interval)).await;
+
+            info!("Polling job status: {} on {}", job_id, server_name);
 
             let poll_response = self.client.get(&status_url)
                 .header("Authorization", format!("Bearer {}", server_config.api_key))
@@ -133,7 +137,29 @@ impl HttpAgentManager {
 
                     match response.json::<Value>().await {
                         Ok(status_result) => {
+                            info!("Poll response for job {}: {}", job_id, status_result);
+
+                            // Check if response indicates success
+                            let is_success = status_result.get("success")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            if !is_success {
+                                let error_msg = status_result.get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Unknown error from agent");
+                                warn!("Agent returned error for job {} on {}: {}", job_id, server_name, error_msg);
+                                consecutive_failures += 1;
+
+                                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                                    return Err(anyhow::anyhow!("Job {} failed on agent {}: {}", job_id, server_name, error_msg));
+                                }
+                                continue;
+                            }
+
                             if let Some(job_status) = status_result.get("job_status").and_then(|v| v.as_str()) {
+                                info!("Job {} status on {}: {}", job_id, server_name, job_status);
+
                                 match job_status {
                                     "Completed" => {
                                         info!("Job {} completed successfully on {}", job_id, server_name);
@@ -155,35 +181,52 @@ impl HttpAgentManager {
                                     "Failed" => {
                                         let error_msg = status_result.get("error")
                                             .and_then(|v| v.as_str())
-                                            .unwrap_or("Unknown error");
+                                            .unwrap_or("Job failed with unknown error");
                                         return Err(anyhow::anyhow!("Job {} failed on {}: {}", job_id, server_name, error_msg));
                                     }
                                     "Running" => {
-                                        info!("Job {} still running on {}", job_id, server_name);
+                                        info!("Job {} still running on {}, next poll in {}s", job_id, server_name, poll_interval + 30);
                                         // Continue polling with exponential backoff
                                         poll_interval = std::cmp::min(poll_interval + 30, max_poll_interval);
                                     }
                                     _ => {
-                                        warn!("Unknown job status '{}' for job {} on {}", job_status, job_id, server_name);
+                                        warn!("Unknown job status '{}' for job {} on {}, treating as running", job_status, job_id, server_name);
+                                        poll_interval = std::cmp::min(poll_interval + 30, max_poll_interval);
                                     }
                                 }
                             } else {
-                                warn!("No job status in response for job {} on {}", job_id, server_name);
+                                warn!("No job_status field in response for job {} on {}: {}", job_id, server_name, status_result);
+                                consecutive_failures += 1;
+
+                                // Check if job was not found (different error case)
+                                if status_result.get("error").and_then(|v| v.as_str()).unwrap_or("").contains("not found") {
+                                    return Err(anyhow::anyhow!("Job {} not found on agent {}", job_id, server_name));
+                                }
                             }
                         }
                         Err(e) => {
                             consecutive_failures += 1;
-                            warn!("Failed to parse status response for job {} on {}: {}", job_id, server_name, e);
+                            warn!("Failed to parse status response for job {} on {}: {} (attempt {}/{})",
+                                  job_id, server_name, e, consecutive_failures, MAX_CONSECUTIVE_FAILURES);
                         }
                     }
                 }
                 Ok(response) => {
                     consecutive_failures += 1;
-                    warn!("Status check failed for job {} on {} with status: {}", job_id, server_name, response.status());
+                    warn!("Status check failed for job {} on {} with status: {} (attempt {}/{})",
+                          job_id, server_name, response.status(), consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+
+                    // Try to read error response
+                    if let Ok(error_text) = response.text().await {
+                        if !error_text.is_empty() {
+                            warn!("Error response body: {}", error_text);
+                        }
+                    }
                 }
                 Err(e) => {
                     consecutive_failures += 1;
-                    warn!("Network error checking status for job {} on {}: {}", job_id, server_name, e);
+                    warn!("Network error checking status for job {} on {}: {} (attempt {}/{})",
+                          job_id, server_name, e, consecutive_failures, MAX_CONSECUTIVE_FAILURES);
                 }
             }
 
@@ -193,6 +236,9 @@ impl HttpAgentManager {
                     MAX_CONSECUTIVE_FAILURES, job_id, server_name
                 ));
             }
+
+            info!("Continuing poll loop for job {} (failures: {}, next poll in {}s)",
+                  job_id, consecutive_failures, poll_interval);
         }
     }
 
