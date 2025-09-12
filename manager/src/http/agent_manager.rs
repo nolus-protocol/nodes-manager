@@ -3,8 +3,9 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 use chrono::{DateTime, Utc};
+use tokio::time::{sleep, Duration};
 
 use crate::config::{Config, HermesConfig};
 use crate::operation_tracker::SimpleOperationTracker;
@@ -57,7 +58,12 @@ impl HttpAgentManager {
         }
     }
 
-    /// Execute operation with no timeout
+    /// Check if endpoint is a long-running operation
+    fn is_long_running_operation(endpoint: &str) -> bool {
+        matches!(endpoint, "/pruning/execute" | "/snapshot/create" | "/snapshot/restore")
+    }
+
+    /// Execute operation with async polling for long operations
     async fn execute_operation(&self, server_name: &str, endpoint: &str, payload: Value) -> Result<Value> {
         let server_config = self.config.servers.get(server_name)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
@@ -87,7 +93,107 @@ impl HttpAgentManager {
             return Err(anyhow::anyhow!("Operation failed on {}: {}", server_name, error_msg));
         }
 
+        // Handle async operations with job polling
+        if Self::is_long_running_operation(endpoint) {
+            if let Some(job_id) = result.get("job_id").and_then(|v| v.as_str()) {
+                info!("Long operation started with job_id: {} on {}", job_id, server_name);
+                return self.poll_for_completion(server_name, job_id).await;
+            } else {
+                warn!("Long operation endpoint {} did not return job_id, treating as synchronous", endpoint);
+            }
+        }
+
         Ok(result)
+    }
+
+    /// Poll agent for job completion
+    async fn poll_for_completion(&self, server_name: &str, job_id: &str) -> Result<Value> {
+        let server_config = self.config.servers.get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_name))?;
+
+        let status_url = format!("http://{}:{}/operation/status/{}",
+                               server_config.host, server_config.agent_port, job_id);
+
+        let mut poll_interval = 30; // Start with 30 seconds
+        let max_poll_interval = 300; // Max 5 minutes between polls
+        let mut consecutive_failures = 0;
+        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+        loop {
+            sleep(Duration::from_secs(poll_interval)).await;
+
+            let poll_response = self.client.get(&status_url)
+                .header("Authorization", format!("Bearer {}", server_config.api_key))
+                .send()
+                .await;
+
+            match poll_response {
+                Ok(response) if response.status().is_success() => {
+                    consecutive_failures = 0;
+
+                    match response.json::<Value>().await {
+                        Ok(status_result) => {
+                            if let Some(job_status) = status_result.get("job_status").and_then(|v| v.as_str()) {
+                                match job_status {
+                                    "Completed" => {
+                                        info!("Job {} completed successfully on {}", job_id, server_name);
+                                        let output = status_result.get("output")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("{}");
+
+                                        // Parse the actual operation result
+                                        let operation_result: Value = serde_json::from_str(output)
+                                            .unwrap_or_else(|_| json!({"output": output}));
+
+                                        return Ok(json!({
+                                            "success": true,
+                                            "job_id": job_id,
+                                            "status": "completed",
+                                            "result": operation_result
+                                        }));
+                                    }
+                                    "Failed" => {
+                                        let error_msg = status_result.get("error")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Unknown error");
+                                        return Err(anyhow::anyhow!("Job {} failed on {}: {}", job_id, server_name, error_msg));
+                                    }
+                                    "Running" => {
+                                        info!("Job {} still running on {}", job_id, server_name);
+                                        // Continue polling with exponential backoff
+                                        poll_interval = std::cmp::min(poll_interval + 30, max_poll_interval);
+                                    }
+                                    _ => {
+                                        warn!("Unknown job status '{}' for job {} on {}", job_status, job_id, server_name);
+                                    }
+                                }
+                            } else {
+                                warn!("No job status in response for job {} on {}", job_id, server_name);
+                            }
+                        }
+                        Err(e) => {
+                            consecutive_failures += 1;
+                            warn!("Failed to parse status response for job {} on {}: {}", job_id, server_name, e);
+                        }
+                    }
+                }
+                Ok(response) => {
+                    consecutive_failures += 1;
+                    warn!("Status check failed for job {} on {} with status: {}", job_id, server_name, response.status());
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    warn!("Network error checking status for job {} on {}: {}", job_id, server_name, e);
+                }
+            }
+
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                return Err(anyhow::anyhow!(
+                    "Too many consecutive failures ({}) polling job {} on {}",
+                    MAX_CONSECUTIVE_FAILURES, job_id, server_name
+                ));
+            }
+        }
     }
 
     // === Basic Service Operations ===
@@ -372,14 +478,17 @@ impl HttpAgentManager {
 
         let result = self.execute_operation(&node_config.server_host, "/snapshot/create", payload).await?;
 
+        // Parse async operation result
+        let operation_result = result.get("result").unwrap_or(&result);
+
         let snapshot_info = crate::snapshot::SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
-            filename: result["filename"].as_str().unwrap_or_default().to_string(),
+            filename: operation_result["filename"].as_str().unwrap_or_default().to_string(),
             created_at: Utc::now(),
-            file_size_bytes: result["size_bytes"].as_u64(),
-            snapshot_path: result["path"].as_str().unwrap_or_default().to_string(),
-            compression_type: result["compression"].as_str().unwrap_or("directory").to_string(),
+            file_size_bytes: operation_result["size_bytes"].as_u64(),
+            snapshot_path: operation_result["path"].as_str().unwrap_or_default().to_string(),
+            compression_type: operation_result["compression"].as_str().unwrap_or("directory").to_string(),
         };
 
         Ok(snapshot_info)

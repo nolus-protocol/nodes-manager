@@ -179,7 +179,7 @@ impl Database {
         Ok(())
     }
 
-    // NEW: Startup cleanup method to fix stuck maintenance operations
+    // Startup cleanup method to fix stuck maintenance operations
     async fn cleanup_stuck_maintenance_operations(&self) -> Result<u32> {
         info!("Checking for stuck maintenance operations...");
 
@@ -441,9 +441,5 @@ impl Database {
 
         debug!("✅ Retrieved {} maintenance operations", operations.len());
         Ok(operations)
-    }
-
-    pub async fn get_connection_pool(&self) -> &SqlitePool {
-        &self.pool
     }
 }

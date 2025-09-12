@@ -95,12 +95,13 @@ struct AutoRestoreCooldown {
     restore_count: u32,
 }
 
-// Block height tracking for progression detection
+// Block height tracking for progression detection - UPDATED with baseline approach
 #[derive(Debug, Clone)]
 struct BlockHeightState {
     last_height: i64,
     last_updated: DateTime<Utc>,
-    consecutive_no_progress: u32,
+    unhealthy_baseline_height: Option<i64>,
+    unhealthy_since: Option<DateTime<Utc>>,
 }
 
 pub struct HealthMonitor {
@@ -691,40 +692,71 @@ impl HealthMonitor {
         Ok(status)
     }
 
+    // UPDATED: Baseline comparison approach for block progression
     async fn check_block_progression(&self, node_name: &str, current_height: i64) -> bool {
         let mut block_states = self.block_height_states.lock().await;
         let now = Utc::now();
 
         match block_states.get_mut(node_name) {
             None => {
+                // First time checking this node - initialize and return healthy
                 block_states.insert(node_name.to_string(), BlockHeightState {
                     last_height: current_height,
                     last_updated: now,
-                    consecutive_no_progress: 0,
+                    unhealthy_baseline_height: None,
+                    unhealthy_since: None,
                 });
+                debug!("Initializing block height tracking for {} at height {}", node_name, current_height);
                 true
             }
             Some(state) => {
-                let minutes_since_update = (now - state.last_updated).num_minutes();
-
-                if minutes_since_update < 2 {
-                    return true;
-                }
-
-                if current_height > state.last_height {
-                    state.last_height = current_height;
-                    state.last_updated = now;
-                    state.consecutive_no_progress = 0;
-                    true
-                } else if current_height == state.last_height {
-                    state.consecutive_no_progress += 1;
-                    state.last_updated = now;
-                    state.consecutive_no_progress < 3
+                // If we have an unhealthy baseline, only recover if we exceed it
+                if let Some(baseline_height) = state.unhealthy_baseline_height {
+                    if current_height > baseline_height {
+                        // Recovered! Clear baseline and update state
+                        state.last_height = current_height;
+                        state.last_updated = now;
+                        state.unhealthy_baseline_height = None;
+                        state.unhealthy_since = None;
+                        info!("Node {} RECOVERED - progressed beyond baseline {} to {}",
+                              node_name, baseline_height, current_height);
+                        true
+                    } else {
+                        // Still at or below baseline - remain unhealthy
+                        state.last_height = current_height;
+                        state.last_updated = now;
+                        debug!("Node {} still unhealthy - height {} not above baseline {}",
+                               node_name, current_height, baseline_height);
+                        false
+                    }
                 } else {
-                    state.last_height = current_height;
-                    state.last_updated = now;
-                    state.consecutive_no_progress += 1;
-                    false
+                    // No baseline set yet - check if we should set one
+                    if current_height > state.last_height {
+                        // Height progressed - update and stay healthy
+                        state.last_height = current_height;
+                        state.last_updated = now;
+                        debug!("Node {} progressed from {} to {} - staying healthy",
+                               node_name, state.last_height, current_height);
+                        true
+                    } else {
+                        // Height not progressing - check how long
+                        let minutes_without_progress = (now - state.last_updated).num_minutes();
+
+                        if minutes_without_progress >= 5 {
+                            // Set baseline and become unhealthy
+                            state.unhealthy_baseline_height = Some(current_height);
+                            state.unhealthy_since = Some(now);
+                            warn!("Setting unhealthy baseline for {} at height {} (no progress for {}m)",
+                                  node_name, current_height, minutes_without_progress);
+                            false
+                        } else {
+                            // Still in grace period - update last seen height but stay healthy
+                            state.last_height = current_height;
+                            debug!("Node {} no progress for {}m (grace period), staying healthy",
+                                   node_name, minutes_without_progress);
+                            true
+                        }
+                    }
                 }
             }
         }

@@ -1,5 +1,6 @@
 // File: agent/src/types.rs
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 
 // === REQUEST STRUCTURES ===
 
@@ -25,7 +26,7 @@ pub struct LogDeleteAllRequest {
     pub log_path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PruningRequest {
     pub deploy_path: String,
     pub keep_blocks: u64,
@@ -34,7 +35,7 @@ pub struct PruningRequest {
     pub log_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
     pub network: String,
@@ -44,13 +45,42 @@ pub struct SnapshotRequest {
     pub log_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RestoreRequest {
     pub node_name: String,
     pub deploy_path: String,
     pub snapshot_dir: String, // FIXED: Changed from snapshot_file to snapshot_dir
     pub service_name: String,
     pub log_path: Option<String>,
+}
+
+// === JOB TRACKING STRUCTURES ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum JobStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobInfo {
+    pub job_id: String,
+    pub operation_type: String,
+    pub target_name: String,
+    pub status: JobStatus,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub result: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AsyncResponse {
+    pub success: bool,
+    pub job_id: String,
+    pub status: String,
+    pub message: String,
 }
 
 // === RESPONSE STRUCTURES ===
@@ -76,6 +106,11 @@ pub struct ApiResponse<T> {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compression: Option<String>,
+    // NEW: Job tracking fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_status: Option<String>,
 }
 
 impl<T> ApiResponse<T> {
@@ -91,6 +126,8 @@ impl<T> ApiResponse<T> {
             size_bytes: None,
             path: None,
             compression: None,
+            job_id: None,
+            job_status: None,
         }
     }
 }
@@ -108,6 +145,8 @@ impl ApiResponse<()> {
             size_bytes: None,
             path: None,
             compression: None,
+            job_id: None,
+            job_status: None,
         }
     }
 
@@ -123,6 +162,8 @@ impl ApiResponse<()> {
             size_bytes: None,
             path: None,
             compression: None,
+            job_id: None,
+            job_status: None,
         }
     }
 
@@ -138,6 +179,8 @@ impl ApiResponse<()> {
             size_bytes: None,
             path: None,
             compression: None,
+            job_id: None,
+            job_status: None,
         }
     }
 
@@ -153,6 +196,8 @@ impl ApiResponse<()> {
             size_bytes: None,
             path: None,
             compression: None,
+            job_id: None,
+            job_status: None,
         }
     }
 
@@ -168,6 +213,26 @@ impl ApiResponse<()> {
             size_bytes: Some(size_bytes),
             path: Some(path),
             compression: Some("directory".to_string()), // FIXED: Changed from gzip to directory
+            job_id: None,
+            job_status: None,
+        }
+    }
+
+    // NEW: Async job response
+    pub fn success_with_job(job_id: String, status: String) -> Self {
+        Self {
+            success: true,
+            data: None,
+            output: None,
+            error: None,
+            status: None,
+            uptime_seconds: None,
+            filename: None,
+            size_bytes: None,
+            path: None,
+            compression: None,
+            job_id: Some(job_id),
+            job_status: Some(status),
         }
     }
 }
