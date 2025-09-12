@@ -339,88 +339,162 @@ pub async fn get_all_etl_configs(
 
 // === OPERATION ENDPOINTS WITH OPERATION TRACKING ===
 
+// FIXED: Node restart - non-blocking for consistency
 pub async fn execute_manual_node_restart(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Manual node restart requested for: {}", node_name);
 
-    match state.agent_manager.restart_node(&node_name).await {
-        Ok(_) => {
-            info!("Node {} restarted successfully", node_name);
-            Ok(Json(ApiResponse::success(json!({
-                "message": format!("Node {} restart completed successfully", node_name)
-            }))))
-        }
-        Err(e) => {
-            error!("Failed to restart node {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
+    // Check if node is already busy
+    if state.agent_manager.is_target_busy(&node_name).await {
+        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
+            format!("Node {} is already busy with another operation", node_name)
+        ))));
     }
+
+    // Start the restart operation in background - DO NOT AWAIT
+    let agent_manager = state.agent_manager.clone();
+    let node_name_clone = node_name.clone();
+
+    tokio::spawn(async move {
+        match agent_manager.restart_node(&node_name_clone).await {
+            Ok(_) => {
+                info!("Node restart completed successfully for {}", node_name_clone);
+            }
+            Err(e) => {
+                error!("Node restart failed for {}: {}", node_name_clone, e);
+            }
+        }
+    });
+
+    // Return immediately
+    info!("Node {} restart started in background", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Node {} restart started successfully", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
+// FIXED: Hermes restart - non-blocking for consistency
 pub async fn execute_manual_hermes_restart(
     Path(hermes_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Manual hermes restart requested for: {}", hermes_name);
 
-    if let Some(hermes_config) = state.config.hermes.get(&hermes_name) {
-        match state.agent_manager.restart_hermes(hermes_config).await {
-            Ok(_) => {
-                info!("Hermes {} restarted successfully", hermes_name);
-                Ok(Json(ApiResponse::success(json!({
-                    "message": format!("Hermes {} restart completed successfully", hermes_name)
-                }))))
-            }
-            Err(e) => {
-                error!("Failed to restart hermes {}: {}", hermes_name, e);
-                Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-            }
+    if let Some(hermes_config) = state.config.hermes.get(&hermes_name).cloned() {
+        // Check if hermes is already busy (if you have tracking for hermes too)
+        if state.agent_manager.is_target_busy(&hermes_name).await {
+            return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
+                format!("Hermes {} is already busy with another operation", hermes_name)
+            ))));
         }
+
+        // Start the restart operation in background - DO NOT AWAIT
+        let agent_manager = state.agent_manager.clone();
+        let hermes_name_clone = hermes_name.clone();
+
+        tokio::spawn(async move {
+            match agent_manager.restart_hermes(&hermes_config).await {
+                Ok(_) => {
+                    info!("Hermes restart completed successfully for {}", hermes_name_clone);
+                }
+                Err(e) => {
+                    error!("Hermes restart failed for {}: {}", hermes_name_clone, e);
+                }
+            }
+        });
+
+        // Return immediately
+        info!("Hermes {} restart started in background", hermes_name);
+        Ok(Json(ApiResponse::success(json!({
+            "message": format!("Hermes {} restart started successfully", hermes_name),
+            "hermes_name": hermes_name,
+            "status": "started"
+        }))))
     } else {
         Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("Hermes {} not found", hermes_name)))))
     }
 }
 
+// FIXED: No longer blocks HTTP request - returns immediately
 pub async fn execute_manual_node_pruning(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Manual node pruning requested for: {}", node_name);
 
-    match state.agent_manager.execute_node_pruning(&node_name).await {
-        Ok(_) => {
-            info!("Node {} pruning completed successfully", node_name);
-            Ok(Json(ApiResponse::success(json!({
-                "message": format!("Node {} pruning completed successfully", node_name)
-            }))))
-        }
-        Err(e) => {
-            error!("Failed to start pruning for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
+    // Check if node is already busy
+    if state.agent_manager.is_target_busy(&node_name).await {
+        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
+            format!("Node {} is already busy with another operation", node_name)
+        ))));
     }
+
+    // Start the pruning operation in background - DO NOT AWAIT
+    let agent_manager = state.agent_manager.clone();
+    let node_name_clone = node_name.clone();
+
+    tokio::spawn(async move {
+        match agent_manager.execute_node_pruning(&node_name_clone).await {
+            Ok(_) => {
+                info!("Pruning completed successfully for {}", node_name_clone);
+            }
+            Err(e) => {
+                error!("Pruning failed for {}: {}", node_name_clone, e);
+            }
+        }
+    });
+
+    // Return immediately
+    info!("Node {} pruning started in background", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Node {} pruning started successfully", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
 // === SNAPSHOT MANAGEMENT ENDPOINTS ===
 
+// FIXED: Snapshot creation - non-blocking, returns immediately
 pub async fn create_snapshot(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<SnapshotInfo> {
+) -> ApiResult<Value> {
     info!("Snapshot creation requested for: {}", node_name);
 
-    match state.agent_manager.create_node_snapshot(&node_name).await {
-        Ok(snapshot_info) => {
-            info!("Snapshot created successfully for {}: {}", node_name, snapshot_info.filename);
-            Ok(Json(ApiResponse::success(snapshot_info)))
-        }
-        Err(e) => {
-            error!("Failed to create snapshot for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
+    // Check if node is already busy
+    if state.agent_manager.is_target_busy(&node_name).await {
+        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
+            format!("Node {} is already busy with another operation", node_name)
+        ))));
     }
+
+    // Start the snapshot creation in background - DO NOT AWAIT
+    let agent_manager = state.agent_manager.clone();
+    let node_name_clone = node_name.clone();
+
+    tokio::spawn(async move {
+        match agent_manager.create_node_snapshot(&node_name_clone).await {
+            Ok(snapshot_info) => {
+                info!("Snapshot creation completed successfully for {}: {}", node_name_clone, snapshot_info.filename);
+            }
+            Err(e) => {
+                error!("Snapshot creation failed for {}: {}", node_name_clone, e);
+            }
+        }
+    });
+
+    // Return immediately
+    info!("Node {} snapshot creation started in background", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Snapshot creation started for node {}", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
 pub async fn list_snapshots(
@@ -436,24 +510,37 @@ pub async fn list_snapshots(
     }
 }
 
+// FIXED: Delete snapshot - non-blocking for large files
 pub async fn delete_snapshot(
     Path((node_name, filename)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Snapshot deletion requested for {}: {}", node_name, filename);
 
-    match state.snapshot_service.delete_snapshot(&node_name, &filename).await {
-        Ok(_) => {
-            info!("Snapshot {} deleted successfully for {}", filename, node_name);
-            Ok(Json(ApiResponse::success(json!({
-                "message": format!("Snapshot {} deleted successfully", filename)
-            }))))
+    // Start the deletion in background - DO NOT AWAIT
+    let snapshot_service = state.snapshot_service.clone();
+    let node_name_clone = node_name.clone();
+    let filename_clone = filename.clone();
+
+    tokio::spawn(async move {
+        match snapshot_service.delete_snapshot(&node_name_clone, &filename_clone).await {
+            Ok(_) => {
+                info!("Snapshot {} deleted successfully for {}", filename_clone, node_name_clone);
+            }
+            Err(e) => {
+                error!("Failed to delete snapshot {} for {}: {}", filename_clone, node_name_clone, e);
+            }
         }
-        Err(e) => {
-            error!("Failed to delete snapshot {} for {}: {}", filename, node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
-    }
+    });
+
+    // Return immediately
+    info!("Snapshot {} deletion started in background for {}", filename, node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Snapshot {} deletion started", filename),
+        "node_name": node_name,
+        "filename": filename,
+        "status": "started"
+    }))))
 }
 
 pub async fn get_snapshot_stats(
@@ -469,6 +556,7 @@ pub async fn get_snapshot_stats(
     }
 }
 
+// FIXED: Cleanup old snapshots - non-blocking for many files
 pub async fn cleanup_old_snapshots(
     Path(node_name): Path<String>,
     Query(query): Query<RetentionQuery>,
@@ -476,40 +564,70 @@ pub async fn cleanup_old_snapshots(
 ) -> ApiResult<Value> {
     info!("Snapshot cleanup requested for {} (retention: {})", node_name, query.retention_count);
 
-    match state.snapshot_service.cleanup_old_snapshots(&node_name, query.retention_count).await {
-        Ok(deleted_count) => {
-            info!("Snapshot cleanup completed for {}", node_name);
-            Ok(Json(ApiResponse::success(json!({
-                "deleted_count": deleted_count,
-                "node_name": node_name,
-                "retention_count": query.retention_count
-            }))))
+    // Start the cleanup in background - DO NOT AWAIT
+    let snapshot_service = state.snapshot_service.clone();
+    let node_name_clone = node_name.clone();
+    let retention_count = query.retention_count;
+
+    tokio::spawn(async move {
+        match snapshot_service.cleanup_old_snapshots(&node_name_clone, retention_count).await {
+            Ok(deleted_count) => {
+                info!("Snapshot cleanup completed for {} - deleted {} snapshots", node_name_clone, deleted_count);
+            }
+            Err(e) => {
+                error!("Failed to cleanup old snapshots for {}: {}", node_name_clone, e);
+            }
         }
-        Err(e) => {
-            error!("Failed to cleanup old snapshots for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
-    }
+    });
+
+    // Return immediately
+    info!("Snapshot cleanup started in background for {}", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Snapshot cleanup started for node {}", node_name),
+        "node_name": node_name,
+        "retention_count": query.retention_count,
+        "status": "started"
+    }))))
 }
 
 // === NEW: MANUAL RESTORE ENDPOINTS ===
 
+// FIXED: Manual restore - non-blocking, returns immediately
 pub async fn execute_manual_restore_from_latest(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<SnapshotInfo> {
+) -> ApiResult<Value> {
     info!("Manual restore from latest snapshot requested for: {}", node_name);
 
-    match state.snapshot_service.restore_from_snapshot(&node_name).await {
-        Ok(snapshot_info) => {
-            info!("Manual restore completed successfully for {}: {}", node_name, snapshot_info.filename);
-            Ok(Json(ApiResponse::success(snapshot_info)))
-        }
-        Err(e) => {
-            error!("Failed to restore from snapshot for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
-        }
+    // Check if node is already busy
+    if state.agent_manager.is_target_busy(&node_name).await {
+        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
+            format!("Node {} is already busy with another operation", node_name)
+        ))));
     }
+
+    // Start the restore operation in background - DO NOT AWAIT
+    let snapshot_service = state.snapshot_service.clone();
+    let node_name_clone = node_name.clone();
+
+    tokio::spawn(async move {
+        match snapshot_service.restore_from_snapshot(&node_name_clone).await {
+            Ok(snapshot_info) => {
+                info!("Manual restore completed successfully for {}: {}", node_name_clone, snapshot_info.filename);
+            }
+            Err(e) => {
+                error!("Failed to restore from snapshot for {}: {}", node_name_clone, e);
+            }
+        }
+    });
+
+    // Return immediately
+    info!("Node {} restore started in background", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Restore from latest snapshot started for node {}", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
 pub async fn check_auto_restore_triggers(
