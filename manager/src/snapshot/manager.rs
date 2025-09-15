@@ -63,26 +63,8 @@ impl SnapshotManager {
 
         info!("Starting network snapshot creation for {} network via node {} (HTTP agent)", node_config.network, node_name);
 
-        let maintenance_started = match self.maintenance_tracker
-            .start_maintenance(node_name, "snapshot_creation", 1440, &node_config.server_host)
-            .await {
-                Ok(()) => {
-                    info!("Maintenance mode started for snapshot creation: {}", node_name);
-                    true
-                },
-                Err(e) => {
-                    warn!("Could not start maintenance for snapshot creation on {}: {}", node_name, e);
-                    return Err(e);
-                }
-            };
-
+        // HttpAgentManager handles all maintenance tracking - no duplicate tracking needed
         let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                error!("Failed to end maintenance mode for {}: {}", node_name, e);
-            }
-        }
 
         // Handle result and send alerts using AlertService
         match &snapshot_result {
