@@ -132,37 +132,37 @@ impl SnapshotManager {
         snapshot_result
     }
 
-    /// Restore from latest snapshot using HttpAgentManager
+    /// Restore from latest snapshot via HTTP agent
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.get_node_config(node_name)?;
 
         if !node_config.auto_restore_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Auto restore not enabled for node {}", node_name));
+            return Err(anyhow::anyhow!("Auto-restore not enabled for node {}", node_name));
         }
 
-        info!("Starting snapshot restore for node {} from {} network snapshots (preserving validator state)",
-              node_name, node_config.network);
+        info!("Starting network snapshot restore for node {} via HTTP agent", node_name);
 
+        // HttpAgentManager handles all maintenance tracking - no duplicate tracking needed
         let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
 
-        // Send notification based on result using AlertService
+        // Handle result and send alerts using AlertService
         match &restore_result {
             Ok(snapshot_info) => {
+                info!("Network snapshot restored successfully for {}: {}", node_name, snapshot_info.filename);
+
+                // Send completion alert
                 if let Err(e) = self.alert_service.send_immediate_alert(
                     AlertType::Snapshot,
                     AlertSeverity::Info,
                     node_name,
                     &node_config.server_host,
-                    format!("Node {} restored successfully from network snapshot: {}", node_name, snapshot_info.filename),
+                    format!("Network snapshot restored successfully for {}: {}", node_name, snapshot_info.filename),
                     Some(serde_json::json!({
                         "operation_type": "snapshot_restore",
                         "operation_status": "completed",
                         "snapshot_filename": snapshot_info.filename,
                         "network": snapshot_info.network,
-                        "compression_type": "directory",
-                        "connection_type": "http_agent",
-                        "snapshot_type": "network_based",
-                        "validator_state_preserved": true
+                        "connection_type": "http_agent"
                     })),
                 ).await {
                     warn!("Failed to send completion notification: {}", e);
@@ -214,8 +214,13 @@ impl SnapshotManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
+        // FIXED: Enhanced listing command with better error handling
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | xargs -r stat -c '%n %s %Y' | sort -k3 -nr",
+            "find '{}' -maxdepth 1 -type d -name '{}_*' 2>/dev/null | while read dir; do \
+             if [ -d \"$dir\" ]; then \
+               stat -c '%n %s %Y' \"$dir\" 2>/dev/null || echo \"$dir 0 0\"; \
+             fi; \
+             done | sort -k3 -nr",
             backup_path, node_config.network
         );
 
@@ -264,6 +269,7 @@ impl SnapshotManager {
             }
         }
 
+        debug!("Found {} snapshots for network {}", snapshots.len(), node_config.network);
         Ok(snapshots)
     }
 
@@ -282,7 +288,7 @@ impl SnapshotManager {
         self.cleanup_old_network_snapshots(&node_config.network, retention_count).await
     }
 
-    /// Clean up old snapshots for a specific NETWORK - ENHANCED with LZ4 cleanup
+    /// FIXED: Clean up old snapshots for a specific NETWORK with improved error handling
     async fn cleanup_old_network_snapshots(&self, network: &str, retention_count: u32) -> Result<u32> {
         let (node_name, node_config) = self.config.nodes.iter()
             .find(|(_, config)| config.network == network && config.snapshots_enabled.unwrap_or(false))
@@ -290,7 +296,11 @@ impl SnapshotManager {
 
         let mut snapshots = self.list_snapshots(node_name).await?;
 
+        // Sort by creation date (newest first)
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+        debug!("Cleanup analysis for {}: found {} snapshots, keeping {}",
+               network, snapshots.len(), retention_count);
 
         if snapshots.len() <= retention_count as usize {
             info!("No old network snapshots to clean up for {} (have {}, keeping {})",
@@ -305,19 +315,24 @@ impl SnapshotManager {
               snapshots_to_delete.len(), network, retention_count);
 
         for snapshot in snapshots_to_delete {
-            // ENHANCED: Delete both directory and LZ4 file
-            match self.delete_snapshot_with_lz4(&node_config.server_host, &snapshot.snapshot_path, &snapshot.filename).await {
+            info!("Attempting to delete old snapshot: {} (created: {})",
+                  snapshot.filename, snapshot.created_at);
+
+            // FIXED: Improved deletion with better error handling
+            match self.delete_snapshot_with_robust_cleanup(&node_config.server_host, &snapshot.snapshot_path, &snapshot.filename).await {
                 Ok(_) => {
-                    info!("Deleted old network snapshot (directory + LZ4) via HTTP agent: {}", snapshot.filename);
+                    info!("Successfully deleted old network snapshot: {}", snapshot.filename);
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to delete network snapshot {} via HTTP agent: {}", snapshot.filename, e);
+                    error!("Failed to delete network snapshot {} via HTTP agent: {}", snapshot.filename, e);
+                    // Continue with other deletions instead of failing completely
                 }
             }
         }
 
-        info!("Cleaned up {} old network snapshots for {} via HTTP agent", deleted_count, network);
+        info!("Cleanup completed: deleted {} out of {} old network snapshots for {}",
+              deleted_count, snapshots_to_delete.len(), network);
         Ok(deleted_count)
     }
 
@@ -334,43 +349,61 @@ impl SnapshotManager {
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
 
         let snapshot_path = format!("{}/{}", backup_path, filename);
-        self.delete_snapshot_with_lz4(&node_config.server_host, &snapshot_path, filename).await?;
+        self.delete_snapshot_with_robust_cleanup(&node_config.server_host, &snapshot_path, filename).await?;
 
         info!("Deleted network snapshot (directory + LZ4) {} via HTTP agent", filename);
         Ok(())
     }
 
-    /// ENHANCED: Delete both snapshot directory and corresponding LZ4 file
-    async fn delete_snapshot_with_lz4(&self, server_host: &str, dir_path: &str, filename: &str) -> Result<()> {
+    /// FIXED: Robust snapshot deletion with separated commands and better error handling
+    async fn delete_snapshot_with_robust_cleanup(&self, server_host: &str, dir_path: &str, filename: &str) -> Result<()> {
         // Extract the backup path from the full directory path
         let backup_path = dir_path.rsplit_once('/').map(|(path, _)| path).unwrap_or("");
         let lz4_path = format!("{}/{}.tar.lz4", backup_path, filename);
 
-        // Create a compound command to delete both directory and LZ4 file
-        let delete_cmd = format!(
-            "rm -rf '{}' && if [ -f '{}' ]; then rm -f '{}' && echo 'LZ4 deleted'; else echo 'LZ4 not found'; fi",
-            dir_path, lz4_path, lz4_path
-        );
+        debug!("Deleting snapshot directory: {}", dir_path);
+        debug!("Checking for LZ4 file: {}", lz4_path);
 
-        debug!("Executing cleanup command: {}", delete_cmd);
+        // Step 1: Delete the directory first
+        let delete_dir_cmd = format!("rm -rf '{}'", dir_path);
+        debug!("Executing directory deletion: {}", delete_dir_cmd);
 
-        let output = self.http_manager.execute_single_command(server_host, &delete_cmd).await?;
-
-        if output.contains("LZ4 deleted") {
-            info!("Successfully deleted both directory and LZ4 file for snapshot: {}", filename);
-        } else if output.contains("LZ4 not found") {
-            info!("Deleted directory for snapshot: {} (LZ4 file not found)", filename);
-        } else {
-            debug!("Cleanup output for {}: {}", filename, output.trim());
+        match self.http_manager.execute_single_command(server_host, &delete_dir_cmd).await {
+            Ok(_) => {
+                info!("Successfully deleted snapshot directory: {}", filename);
+            }
+            Err(e) => {
+                error!("Failed to delete snapshot directory {}: {}", filename, e);
+                return Err(anyhow::anyhow!("Failed to delete snapshot directory {}: {}", filename, e));
+            }
         }
 
-        Ok(())
-    }
+        // Step 2: Check if LZ4 file exists and delete it
+        let check_lz4_cmd = format!("test -f '{}'", lz4_path);
+        debug!("Checking if LZ4 file exists: {}", check_lz4_cmd);
 
-    /// Helper method to delete a snapshot directory via HTTP agent (LEGACY - kept for compatibility)
-    async fn delete_snapshot_directory(&self, server_host: &str, dir_path: &str) -> Result<()> {
-        let delete_cmd = format!("rm -rf '{}'", dir_path);
-        self.http_manager.execute_single_command(server_host, &delete_cmd).await?;
+        match self.http_manager.execute_single_command(server_host, &check_lz4_cmd).await {
+            Ok(_) => {
+                // LZ4 file exists, delete it
+                let delete_lz4_cmd = format!("rm -f '{}'", lz4_path);
+                debug!("Deleting LZ4 file: {}", delete_lz4_cmd);
+
+                match self.http_manager.execute_single_command(server_host, &delete_lz4_cmd).await {
+                    Ok(_) => {
+                        info!("Successfully deleted LZ4 file for snapshot: {}", filename);
+                    }
+                    Err(e) => {
+                        warn!("Failed to delete LZ4 file for {} (continuing anyway): {}", filename, e);
+                        // Don't fail the entire operation for LZ4 cleanup issues
+                    }
+                }
+            }
+            Err(_) => {
+                debug!("No LZ4 file found for snapshot: {}", filename);
+                // This is not an error - LZ4 files might not exist for all snapshots
+            }
+        }
+
         Ok(())
     }
 
