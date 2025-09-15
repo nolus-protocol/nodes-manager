@@ -1,9 +1,7 @@
 // File: manager/src/config/mod.rs
 pub mod manager;
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
 pub use manager::ConfigManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,15 +13,7 @@ pub struct Config {
     pub alarm_webhook_url: String,
     pub hermes_min_uptime_minutes: Option<u32>,
     pub auto_restore_trigger_words: Option<Vec<String>>,
-
-    // REMOVED: Global log monitoring patterns - now per-node
-    // pub log_monitoring_enabled: Option<bool>,
-    // pub log_monitoring_patterns: Option<Vec<String>>,
-    // pub log_monitoring_interval_minutes: Option<u32>,
-
-    // KEPT: Global log monitoring settings that apply to all nodes
     pub log_monitoring_context_lines: Option<i32>,
-
     // Populated from individual server config files
     #[serde(skip)]
     pub servers: HashMap<String, ServerConfig>,
@@ -63,7 +53,6 @@ pub struct NodeConfig {
     pub network: String,
     pub server_host: String,
     pub enabled: bool,
-
     // Pruning configuration
     pub pruning_enabled: Option<bool>,
     pub pruning_schedule: Option<String>,
@@ -71,18 +60,16 @@ pub struct NodeConfig {
     pub pruning_keep_versions: Option<u32>,
     pub pruning_deploy_path: Option<String>,
     pub pruning_service_name: Option<String>,
-
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
-
     // NEW: Per-node log monitoring configuration
     pub log_monitoring_enabled: Option<bool>,
     pub log_monitoring_patterns: Option<Vec<String>>,
-
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,
     pub snapshot_backup_path: Option<String>,
+    pub snapshot_deploy_path: Option<String>,  // NEW: Separate deploy path for snapshots
     pub auto_restore_enabled: Option<bool>,
     pub snapshot_schedule: Option<String>,
     pub snapshot_retention_count: Option<usize>,
