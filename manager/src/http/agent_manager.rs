@@ -3,7 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error, debug, instrument};
 use chrono::Utc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
@@ -250,6 +250,7 @@ impl HttpAgentManager {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
         self.operation_tracker.try_start_operation(node_name, "node_restart", None).await?;
 
@@ -311,6 +312,7 @@ impl HttpAgentManager {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
         self.operation_tracker.try_start_operation(node_name, "pruning", None).await?;
 
@@ -503,6 +505,7 @@ impl HttpAgentManager {
         }
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
 
@@ -585,6 +588,7 @@ impl HttpAgentManager {
         Ok(snapshot_info)
     }
 
+    #[instrument(skip(self, hermes_config), fields(service = %hermes_config.service_name))]
     pub async fn restart_hermes(&self, hermes_config: &HermesConfig) -> Result<()> {
         info!("Restarting Hermes {} with log cleanup: {}",
               hermes_config.service_name,
