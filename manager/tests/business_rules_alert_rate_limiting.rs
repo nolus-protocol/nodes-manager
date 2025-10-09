@@ -26,7 +26,7 @@ fn test_alert_constants_are_defined() {
 #[test]
 fn test_alert_schedule_progression() {
     // Define the alert schedule
-    let schedule = vec![
+    let schedule = [
         (0, "Initial check - no alert"),
         (1, "Second check - no alert"),
         (2, "Third check - FIRST ALERT"),
@@ -162,11 +162,12 @@ fn test_recovery_alert_resets_state() {
 
     // Node recovers
     consecutive_failures = 0;
-    alert_sent = false;
+    alert_sent = false; // Reset alert state
 
     // If node becomes unhealthy again, start fresh
     consecutive_failures += 1;
     assert_eq!(consecutive_failures, 1, "Should reset to 1 after recovery");
+    assert!(!alert_sent, "Alert state should be reset after recovery");
 }
 
 #[test]
@@ -178,13 +179,13 @@ fn test_alert_spacing_prevents_spam() {
     let mut alert_times = vec![first_alert];
 
     // Schedule subsequent alerts
-    last_alert = last_alert + Duration::hours(alerts::SECOND_ALERT_INTERVAL_HOURS);
+    last_alert += Duration::hours(alerts::SECOND_ALERT_INTERVAL_HOURS);
     alert_times.push(last_alert);
 
-    last_alert = last_alert + Duration::hours(alerts::THIRD_ALERT_INTERVAL_HOURS);
+    last_alert += Duration::hours(alerts::THIRD_ALERT_INTERVAL_HOURS);
     alert_times.push(last_alert);
 
-    last_alert = last_alert + Duration::hours(alerts::FOURTH_ALERT_INTERVAL_HOURS);
+    last_alert += Duration::hours(alerts::FOURTH_ALERT_INTERVAL_HOURS);
     alert_times.push(last_alert);
 
     // Verify minimum spacing between alerts
@@ -199,19 +200,22 @@ fn test_alert_spacing_prevents_spam() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn test_webhook_timeout_is_reasonable() {
     assert_eq!(
         alerts::WEBHOOK_TIMEOUT_SECONDS,
         10,
         "Webhook timeout should be 10 seconds"
     );
+    const MIN_TIMEOUT: u64 = 5;
+    const MAX_TIMEOUT: u64 = 30;
     assert!(
-        alerts::WEBHOOK_TIMEOUT_SECONDS >= 5,
-        "Timeout should be at least 5 seconds"
+        alerts::WEBHOOK_TIMEOUT_SECONDS >= MIN_TIMEOUT,
+        "Timeout should be at least {} seconds", MIN_TIMEOUT
     );
     assert!(
-        alerts::WEBHOOK_TIMEOUT_SECONDS <= 30,
-        "Timeout should not exceed 30 seconds"
+        alerts::WEBHOOK_TIMEOUT_SECONDS <= MAX_TIMEOUT,
+        "Timeout should not exceed {} seconds", MAX_TIMEOUT
     );
 }
 
@@ -227,13 +231,14 @@ fn test_auto_restore_cooldown() {
 #[test]
 fn test_per_node_alert_isolation() {
     // Each node should have its own alert state
+    #[allow(dead_code)]
     struct NodeAlertState {
         node_name: String,
         consecutive_failures: u32,
         alerts_sent: u32,
     }
 
-    let mut states = vec![
+    let mut states = [
         NodeAlertState {
             node_name: "node-1".to_string(),
             consecutive_failures: 0,

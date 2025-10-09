@@ -89,8 +89,8 @@ async fn test_query_node_health_records() {
     let record = &records[0];
     assert_eq!(record.get::<String, _>("node_name"), "node-1");
     assert_eq!(record.get::<String, _>("network"), "osmosis-1");
-    assert_eq!(record.get::<bool, _>("is_healthy"), true);
-    assert_eq!(record.get::<bool, _>("is_synced"), true);
+    assert!(record.get::<bool, _>("is_healthy"));
+    assert!(record.get::<bool, _>("is_synced"));
 }
 
 #[tokio::test]

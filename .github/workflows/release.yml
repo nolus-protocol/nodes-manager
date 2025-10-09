@@ -25,26 +25,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: agent
             artifact_name: agent-linux-amd64
-          
-          # macOS x86_64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            binary: manager
-            artifact_name: manager-macos-amd64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            binary: agent
-            artifact_name: agent-macos-amd64
-          
-          # macOS ARM64 (Apple Silicon)
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            binary: manager
-            artifact_name: manager-macos-arm64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            binary: agent
-            artifact_name: agent-macos-arm64
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -69,13 +49,8 @@ jobs:
     - name: Build binary
       run: cargo build --package ${{ matrix.binary }} --release --target ${{ matrix.target }}
 
-    - name: Strip binary (Linux)
-      if: matrix.os == 'ubuntu-latest'
+    - name: Strip binary
       run: strip target/${{ matrix.target }}/release/${{ matrix.binary }}
-
-    - name: Strip binary (macOS)
-      if: matrix.os == 'macos-latest'
-      run: strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
 
     - name: Prepare binary
       run: |
@@ -85,12 +60,7 @@ jobs:
         mv ${{ matrix.artifact_name }}.tar.gz ../../..
 
     - name: Generate checksum
-      run: |
-        if [ "$RUNNER_OS" == "Linux" ]; then
-          sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
-        else
-          shasum -a 256 ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
-        fi
+      run: sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -135,11 +105,7 @@ jobs:
           
           ### Binaries
           - `manager-linux-amd64.tar.gz`: Manager binary for Linux (x86_64)
-          - `manager-macos-amd64.tar.gz`: Manager binary for macOS (Intel)
-          - `manager-macos-arm64.tar.gz`: Manager binary for macOS (Apple Silicon)
           - `agent-linux-amd64.tar.gz`: Agent binary for Linux (x86_64)
-          - `agent-macos-amd64.tar.gz`: Agent binary for macOS (Intel)
-          - `agent-macos-arm64.tar.gz`: Agent binary for macOS (Apple Silicon)
           
           ### Installation
           ```bash

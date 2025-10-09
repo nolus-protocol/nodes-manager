@@ -1,10 +1,12 @@
-//! Test fixtures and utilities for manager tests
-//!
 //! This module provides reusable test utilities:
 //! - Mock HTTP servers (agent, RPC, webhook)
 //! - Test configuration builders
 //! - In-memory test databases
 //! - Common test data
+
+// Allow unused code in test fixtures - they are utilities for future tests
+#![allow(dead_code)]
+#![allow(unused_imports)]
 
 pub mod mock_agent;
 pub mod mock_rpc;
