@@ -35,3 +35,5 @@ rstest = "0.26"
 test-case = "3.3"
 serial_test = "3.0"
 fake = { version = "4.4", features = ["derive", "chrono"] }
+headless_chrome = "1.0"
+scraper = "0.22"
