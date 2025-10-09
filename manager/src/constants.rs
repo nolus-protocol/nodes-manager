@@ -45,6 +45,12 @@ pub mod operation_timeouts {
     
     /// Timeout for Hermes restart operations
     pub const HERMES_RESTART_MINUTES: u64 = 15;
+    
+    /// Sleep duration after stopping a node service before starting it (seconds)
+    pub const NODE_RESTART_SLEEP_SECONDS: u64 = 5;
+    
+    /// Sleep duration after stopping Hermes service before starting it (seconds)
+    pub const HERMES_RESTART_SLEEP_SECONDS: u64 = 3;
 }
 
 /// Cleanup and maintenance constants

@@ -8,7 +8,7 @@ use chrono::Utc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::{Config, HermesConfig};
-use crate::constants::http;
+use crate::constants::{http, operation_timeouts};
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotInfo;
@@ -267,7 +267,7 @@ impl HttpAgentManager {
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "node_restart",
-            15,
+            operation_timeouts::NODE_RESTART_MINUTES as u32,
             &node_config.server_host
         ).await {
             Ok(()) => true,
@@ -300,7 +300,7 @@ impl HttpAgentManager {
         info!("Restarting node {}", node_name);
 
         self.stop_service(&node_config.server_host, service_name).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(operation_timeouts::NODE_RESTART_SLEEP_SECONDS)).await;
         self.start_service(&node_config.server_host, service_name).await?;
 
         let status = self.check_service_status(&node_config.server_host, service_name).await?;
@@ -329,7 +329,7 @@ impl HttpAgentManager {
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "pruning",
-            300,
+            (operation_timeouts::PRUNING_HOURS * 60) as u32,
             &node_config.server_host
         ).await {
             Ok(()) => true,
@@ -409,7 +409,7 @@ impl HttpAgentManager {
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "state_sync",
-            600,
+            (operation_timeouts::STATE_SYNC_HOURS * 60) as u32,
             &node_config.server_host
         ).await {
             Ok(()) => true,
@@ -522,7 +522,7 @@ impl HttpAgentManager {
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_creation",
-            1440,
+            (operation_timeouts::SNAPSHOT_CREATION_HOURS * 60) as u32,
             &node_config.server_host
         ).await {
             Ok(()) => true,
@@ -595,7 +595,7 @@ impl HttpAgentManager {
               hermes_config.truncate_logs_enabled.unwrap_or(false));
 
         self.stop_service(&hermes_config.server_host, &hermes_config.service_name).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(operation_timeouts::HERMES_RESTART_SLEEP_SECONDS)).await;
 
         if hermes_config.truncate_logs_enabled.unwrap_or(false) {
             if let Some(log_path) = &hermes_config.log_path {
@@ -644,7 +644,7 @@ impl HttpAgentManager {
         let maintenance_started = match self.maintenance_tracker.start_maintenance(
             node_name,
             "snapshot_restore",
-            1440,
+            (operation_timeouts::SNAPSHOT_RESTORE_HOURS * 60) as u32,
             &node_config.server_host
         ).await {
             Ok(()) => true,
