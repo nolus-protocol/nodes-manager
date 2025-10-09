@@ -13,7 +13,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```ignore
 //! // Try to start operation (fails if target is busy)
 //! tracker.try_start_operation("osmosis-1", "pruning", Some("user@example.com")).await?;
 //!

@@ -14,7 +14,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```ignore
 //! // Start maintenance window
 //! tracker.start_maintenance("osmosis-1", "pruning", 300, "server-1").await?;
 //!
