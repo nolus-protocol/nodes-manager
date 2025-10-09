@@ -1,9 +1,5 @@
 // Integration tests for web API handlers
-use axum::http::StatusCode;
 use serde_json::Value;
-
-mod common;
-use common::fixtures::{MockRpcServer, MockWebhookServer};
 
 #[tokio::test]
 async fn test_health_endpoints_respond() {
@@ -180,9 +176,8 @@ async fn test_error_handling_scenarios() {
     let endpoint = format!("/api/health/nodes/{}", invalid_node);
     assert!(endpoint.contains(invalid_node));
 
-    // 2. Invalid operation type
-    let invalid_operation = "invalid-op";
-    assert!(!invalid_operation.is_empty());
+    // 2. Invalid operation type (should return appropriate error)
+    // Operation types: pruning, restart, snapshot, restore, state-sync
 
     // 3. Missing required parameters
     // POST requests without required body should return 400
@@ -229,7 +224,6 @@ async fn test_operation_workflow() {
     // 4. Status shows completed
 
     let node_name = "test-node";
-    let operation_type = "pruning";
 
     // Workflow steps
     let steps = vec![
