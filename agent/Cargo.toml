@@ -17,3 +17,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.2"
+tempfile = "3.8"
+rstest = "0.18"
+test-case = "3.3"
+serial_test = "3.0"
+fake = { version = "2.9", features = ["derive", "chrono"] }

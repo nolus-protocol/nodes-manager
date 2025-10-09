@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite, SqlitePool};
 use std::path::Path;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthRecord {
@@ -82,7 +82,10 @@ impl Database {
         match database.cleanup_stuck_maintenance_operations().await {
             Ok(cleaned_count) => {
                 if cleaned_count > 0 {
-                    warn!("🧹 Cleaned up {} stuck maintenance operations on startup", cleaned_count);
+                    warn!(
+                        "🧹 Cleaned up {} stuck maintenance operations on startup",
+                        cleaned_count
+                    );
                 } else {
                     info!("✅ No stuck maintenance operations found");
                 }
@@ -163,13 +166,19 @@ impl Database {
 
         info!("Step 4: Creating maintenance_operations indexes...");
         let maintenance_index1_sql = "CREATE INDEX IF NOT EXISTS idx_maintenance_target ON maintenance_operations(target_name, started_at DESC)";
-        if let Err(e) = sqlx::query(maintenance_index1_sql).execute(&self.pool).await {
+        if let Err(e) = sqlx::query(maintenance_index1_sql)
+            .execute(&self.pool)
+            .await
+        {
             error!("FAILED to create maintenance target index: {}", e);
             return Err(e.into());
         }
 
         let maintenance_index2_sql = "CREATE INDEX IF NOT EXISTS idx_maintenance_status ON maintenance_operations(status, started_at DESC)";
-        if let Err(e) = sqlx::query(maintenance_index2_sql).execute(&self.pool).await {
+        if let Err(e) = sqlx::query(maintenance_index2_sql)
+            .execute(&self.pool)
+            .await
+        {
             error!("FAILED to create maintenance status index: {}", e);
             return Err(e.into());
         }
@@ -191,7 +200,7 @@ impl Database {
             WHERE status IN ('running', 'started')
             AND started_at < datetime('now', '-1 hour')
             ORDER BY started_at ASC
-            "#
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -201,7 +210,10 @@ impl Database {
             return Ok(0);
         }
 
-        info!("Found {} stuck maintenance operations that need cleanup", rows.len());
+        info!(
+            "Found {} stuck maintenance operations that need cleanup",
+            rows.len()
+        );
 
         let mut cleaned_count = 0u32;
         let cleanup_time = Utc::now();
@@ -213,8 +225,10 @@ impl Database {
             let status: String = row.try_get("status")?;
             let started_at: String = row.try_get("started_at")?;
 
-            warn!("Cleaning up stuck operation: {} ({}) on {} - started at {} (status: {})",
-                  operation_id, operation_type, target_name, started_at, status);
+            warn!(
+                "Cleaning up stuck operation: {} ({}) on {} - started at {} (status: {})",
+                operation_id, operation_type, target_name, started_at, status
+            );
 
             // Mark as failed with cleanup message
             let result = sqlx::query(
@@ -243,7 +257,10 @@ impl Database {
         }
 
         if cleaned_count > 0 {
-            warn!("Successfully cleaned up {} stuck maintenance operations", cleaned_count);
+            warn!(
+                "Successfully cleaned up {} stuck maintenance operations",
+                cleaned_count
+            );
             info!("These operations were stuck in 'running' or 'started' state and have been marked as 'failed'");
         }
 
@@ -295,7 +312,8 @@ impl Database {
         // Test 4: Cleanup test record
         if let Err(e) = sqlx::query("DELETE FROM health_records WHERE node_name = 'test-node'")
             .execute(&self.pool)
-            .await {
+            .await
+        {
             warn!("Failed to cleanup test record (non-critical): {}", e);
         } else {
             info!("✅ Test record cleaned up");
@@ -331,7 +349,10 @@ impl Database {
                 Ok(())
             }
             Err(e) => {
-                error!("❌ Failed to store health record for {}: {}", record.node_name, e);
+                error!(
+                    "❌ Failed to store health record for {}: {}",
+                    record.node_name, e
+                );
                 Err(e.into())
             }
         }
@@ -373,7 +394,10 @@ impl Database {
         }
     }
 
-    pub async fn store_maintenance_operation(&self, operation: &MaintenanceOperation) -> Result<()> {
+    pub async fn store_maintenance_operation(
+        &self,
+        operation: &MaintenanceOperation,
+    ) -> Result<()> {
         debug!("Storing maintenance operation: {}", operation.id);
 
         match sqlx::query(
@@ -400,14 +424,20 @@ impl Database {
                 Ok(())
             }
             Err(e) => {
-                error!("❌ Failed to store maintenance operation {}: {}", operation.id, e);
+                error!(
+                    "❌ Failed to store maintenance operation {}: {}",
+                    operation.id, e
+                );
                 Err(e.into())
             }
         }
     }
 
     #[allow(dead_code)]
-    pub async fn get_maintenance_operations(&self, limit: Option<i32>) -> Result<Vec<MaintenanceOperation>> {
+    pub async fn get_maintenance_operations(
+        &self,
+        limit: Option<i32>,
+    ) -> Result<Vec<MaintenanceOperation>> {
         debug!("Querying maintenance operations with limit: {:?}", limit);
 
         let limit_val = limit.unwrap_or(100);

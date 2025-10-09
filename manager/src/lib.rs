@@ -13,7 +13,7 @@ pub mod state_sync;
 pub mod web;
 
 // Re-export commonly used types
-pub use config::{Config, ConfigManager, NodeConfig, HermesConfig};
+pub use config::{Config, ConfigManager, HermesConfig, NodeConfig};
 pub use database::Database;
 pub use health::HealthMonitor;
 pub use http::HttpAgentManager;

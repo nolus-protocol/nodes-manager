@@ -1,10 +1,10 @@
 // File: agent/src/services/commands.rs
 use anyhow::{anyhow, Result};
-use tokio::process::Command as AsyncCommand;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use std::process::Stdio;
 use std::time::Duration;
-use tracing::{debug, info, warn, error};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command as AsyncCommand;
+use tracing::{debug, error, info, warn};
 
 pub async fn execute_shell_command(command: &str) -> Result<String> {
     debug!("Executing command: {}", command);
@@ -26,8 +26,15 @@ pub async fn execute_shell_command(command: &str) -> Result<String> {
     }
 }
 
-pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_versions: u64) -> Result<String> {
-    info!("Starting cosmos-pruner: prune '{}' --blocks={} --versions={}", deploy_path, keep_blocks, keep_versions);
+pub async fn execute_cosmos_pruner(
+    deploy_path: &str,
+    keep_blocks: u64,
+    keep_versions: u64,
+) -> Result<String> {
+    info!(
+        "Starting cosmos-pruner: prune '{}' --blocks={} --versions={}",
+        deploy_path, keep_blocks, keep_versions
+    );
 
     // Spawn cosmos-pruner with proper stream handling
     let mut command = AsyncCommand::new("cosmos-pruner");
@@ -44,7 +51,8 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
 
     info!("Executing cosmos-pruner process with stream monitoring...");
 
-    let mut child = command.spawn()
+    let mut child = command
+        .spawn()
         .map_err(|e| anyhow!("Failed to spawn cosmos-pruner: {}", e))?;
 
     // Take streams for proper draining
@@ -56,7 +64,9 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
         while let Ok(bytes_read) = reader.read_line(&mut line).await {
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
             info!("cosmos-pruner stdout: {}", line.trim());
             line.clear();
         }
@@ -67,7 +77,9 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
         while let Ok(bytes_read) = reader.read_line(&mut line).await {
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
             info!("cosmos-pruner stderr: {}", line.trim());
             line.clear();
         }
@@ -97,11 +109,17 @@ pub async fn execute_cosmos_pruner(deploy_path: &str, keep_blocks: u64, keep_ver
     let exit_code = status.code().unwrap_or(-1);
     let success = status.success();
 
-    info!("cosmos-pruner process completed with exit code: {} (success: {})", exit_code, success);
+    info!(
+        "cosmos-pruner process completed with exit code: {} (success: {})",
+        exit_code, success
+    );
 
     // IMPORTANT: Always return success regardless of exit code
     // The workflow must continue no matter what cosmos-pruner returns
-    Ok(format!("cosmos-pruner completed with exit code: {} (success: {})", exit_code, success))
+    Ok(format!(
+        "cosmos-pruner completed with exit code: {} (success: {})",
+        exit_code, success
+    ))
 }
 
 // NEW: LZ4 compression function for background execution
@@ -128,10 +146,18 @@ pub async fn create_lz4_compressed_snapshot(backup_path: &str, snapshot_dirname:
             let success = output.status.success();
 
             if success {
-                info!("Background LZ4 compression completed successfully: {} (exit code: {})", lz4_filename, exit_code);
+                info!(
+                    "Background LZ4 compression completed successfully: {} (exit code: {})",
+                    lz4_filename, exit_code
+                );
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!("Background LZ4 compression failed: {} (exit code: {}, stderr: {})", lz4_filename, exit_code, stderr.trim());
+                warn!(
+                    "Background LZ4 compression failed: {} (exit code: {}, stderr: {})",
+                    lz4_filename,
+                    exit_code,
+                    stderr.trim()
+                );
             }
         }
         Err(e) => {
@@ -168,7 +194,10 @@ pub async fn remove_file_if_exists(file_path: &str) -> Result<()> {
 
 // NEW - Backup current validator state before restore
 pub async fn backup_current_validator_state(source: &str, backup_path: &str) -> Result<()> {
-    info!("Backing up current validator state from {} to {}", source, backup_path);
+    info!(
+        "Backing up current validator state from {} to {}",
+        source, backup_path
+    );
 
     let command = format!(
         "if [ -f '{}' ]; then cp '{}' '{}' && echo 'validator_state_backed_up'; else echo 'validator_state_not_found'; fi",
@@ -186,7 +215,10 @@ pub async fn backup_current_validator_state(source: &str, backup_path: &str) -> 
 
 // NEW - Restore current validator state after snapshot restore
 pub async fn restore_current_validator_state(backup_path: &str, destination: &str) -> Result<()> {
-    info!("Restoring current validator state from {} to {}", backup_path, destination);
+    info!(
+        "Restoring current validator state from {} to {}",
+        backup_path, destination
+    );
 
     let command = format!(
         "if [ -f '{}' ]; then cp '{}' '{}' && echo 'validator_state_restored'; else echo 'validator_backup_not_found'; fi",
@@ -204,7 +236,10 @@ pub async fn restore_current_validator_state(backup_path: &str, destination: &st
 
 // SIMPLIFIED: Simple copy function using cp -r like all other operations
 async fn copy_directory(source_path: &str, target_path: &str, operation_name: &str) -> Result<()> {
-    info!("Starting {} - copying from {} to {}", operation_name, source_path, target_path);
+    info!(
+        "Starting {} - copying from {} to {}",
+        operation_name, source_path, target_path
+    );
 
     let command = format!("cp -r '{}' '{}'", source_path, target_path);
     execute_shell_command(&command).await?;
@@ -214,16 +249,26 @@ async fn copy_directory(source_path: &str, target_path: &str, operation_name: &s
 }
 
 // Copy function that REQUIRES both data and wasm directories for restore - SYNCHRONOUS
-pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir: &str) -> Result<()> {
-    info!("Copying both data and wasm directories from {} to {}", snapshot_dir, target_dir);
+pub async fn copy_snapshot_directories_mandatory(
+    snapshot_dir: &str,
+    target_dir: &str,
+) -> Result<()> {
+    info!(
+        "Copying both data and wasm directories from {} to {}",
+        snapshot_dir, target_dir
+    );
 
     // Copy data directory first
     let data_source = format!("{}/data", snapshot_dir);
     let data_target = format!("{}/data", target_dir);
 
     let data_exists_cmd = format!("test -d '{}'", data_source);
-    execute_shell_command(&data_exists_cmd).await
-        .map_err(|_| anyhow!("CRITICAL: data directory missing from snapshot: {}", data_source))?;
+    execute_shell_command(&data_exists_cmd).await.map_err(|_| {
+        anyhow!(
+            "CRITICAL: data directory missing from snapshot: {}",
+            data_source
+        )
+    })?;
 
     copy_directory(&data_source, &data_target, "Data restore").await?;
 
@@ -232,8 +277,12 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
     let wasm_target = format!("{}/wasm", target_dir);
 
     let wasm_exists_cmd = format!("test -d '{}'", wasm_source);
-    execute_shell_command(&wasm_exists_cmd).await
-        .map_err(|_| anyhow!("CRITICAL: wasm directory missing from snapshot: {}", wasm_source))?;
+    execute_shell_command(&wasm_exists_cmd).await.map_err(|_| {
+        anyhow!(
+            "CRITICAL: wasm directory missing from snapshot: {}",
+            wasm_source
+        )
+    })?;
 
     copy_directory(&wasm_source, &wasm_target, "Wasm restore").await?;
 
@@ -242,8 +291,15 @@ pub async fn copy_snapshot_directories_mandatory(snapshot_dir: &str, target_dir:
 }
 
 // NEW: copy function for snapshot creation that REQUIRES both data and wasm directories - SYNCHRONOUS
-pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_dir: &str, directories: &[&str]) -> Result<()> {
-    info!("Copying directories {:?} from {} to snapshot {}", directories, source_dir, snapshot_dir);
+pub async fn copy_directories_to_snapshot_mandatory(
+    source_dir: &str,
+    snapshot_dir: &str,
+    directories: &[&str],
+) -> Result<()> {
+    info!(
+        "Copying directories {:?} from {} to snapshot {}",
+        directories, source_dir, snapshot_dir
+    );
 
     for dir in directories {
         let source_path = format!("{}/{}", source_dir, dir);
@@ -251,16 +307,35 @@ pub async fn copy_directories_to_snapshot_mandatory(source_dir: &str, snapshot_d
 
         // Check if source directory exists BEFORE copying
         let source_exists_cmd = format!("test -d '{}'", source_path);
-        execute_shell_command(&source_exists_cmd).await
-            .map_err(|_| anyhow!("CRITICAL: Source {} directory missing at: {}", dir, source_path))?;
+        execute_shell_command(&source_exists_cmd)
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "CRITICAL: Source {} directory missing at: {}",
+                    dir,
+                    source_path
+                )
+            })?;
 
-        copy_directory(&source_path, &target_path, &format!("{} snapshot copy", dir)).await
-            .map_err(|e| anyhow!("CRITICAL: Failed to copy {} directory: {}", dir, e))?;
+        copy_directory(
+            &source_path,
+            &target_path,
+            &format!("{} snapshot copy", dir),
+        )
+        .await
+        .map_err(|e| anyhow!("CRITICAL: Failed to copy {} directory: {}", dir, e))?;
 
         // Verify the copy was successful
         let target_exists_cmd = format!("test -d '{}'", target_path);
-        execute_shell_command(&target_exists_cmd).await
-            .map_err(|_| anyhow!("CRITICAL: {} directory not found after copy at: {}", dir, target_path))?;
+        execute_shell_command(&target_exists_cmd)
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "CRITICAL: {} directory not found after copy at: {}",
+                    dir,
+                    target_path
+                )
+            })?;
 
         info!("Successfully copied {} directory to snapshot", dir);
     }
@@ -273,7 +348,9 @@ pub async fn get_directory_size(dir_path: &str) -> Result<u64> {
     let command = format!("du -sb '{}' | cut -f1", dir_path);
     let output = execute_shell_command(&command).await?;
 
-    output.trim().parse::<u64>()
+    output
+        .trim()
+        .parse::<u64>()
         .map_err(|e| anyhow!("Failed to parse directory size: {}", e))
 }
 
@@ -283,10 +360,7 @@ pub async fn check_log_for_trigger_words(log_file: &str, trigger_words: &[String
     }
 
     let pattern = trigger_words.join("|");
-    let command = format!(
-        "tail -n 1000 '{}' | grep -q -E '{}'",
-        log_file, pattern
-    );
+    let command = format!("tail -n 1000 '{}' | grep -q -E '{}'", log_file, pattern);
 
     debug!("Checking log for trigger words: {}", command);
 

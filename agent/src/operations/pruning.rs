@@ -6,9 +6,14 @@ use crate::services::{commands, logs, systemctl};
 use crate::types::PruningRequest;
 
 pub async fn execute_full_pruning_sequence(request: &PruningRequest) -> Result<String> {
-    info!("Starting FULL pruning sequence for service: {}", request.service_name);
-    info!("Deploy path: {}, keep_blocks: {}, keep_versions: {}",
-          request.deploy_path, request.keep_blocks, request.keep_versions);
+    info!(
+        "Starting FULL pruning sequence for service: {}",
+        request.service_name
+    );
+    info!(
+        "Deploy path: {}, keep_blocks: {}, keep_versions: {}",
+        request.deploy_path, request.keep_blocks, request.keep_versions
+    );
 
     let mut operation_log = Vec::new();
 
@@ -33,7 +38,8 @@ pub async fn execute_full_pruning_sequence(request: &PruningRequest) -> Result<S
         &request.deploy_path,
         request.keep_blocks,
         request.keep_versions,
-    ).await?;
+    )
+    .await?;
     operation_log.push("✓ Completed cosmos-pruner execution".to_string());
 
     // Step 4: Start the node service
@@ -46,12 +52,16 @@ pub async fn execute_full_pruning_sequence(request: &PruningRequest) -> Result<S
     if status != "active" {
         return Err(anyhow::anyhow!(
             "Service {} failed to start properly after pruning (status: {})",
-            request.service_name, status
+            request.service_name,
+            status
         ));
     }
     operation_log.push(format!("✓ Verified service is running: {}", status));
 
-    info!("Full pruning sequence completed successfully for: {}", request.service_name);
+    info!(
+        "Full pruning sequence completed successfully for: {}",
+        request.service_name
+    );
 
     // Return comprehensive operation summary
     let summary = format!(

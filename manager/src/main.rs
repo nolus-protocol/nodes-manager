@@ -1,8 +1,8 @@
 // File: manager/src/main.rs
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{info, warn, error};
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing::{error, info, warn};
+use tracing_subscriber::{fmt, EnvFilter};
 
 mod config;
 mod constants;
@@ -12,10 +12,10 @@ mod http;
 mod maintenance_tracker;
 mod operation_tracker;
 mod scheduler;
+mod services;
 mod snapshot;
 mod state_sync;
 mod web;
-mod services;
 
 use config::ConfigManager;
 use constants::cleanup;
@@ -25,8 +25,8 @@ use http::HttpAgentManager;
 use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
-use snapshot::SnapshotManager;
 use services::AlertService;
+use snapshot::SnapshotManager;
 use web::start_web_server;
 
 #[tokio::main]
@@ -40,17 +40,20 @@ async fn main() -> Result<()> {
         .add_directive("reqwest=warn".parse()?)
         .add_directive("sqlx=warn".parse()?);
 
-    fmt()
-        .with_env_filter(env_filter)
-        .init();
+    fmt().with_env_filter(env_filter).init();
 
     info!("Starting Blockchain Infrastructure Manager");
 
     // Load configuration
     let config_manager = ConfigManager::new("config".to_string()).await?;
     let config = config_manager.get_current_config();
-    info!("Configuration loaded: {} nodes, {} hermes instances, {} servers, {} ETL services",
-          config.nodes.len(), config.hermes.len(), config.servers.len(), config.etl.len());
+    info!(
+        "Configuration loaded: {} nodes, {} hermes instances, {} servers, {} ETL services",
+        config.nodes.len(),
+        config.hermes.len(),
+        config.servers.len(),
+        config.etl.len()
+    );
 
     // Initialize database
     let database = Arc::new(Database::new("data/nodes.db").await?);
@@ -69,7 +72,10 @@ async fn main() -> Result<()> {
 
     // Validate alert service configuration
     if alert_service.is_enabled() {
-        info!("Alert service enabled with webhook: {}", alert_service.get_webhook_url());
+        info!(
+            "Alert service enabled with webhook: {}",
+            alert_service.get_webhook_url()
+        );
 
         // Test webhook connectivity on startup
         match alert_service.test_webhook().await {
@@ -89,7 +95,7 @@ async fn main() -> Result<()> {
     let http_manager = Arc::new(HttpAgentManager::new(
         config.clone(),
         operation_tracker.clone(),
-        maintenance_tracker.clone()
+        maintenance_tracker.clone(),
     ));
     info!("HTTP agent manager initialized");
 
@@ -113,12 +119,15 @@ async fn main() -> Result<()> {
     info!("Health monitor initialized with centralized alerting and auto-restore capability");
 
     // Initialize scheduler
-    let scheduler = Arc::new(MaintenanceScheduler::new(
-        database.clone(),
-        http_manager.clone(),
-        config.clone(),
-        snapshot_manager.clone(),
-    ).await?);
+    let scheduler = Arc::new(
+        MaintenanceScheduler::new(
+            database.clone(),
+            http_manager.clone(),
+            config.clone(),
+            snapshot_manager.clone(),
+        )
+        .await?,
+    );
     info!("Maintenance scheduler initialized");
 
     // Start scheduler
@@ -139,8 +148,11 @@ async fn main() -> Result<()> {
 
             // Log periodic health check status for debugging
             if check_count % 10 == 0 {
-                info!("Health monitoring cycle #{} - Alert service enabled: {}",
-                      check_count, alert_service_clone.is_enabled());
+                info!(
+                    "Health monitoring cycle #{} - Alert service enabled: {}",
+                    check_count,
+                    alert_service_clone.is_enabled()
+                );
             }
 
             // Check blockchain nodes
@@ -158,17 +170,20 @@ async fn main() -> Result<()> {
     // Start periodic operation cleanup (configurable interval)
     let operation_tracker_clone = operation_tracker.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(
-            std::time::Duration::from_secs(cleanup::CLEANUP_INTERVAL_SECONDS)
-        );
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            cleanup::CLEANUP_INTERVAL_SECONDS,
+        ));
         loop {
             interval.tick().await;
             let cleaned = operation_tracker_clone
                 .cleanup_old_operations(cleanup::OPERATION_CLEANUP_HOURS)
                 .await;
             if cleaned > 0 {
-                warn!("Cleaned up {} stuck operations older than {} hours", 
-                      cleaned, cleanup::OPERATION_CLEANUP_HOURS);
+                warn!(
+                    "Cleaned up {} stuck operations older than {} hours",
+                    cleaned,
+                    cleanup::OPERATION_CLEANUP_HOURS
+                );
             }
         }
     });
@@ -176,17 +191,20 @@ async fn main() -> Result<()> {
     // Start periodic maintenance cleanup (configurable interval)
     let maintenance_tracker_clone = maintenance_tracker.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(
-            std::time::Duration::from_secs(cleanup::CLEANUP_INTERVAL_SECONDS * 6)
-        );
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            cleanup::CLEANUP_INTERVAL_SECONDS * 6,
+        ));
         loop {
             interval.tick().await;
             let cleaned = maintenance_tracker_clone
                 .cleanup_expired_maintenance(cleanup::MAINTENANCE_CLEANUP_HOURS as u32)
                 .await;
             if cleaned > 0 {
-                warn!("Cleaned up {} expired maintenance windows older than {} hours", 
-                      cleaned, cleanup::MAINTENANCE_CLEANUP_HOURS);
+                warn!(
+                    "Cleaned up {} expired maintenance windows older than {} hours",
+                    cleaned,
+                    cleanup::MAINTENANCE_CLEANUP_HOURS
+                );
             }
         }
     });
@@ -195,7 +213,10 @@ async fn main() -> Result<()> {
 
     // Additional startup alert validation
     if alert_service.is_enabled() {
-        info!("✅ Alert system ready - alerts will be sent to: {}", alert_service.get_webhook_url());
+        info!(
+            "✅ Alert system ready - alerts will be sent to: {}",
+            alert_service.get_webhook_url()
+        );
     } else {
         error!("❌ Alert system NOT configured - no alerts will be sent!");
         error!("Add this to your config/main.toml file:");
@@ -211,7 +232,8 @@ async fn main() -> Result<()> {
         Arc::new(config_manager),
         snapshot_manager,
         operation_tracker,
-    ).await?;
+    )
+    .await?;
 
     Ok(())
 }

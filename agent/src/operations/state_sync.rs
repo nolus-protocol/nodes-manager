@@ -2,13 +2,19 @@
 use anyhow::Result;
 use tracing::info;
 
-use crate::services::{commands, logs, systemctl, config_editor};
+use crate::services::{commands, config_editor, logs, systemctl};
 use crate::types::StateSyncRequest;
 
 pub async fn execute_state_sync_sequence(request: &StateSyncRequest) -> Result<String> {
-    info!("🔄 Starting state sync sequence for service: {}", request.service_name);
+    info!(
+        "🔄 Starting state sync sequence for service: {}",
+        request.service_name
+    );
     info!("RPC servers: {:?}", request.rpc_servers);
-    info!("Trust height: {}, hash: {}", request.trust_height, request.trust_hash);
+    info!(
+        "Trust height: {}, hash: {}",
+        request.trust_height, request.trust_hash
+    );
 
     let mut operation_log = Vec::new();
 
@@ -34,7 +40,8 @@ pub async fn execute_state_sync_sequence(request: &StateSyncRequest) -> Result<S
         &request.rpc_servers,
         request.trust_height,
         &request.trust_hash,
-    ).await?;
+    )
+    .await?;
     operation_log.push("✓ Updated config.toml with state sync parameters".to_string());
 
     // Step 4: Execute unsafe-reset-all - FAIL FAST
@@ -52,7 +59,10 @@ pub async fn execute_state_sync_sequence(request: &StateSyncRequest) -> Result<S
 
     // Check if wasm/cache exists before trying to delete
     let cache_exists_cmd = format!("test -d '{}'", wasm_cache);
-    if commands::execute_shell_command(&cache_exists_cmd).await.is_ok() {
+    if commands::execute_shell_command(&cache_exists_cmd)
+        .await
+        .is_ok()
+    {
         let remove_cache_cmd = format!("rm -rf '{}'", wasm_cache);
         commands::execute_shell_command(&remove_cache_cmd).await?;
         operation_log.push("✓ WASM cache cleaned".to_string());
@@ -66,12 +76,16 @@ pub async fn execute_state_sync_sequence(request: &StateSyncRequest) -> Result<S
     operation_log.push(format!("✓ Started service: {}", request.service_name));
 
     // Step 7: Wait for state sync to complete - TIMEOUT = FAIL
-    info!("Step 7: Waiting for state sync to complete (timeout: {}s)", request.timeout_seconds);
+    info!(
+        "Step 7: Waiting for state sync to complete (timeout: {}s)",
+        request.timeout_seconds
+    );
     wait_for_sync_completion(
         &request.daemon_binary,
         &request.home_dir,
         request.timeout_seconds,
-    ).await?;
+    )
+    .await?;
     operation_log.push("✓ State sync completed".to_string());
 
     // Step 8: Disable state sync in config - FAIL FAST
@@ -91,12 +105,16 @@ pub async fn execute_state_sync_sequence(request: &StateSyncRequest) -> Result<S
     if status != "active" {
         return Err(anyhow::anyhow!(
             "Service {} failed to start properly after state sync (status: {})",
-            request.service_name, status
+            request.service_name,
+            status
         ));
     }
     operation_log.push(format!("✓ Verified service is running: {}", status));
 
-    info!("✓ State sync sequence completed successfully for: {}", request.service_name);
+    info!(
+        "✓ State sync sequence completed successfully for: {}",
+        request.service_name
+    );
 
     // Return comprehensive operation summary
     let summary = format!(
@@ -126,14 +144,17 @@ async fn wait_for_sync_completion(
     home_dir: &str,
     timeout_seconds: u64,
 ) -> Result<()> {
-    use tokio::time::{sleep, Duration, timeout};
+    use tokio::time::{sleep, timeout, Duration};
 
     let check_status_cmd = format!(
         "{} status --home {} 2>&1 | grep -o '\"catching_up\":[^,]*' | cut -d':' -f2",
         daemon_binary, home_dir
     );
 
-    info!("Monitoring sync status with timeout of {}s", timeout_seconds);
+    info!(
+        "Monitoring sync status with timeout of {}s",
+        timeout_seconds
+    );
 
     let sync_future = async {
         let mut check_count = 0;

@@ -1,0 +1,33 @@
+name: Update Badges
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  update-badges:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Run tests and count
+      id: test_count
+      run: |
+        TEST_OUTPUT=$(cargo test --package manager 2>&1)
+        PASSING=$(echo "$TEST_OUTPUT" | grep "test result:" | awk '{sum+=$4} END {print sum}')
+        echo "passing=$PASSING" >> $GITHUB_OUTPUT
+        echo "Found $PASSING passing tests"
+
+    - name: Create badges directory
+      run: mkdir -p .github/badges
+
+    - name: Generate test badge
+      run: |
+        curl "https://img.shields.io/badge/tests-${{ steps.test_count.outputs.passing }}%20passing-brightgreen" > .github/badges/tests.svg || true

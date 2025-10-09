@@ -1,6 +1,6 @@
 // File: agent/src/types.rs
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 // === REQUEST STRUCTURES ===
 

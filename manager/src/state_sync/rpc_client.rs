@@ -54,7 +54,10 @@ async fn try_fetch_from_rpc(
 
     // Step 2: Calculate trust height
     let trust_height = latest_height.saturating_sub(trust_height_offset as i64);
-    info!("Trust height: {} (latest {} - offset {})", trust_height, latest_height, trust_height_offset);
+    info!(
+        "Trust height: {} (latest {} - offset {})",
+        trust_height, latest_height, trust_height_offset
+    );
 
     // Step 3: Get trust hash at trust height - FAIL FAST
     let trust_hash = query_block_hash(client, rpc_url, trust_height).await?;
@@ -71,16 +74,22 @@ async fn try_fetch_from_rpc(
 async fn query_latest_height(client: &Client, rpc_url: &str) -> Result<i64> {
     let url = format!("{}/block", rpc_url);
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query latest block: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("RPC returned status: {}", response.status()));
+        return Err(anyhow::anyhow!(
+            "RPC returned status: {}",
+            response.status()
+        ));
     }
 
-    let json: serde_json::Value = response.json().await
+    let json: serde_json::Value = response
+        .json()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to parse block response: {}", e))?;
 
     let height_str = json
@@ -91,7 +100,8 @@ async fn query_latest_height(client: &Client, rpc_url: &str) -> Result<i64> {
         .and_then(|h| h.as_str())
         .ok_or_else(|| anyhow::anyhow!("Could not extract height from response"))?;
 
-    let height = height_str.parse::<i64>()
+    let height = height_str
+        .parse::<i64>()
         .map_err(|e| anyhow::anyhow!("Failed to parse height: {}", e))?;
 
     Ok(height)
@@ -101,16 +111,22 @@ async fn query_latest_height(client: &Client, rpc_url: &str) -> Result<i64> {
 async fn query_block_hash(client: &Client, rpc_url: &str, height: i64) -> Result<String> {
     let url = format!("{}/block?height={}", rpc_url, height);
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query block at height {}: {}", height, e))?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("RPC returned status: {}", response.status()));
+        return Err(anyhow::anyhow!(
+            "RPC returned status: {}",
+            response.status()
+        ));
     }
 
-    let json: serde_json::Value = response.json().await
+    let json: serde_json::Value = response
+        .json()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to parse block response: {}", e))?;
 
     let hash = json

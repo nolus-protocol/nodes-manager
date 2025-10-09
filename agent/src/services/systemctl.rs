@@ -28,7 +28,11 @@ pub async fn start_service(service_name: &str) -> Result<()> {
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to start service {}: {}", service_name, error));
+        return Err(anyhow!(
+            "Failed to start service {}: {}",
+            service_name,
+            error
+        ));
     }
 
     info!("Service {} started successfully", service_name);
@@ -47,7 +51,11 @@ pub async fn stop_service(service_name: &str) -> Result<()> {
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to stop service {}: {}", service_name, error));
+        return Err(anyhow!(
+            "Failed to stop service {}: {}",
+            service_name,
+            error
+        ));
     }
 
     info!("Service {} stopped successfully", service_name);
@@ -78,8 +86,11 @@ pub async fn get_service_uptime(service_name: &str) -> Result<u64> {
         .output()
         .await?;
 
-    let start_time_str = String::from_utf8_lossy(&date_output.stdout).trim().to_string();
-    let start_time = start_time_str.parse::<i64>()
+    let start_time_str = String::from_utf8_lossy(&date_output.stdout)
+        .trim()
+        .to_string();
+    let start_time = start_time_str
+        .parse::<i64>()
         .map_err(|_| anyhow!("Failed to parse timestamp"))?;
 
     let now = std::time::SystemTime::now()

@@ -2,11 +2,11 @@
 use super::{Config, ServerConfigFile};
 use anyhow::{anyhow, Result};
 use glob::glob;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, info, warn};
-use serde_json::Value;
 
 pub struct ConfigManager {
     current_config: Arc<Config>,
@@ -26,7 +26,8 @@ impl ConfigManager {
 
     async fn load_configuration(config_dir: &str) -> Result<Config> {
         let main_config_path = format!("{}/main.toml", config_dir);
-        let main_config_content = fs::read_to_string(&main_config_path).await
+        let main_config_content = fs::read_to_string(&main_config_path)
+            .await
             .map_err(|e| anyhow!("Failed to read main config {}: {}", main_config_path, e))?;
 
         let mut config: Config = toml::from_str(&main_config_content)
@@ -41,7 +42,8 @@ impl ConfigManager {
 
         for entry in glob(&pattern).map_err(|e| anyhow!("Glob pattern error: {}", e))? {
             let path = entry.map_err(|e| anyhow!("Glob entry error: {}", e))?;
-            let filename = path.file_name()
+            let filename = path
+                .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| anyhow!("Invalid filename"))?;
 
@@ -50,12 +52,14 @@ impl ConfigManager {
                 continue;
             }
 
-            let server_name = filename.strip_suffix(".toml")
+            let server_name = filename
+                .strip_suffix(".toml")
                 .ok_or_else(|| anyhow!("Invalid config filename: {}", filename))?;
 
             debug!("Loading server config: {}", path.display());
 
-            let content = fs::read_to_string(&path).await
+            let content = fs::read_to_string(&path)
+                .await
                 .map_err(|e| anyhow!("Failed to read {}: {}", path.display(), e))?;
 
             let server_config_file: ServerConfigFile = toml::from_str(&content)
@@ -76,13 +80,19 @@ impl ConfigManager {
                     // Node name doesn't include server prefix, add it
                     format!("{}-{}", server_name, node_name)
                 };
-                
+
                 // Auto-detect network from RPC if not specified or set to "auto"
                 if node_config.network.is_empty() || node_config.network == "auto" {
-                    debug!("Auto-detecting network for {} from RPC {}", final_node_name, node_config.rpc_url);
+                    debug!(
+                        "Auto-detecting network for {} from RPC {}",
+                        final_node_name, node_config.rpc_url
+                    );
                     match Self::fetch_network_from_rpc(&node_config.rpc_url).await {
                         Ok(detected_network) => {
-                            info!("✓ Auto-detected network for {}: {}", final_node_name, detected_network);
+                            info!(
+                                "✓ Auto-detected network for {}: {}",
+                                final_node_name, detected_network
+                            );
                             node_config.network = detected_network;
                         }
                         Err(e) => {
@@ -90,9 +100,10 @@ impl ConfigManager {
                         }
                     }
                 }
-                
+
                 // Apply smart defaults to node config (derive paths from node name)
-                node_config = node_config.with_defaults(&server_config_file.defaults, &final_node_name);
+                node_config =
+                    node_config.with_defaults(&server_config_file.defaults, &final_node_name);
 
                 all_nodes.insert(final_node_name, node_config);
             }
@@ -103,7 +114,8 @@ impl ConfigManager {
                     hermes_config.server_host = server_name.to_string();
 
                     // FIXED: Smart hermes naming - don't double-prefix if already prefixed
-                    let final_hermes_name = if hermes_name.starts_with(&format!("{}-", server_name)) {
+                    let final_hermes_name = if hermes_name.starts_with(&format!("{}-", server_name))
+                    {
                         // Hermes name already includes server prefix, use as-is
                         hermes_name
                     } else {
@@ -139,7 +151,8 @@ impl ConfigManager {
         config.hermes = all_hermes;
         config.etl = all_etl;
 
-        info!("Loaded {} servers, {} nodes, {} hermes instances, {} ETL services",
+        info!(
+            "Loaded {} servers, {} nodes, {} hermes instances, {} ETL services",
             config.servers.len(),
             config.nodes.len(),
             config.hermes.len(),
@@ -148,33 +161,36 @@ impl ConfigManager {
 
         Ok(config)
     }
-    
+
     /// Fetch network ID from RPC /status endpoint
     /// Returns the network field from the response (e.g., "pirin-1", "osmosis-1")
     async fn fetch_network_from_rpc(rpc_url: &str) -> Result<String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()?;
-        
+
         let status_url = format!("{}/status", rpc_url);
-        let response = client.get(&status_url)
+        let response = client
+            .get(&status_url)
             .send()
             .await
             .map_err(|e| anyhow!("Failed to fetch RPC status from {}: {}", status_url, e))?;
-        
+
         if !response.status().is_success() {
             return Err(anyhow!("RPC status returned HTTP {}", response.status()));
         }
-        
-        let json: Value = response.json().await
+
+        let json: Value = response
+            .json()
+            .await
             .map_err(|e| anyhow!("Failed to parse RPC status response: {}", e))?;
-        
+
         // Extract network from response: result.node_info.network
         let network = json["result"]["node_info"]["network"]
             .as_str()
             .ok_or_else(|| anyhow!("Network field not found in RPC response"))?
             .to_string();
-        
+
         Ok(network)
     }
 }

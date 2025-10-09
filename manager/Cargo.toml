@@ -26,3 +26,13 @@ tower-http = { workspace = true }
 futures = { workspace = true }
 glob = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.2"
+wiremock = "0.6"
+tempfile = "3.8"
+rstest = "0.18"
+test-case = "3.3"
+serial_test = "3.0"
+fake = { version = "2.9", features = ["derive", "chrono"] }

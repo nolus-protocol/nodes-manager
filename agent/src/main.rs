@@ -1,7 +1,7 @@
 // File: agent/src/main.rs
 use anyhow::Result;
 use axum::{
-    extract::{Json, State, Path},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::Json as ResponseJson,
     routing::{get, post},
@@ -10,14 +10,14 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 mod operations;
 mod services;
 mod types;
 
-use operations::{pruning, snapshots, restore, state_sync};
-use services::{commands, systemctl, job_manager::JobManager};
+use operations::{pruning, restore, snapshots, state_sync};
+use services::{commands, job_manager::JobManager, systemctl};
 use types::*;
 
 #[derive(Clone)]
@@ -34,21 +34,30 @@ pub struct BusyState {
 }
 
 impl AppState {
-    async fn try_start_operation(&self, node_name: &str, operation_type: &str) -> Result<(), String> {
+    async fn try_start_operation(
+        &self,
+        node_name: &str,
+        operation_type: &str,
+    ) -> Result<(), String> {
         let mut busy = self.busy_nodes.write().await;
 
         if let Some(existing) = busy.get(node_name) {
             let duration = chrono::Utc::now().signed_duration_since(existing.started_at);
             return Err(format!(
                 "Node {} is busy with {} (started {}m ago)",
-                node_name, existing.operation_type, duration.num_minutes()
+                node_name,
+                existing.operation_type,
+                duration.num_minutes()
             ));
         }
 
-        busy.insert(node_name.to_string(), BusyState {
-            operation_type: operation_type.to_string(),
-            started_at: chrono::Utc::now(),
-        });
+        busy.insert(
+            node_name.to_string(),
+            BusyState {
+                operation_type: operation_type.to_string(),
+                started_at: chrono::Utc::now(),
+            },
+        );
 
         info!("Node {} marked as busy with {}", node_name, operation_type);
         Ok(())
@@ -58,8 +67,12 @@ impl AppState {
         let mut busy = self.busy_nodes.write().await;
         if let Some(state) = busy.remove(node_name) {
             let duration = chrono::Utc::now().signed_duration_since(state.started_at);
-            info!("Node {} operation {} completed after {}m",
-                  node_name, state.operation_type, duration.num_minutes());
+            info!(
+                "Node {} operation {} completed after {}m",
+                node_name,
+                state.operation_type,
+                duration.num_minutes()
+            );
         }
     }
 
@@ -71,23 +84,29 @@ impl AppState {
         busy.retain(|node_name, state| {
             let should_keep = state.started_at > cutoff;
             if !should_keep {
-                warn!("Cleaned up stuck operation on {} ({})", node_name, state.operation_type);
+                warn!(
+                    "Cleaned up stuck operation on {} ({})",
+                    node_name, state.operation_type
+                );
             }
             should_keep
         });
 
         let cleaned = initial_count - busy.len();
         if cleaned > 0 {
-            warn!("Cleaned up {} stuck operations older than {}h", cleaned, max_hours);
+            warn!(
+                "Cleaned up {} stuck operations older than {}h",
+                cleaned, max_hours
+            );
         }
         cleaned as u32
     }
 
     async fn get_busy_status(&self) -> HashMap<String, String> {
         let busy = self.busy_nodes.read().await;
-        busy.iter().map(|(node, state)| {
-            (node.clone(), state.operation_type.clone())
-        }).collect()
+        busy.iter()
+            .map(|(node, state)| (node.clone(), state.operation_type.clone()))
+            .collect()
     }
 }
 
@@ -97,8 +116,8 @@ async fn main() -> Result<()> {
 
     info!("Starting Blockchain Server Agent on 0.0.0.0:8745 with async job support");
 
-    let api_key = std::env::var("AGENT_API_KEY")
-        .unwrap_or_else(|_| "default-development-key".to_string());
+    let api_key =
+        std::env::var("AGENT_API_KEY").unwrap_or_else(|_| "default-development-key".to_string());
 
     if api_key == "default-development-key" {
         warn!("Using default development API key - set AGENT_API_KEY environment variable for production");
@@ -133,7 +152,7 @@ async fn main() -> Result<()> {
         .route("/snapshot/create", post(create_snapshot_async))
         .route("/snapshot/restore", post(restore_snapshot_async))
         .route("/snapshot/check-triggers", post(check_restore_triggers))
-        .route("/state-sync/execute", post(execute_state_sync_async))  // NEW: State sync endpoint
+        .route("/state-sync/execute", post(execute_state_sync_async)) // NEW: State sync endpoint
         .route("/operation/status/:job_id", get(get_job_status))
         .route("/status/busy", post(get_busy_status))
         .route("/status/cleanup", post(cleanup_operations))
@@ -227,7 +246,9 @@ async fn get_service_uptime(
     }
 
     match systemctl::get_service_uptime(&request.service_name).await {
-        Ok(uptime_seconds) => Ok(ResponseJson(ApiResponse::success_with_uptime(uptime_seconds))),
+        Ok(uptime_seconds) => Ok(ResponseJson(ApiResponse::success_with_uptime(
+            uptime_seconds,
+        ))),
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
 }
@@ -241,11 +262,15 @@ async fn truncate_logs(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    if let Err(err) = state.try_start_operation(&request.service_name, "log_truncation").await {
+    if let Err(err) = state
+        .try_start_operation(&request.service_name, "log_truncation")
+        .await
+    {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    let result = services::logs::truncate_service_logs(&request.service_name, &request.log_path).await;
+    let result =
+        services::logs::truncate_service_logs(&request.service_name, &request.log_path).await;
     state.finish_operation(&request.service_name).await;
 
     match result {
@@ -278,11 +303,17 @@ async fn execute_pruning_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    if let Err(err) = state.try_start_operation(&request.service_name, "pruning").await {
+    if let Err(err) = state
+        .try_start_operation(&request.service_name, "pruning")
+        .await
+    {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    let job_id = state.job_manager.create_job("pruning", &request.service_name).await;
+    let job_id = state
+        .job_manager
+        .create_job("pruning", &request.service_name)
+        .await;
 
     let state_clone = state.clone();
     let request_clone = request.clone();
@@ -297,18 +328,29 @@ async fn execute_pruning_async(
                     "output": output,
                     "operation": "pruning"
                 });
-                state_clone.job_manager.complete_job(&job_id_clone, result_json).await;
+                state_clone
+                    .job_manager
+                    .complete_job(&job_id_clone, result_json)
+                    .await;
             }
             Err(e) => {
                 error!("Pruning failed for {}: {}", request_clone.service_name, e);
-                state_clone.job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                state_clone
+                    .job_manager
+                    .fail_job(&job_id_clone, e.to_string())
+                    .await;
             }
         }
 
-        state_clone.finish_operation(&request_clone.service_name).await;
+        state_clone
+            .finish_operation(&request_clone.service_name)
+            .await;
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_job(
+        job_id,
+        "started".to_string(),
+    )))
 }
 
 async fn create_snapshot_async(
@@ -320,11 +362,17 @@ async fn create_snapshot_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_creation").await {
+    if let Err(err) = state
+        .try_start_operation(&request.node_name, "snapshot_creation")
+        .await
+    {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    let job_id = state.job_manager.create_job("snapshot_creation", &request.node_name).await;
+    let job_id = state
+        .job_manager
+        .create_job("snapshot_creation", &request.node_name)
+        .await;
 
     let state_clone = state.clone();
     let request_clone = request.clone();
@@ -348,18 +396,30 @@ async fn create_snapshot_async(
                     "compression": "directory",
                     "operation": "snapshot_creation"
                 });
-                state_clone.job_manager.complete_job(&job_id_clone, result_json).await;
+                state_clone
+                    .job_manager
+                    .complete_job(&job_id_clone, result_json)
+                    .await;
             }
             Err(e) => {
-                error!("Snapshot creation failed for {}: {}", request_clone.node_name, e);
-                state_clone.job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                error!(
+                    "Snapshot creation failed for {}: {}",
+                    request_clone.node_name, e
+                );
+                state_clone
+                    .job_manager
+                    .fail_job(&job_id_clone, e.to_string())
+                    .await;
             }
         }
 
         state_clone.finish_operation(&request_clone.node_name).await;
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_job(
+        job_id,
+        "started".to_string(),
+    )))
 }
 
 async fn restore_snapshot_async(
@@ -371,11 +431,17 @@ async fn restore_snapshot_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_restore").await {
+    if let Err(err) = state
+        .try_start_operation(&request.node_name, "snapshot_restore")
+        .await
+    {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    let job_id = state.job_manager.create_job("snapshot_restore", &request.node_name).await;
+    let job_id = state
+        .job_manager
+        .create_job("snapshot_restore", &request.node_name)
+        .await;
 
     let state_clone = state.clone();
     let request_clone = request.clone();
@@ -390,18 +456,30 @@ async fn restore_snapshot_async(
                     "output": output,
                     "operation": "snapshot_restore"
                 });
-                state_clone.job_manager.complete_job(&job_id_clone, result_json).await;
+                state_clone
+                    .job_manager
+                    .complete_job(&job_id_clone, result_json)
+                    .await;
             }
             Err(e) => {
-                error!("Snapshot restore failed for {}: {}", request_clone.node_name, e);
-                state_clone.job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                error!(
+                    "Snapshot restore failed for {}: {}",
+                    request_clone.node_name, e
+                );
+                state_clone
+                    .job_manager
+                    .fail_job(&job_id_clone, e.to_string())
+                    .await;
             }
         }
 
         state_clone.finish_operation(&request_clone.node_name).await;
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_job(
+        job_id,
+        "started".to_string(),
+    )))
 }
 
 // NEW: State sync async endpoint
@@ -414,11 +492,17 @@ async fn execute_state_sync_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    if let Err(err) = state.try_start_operation(&request.service_name, "state_sync").await {
+    if let Err(err) = state
+        .try_start_operation(&request.service_name, "state_sync")
+        .await
+    {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    let job_id = state.job_manager.create_job("state_sync", &request.service_name).await;
+    let job_id = state
+        .job_manager
+        .create_job("state_sync", &request.service_name)
+        .await;
 
     let state_clone = state.clone();
     let request_clone = request.clone();
@@ -433,18 +517,32 @@ async fn execute_state_sync_async(
                     "output": output,
                     "operation": "state_sync"
                 });
-                state_clone.job_manager.complete_job(&job_id_clone, result_json).await;
+                state_clone
+                    .job_manager
+                    .complete_job(&job_id_clone, result_json)
+                    .await;
             }
             Err(e) => {
-                error!("State sync failed for {}: {}", request_clone.service_name, e);
-                state_clone.job_manager.fail_job(&job_id_clone, e.to_string()).await;
+                error!(
+                    "State sync failed for {}: {}",
+                    request_clone.service_name, e
+                );
+                state_clone
+                    .job_manager
+                    .fail_job(&job_id_clone, e.to_string())
+                    .await;
             }
         }
 
-        state_clone.finish_operation(&request_clone.service_name).await;
+        state_clone
+            .finish_operation(&request_clone.service_name)
+            .await;
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_job(
+        job_id,
+        "started".to_string(),
+    )))
 }
 
 async fn get_job_status(
@@ -481,7 +579,10 @@ async fn get_job_status(
 
             Ok(ResponseJson(response))
         }
-        None => Ok(ResponseJson(ApiResponse::error(format!("Job {} not found", job_id))))
+        None => Ok(ResponseJson(ApiResponse::error(format!(
+            "Job {} not found",
+            job_id
+        )))),
     }
 }
 
@@ -494,13 +595,19 @@ async fn check_restore_triggers(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let log_file = request.get("log_file")
+    let log_file = request
+        .get("log_file")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let trigger_words: Vec<String> = request.get("trigger_words")
+    let trigger_words: Vec<String> = request
+        .get("trigger_words")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
 
     match commands::check_log_for_trigger_words(log_file, &trigger_words).await {
@@ -510,7 +617,9 @@ async fn check_restore_triggers(
                 "log_file": log_file,
                 "trigger_words": trigger_words
             });
-            Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
+            Ok(ResponseJson(ApiResponse::success_with_output(
+                response.to_string(),
+            )))
         }
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
@@ -534,7 +643,9 @@ async fn get_busy_status(
         "running_jobs": running_jobs.len()
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_output(
+        response.to_string(),
+    )))
 }
 
 async fn cleanup_operations(
@@ -546,7 +657,8 @@ async fn cleanup_operations(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let max_hours = request.get("max_hours")
+    let max_hours = request
+        .get("max_hours")
         .and_then(|v| v.as_i64())
         .unwrap_or(12);
 
@@ -559,5 +671,7 @@ async fn cleanup_operations(
         "max_hours": max_hours
     });
 
-    Ok(ResponseJson(ApiResponse::success_with_output(response.to_string())))
+    Ok(ResponseJson(ApiResponse::success_with_output(
+        response.to_string(),
+    )))
 }

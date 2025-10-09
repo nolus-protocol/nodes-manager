@@ -30,4 +30,4 @@
 
 pub mod manager;
 
-pub use manager::{SnapshotManager, SnapshotInfo, SnapshotStats};
+pub use manager::{SnapshotInfo, SnapshotManager, SnapshotStats};

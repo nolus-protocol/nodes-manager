@@ -3,9 +3,9 @@ use crate::config::{Config, ConfigManager};
 use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
-use crate::snapshot::SnapshotManager;
 use crate::operation_tracker::SimpleOperationTracker;
-use crate::web::{AppState, handlers};
+use crate::snapshot::SnapshotManager;
+use crate::web::{handlers, AppState};
 use anyhow::Result;
 use axum::{
     routing::{delete, get, post},
@@ -63,52 +63,102 @@ fn create_router(state: AppState) -> Router {
     Router::new()
         // === ROOT ROUTE ===
         .route("/", get(handlers::serve_index))
-
         // === HEALTH MONITORING ROUTES ===
         .route("/api/health/nodes", get(handlers::get_all_nodes_health))
-        .route("/api/health/nodes/:node_name", get(handlers::get_node_health))
+        .route(
+            "/api/health/nodes/:node_name",
+            get(handlers::get_node_health),
+        )
         .route("/api/health/hermes", get(handlers::get_all_hermes_health))
-        .route("/api/health/hermes/:hermes_name", get(handlers::get_hermes_health))
-
+        .route(
+            "/api/health/hermes/:hermes_name",
+            get(handlers::get_hermes_health),
+        )
         // === NEW: ETL SERVICE HEALTH ROUTES ===
         .route("/api/health/etl", get(handlers::get_all_etl_health))
-        .route("/api/health/etl/:service_name", get(handlers::get_etl_health))
-        .route("/api/health/etl/refresh", post(handlers::refresh_etl_health))
-
+        .route(
+            "/api/health/etl/:service_name",
+            get(handlers::get_etl_health),
+        )
+        .route(
+            "/api/health/etl/refresh",
+            post(handlers::refresh_etl_health),
+        )
         // === CONFIGURATION ROUTES ===
         .route("/api/config/nodes", get(handlers::get_all_node_configs))
         .route("/api/config/hermes", get(handlers::get_all_hermes_configs))
         .route("/api/config/etl", get(handlers::get_all_etl_configs))
-
         // === MANUAL OPERATION ROUTES (WITH OPERATION TRACKING) ===
-        .route("/api/maintenance/nodes/:node_name/restart", post(handlers::execute_manual_node_restart))
-        .route("/api/maintenance/nodes/:node_name/prune", post(handlers::execute_manual_node_pruning))
-        .route("/api/maintenance/hermes/:hermes_name/restart", post(handlers::execute_manual_hermes_restart))
-
+        .route(
+            "/api/maintenance/nodes/:node_name/restart",
+            post(handlers::execute_manual_node_restart),
+        )
+        .route(
+            "/api/maintenance/nodes/:node_name/prune",
+            post(handlers::execute_manual_node_pruning),
+        )
+        .route(
+            "/api/maintenance/hermes/:hermes_name/restart",
+            post(handlers::execute_manual_hermes_restart),
+        )
         // === SNAPSHOT MANAGEMENT ROUTES ===
-        .route("/api/snapshots/:node_name/create", post(handlers::create_snapshot))
-        .route("/api/snapshots/:node_name/list", get(handlers::list_snapshots))
-        .route("/api/snapshots/:node_name/stats", get(handlers::get_snapshot_stats))
-        .route("/api/snapshots/:node_name/:filename", delete(handlers::delete_snapshot))
-        .route("/api/snapshots/:node_name/cleanup", post(handlers::cleanup_old_snapshots))
-
+        .route(
+            "/api/snapshots/:node_name/create",
+            post(handlers::create_snapshot),
+        )
+        .route(
+            "/api/snapshots/:node_name/list",
+            get(handlers::list_snapshots),
+        )
+        .route(
+            "/api/snapshots/:node_name/stats",
+            get(handlers::get_snapshot_stats),
+        )
+        .route(
+            "/api/snapshots/:node_name/:filename",
+            delete(handlers::delete_snapshot),
+        )
+        .route(
+            "/api/snapshots/:node_name/cleanup",
+            post(handlers::cleanup_old_snapshots),
+        )
         // === NEW: MANUAL RESTORE ROUTES ===
-        .route("/api/snapshots/:node_name/restore", post(handlers::execute_manual_restore_from_latest))
-        .route("/api/snapshots/:node_name/check-triggers", get(handlers::check_auto_restore_triggers))
-        .route("/api/snapshots/:node_name/auto-restore-status", get(handlers::get_auto_restore_status))
-
+        .route(
+            "/api/snapshots/:node_name/restore",
+            post(handlers::execute_manual_restore_from_latest),
+        )
+        .route(
+            "/api/snapshots/:node_name/check-triggers",
+            get(handlers::check_auto_restore_triggers),
+        )
+        .route(
+            "/api/snapshots/:node_name/auto-restore-status",
+            get(handlers::get_auto_restore_status),
+        )
         // === OPERATION MANAGEMENT ROUTES ===
-        .route("/api/operations/active", get(handlers::get_active_operations))
-        .route("/api/operations/:target_name/cancel", post(handlers::cancel_operation))
-        .route("/api/operations/:target_name/status", get(handlers::check_target_status))
-        .route("/api/operations/emergency-cleanup", post(handlers::emergency_cleanup_operations))
-
+        .route(
+            "/api/operations/active",
+            get(handlers::get_active_operations),
+        )
+        .route(
+            "/api/operations/:target_name/cancel",
+            post(handlers::cancel_operation),
+        )
+        .route(
+            "/api/operations/:target_name/status",
+            get(handlers::check_target_status),
+        )
+        .route(
+            "/api/operations/emergency-cleanup",
+            post(handlers::emergency_cleanup_operations),
+        )
         // === MAINTENANCE SCHEDULE ROUTES (SIMPLIFIED STUB) ===
-        .route("/api/maintenance/schedule", get(handlers::get_maintenance_schedule))
-
+        .route(
+            "/api/maintenance/schedule",
+            get(handlers::get_maintenance_schedule),
+        )
         // === STATIC FILES ===
         .nest_service("/static", ServeDir::new("static"))
-
         // Add middleware
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

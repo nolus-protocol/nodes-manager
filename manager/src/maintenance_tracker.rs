@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn, instrument};
+use tracing::{error, info, instrument, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceWindow {
@@ -116,7 +116,10 @@ impl MaintenanceTracker {
                 maintenance.estimated_duration_minutes
             );
         } else {
-            warn!("Tried to end maintenance for node {} but it was not in maintenance", node_name);
+            warn!(
+                "Tried to end maintenance for node {} but it was not in maintenance",
+                node_name
+            );
         }
         Ok(())
     }
@@ -129,7 +132,8 @@ impl MaintenanceTracker {
 
     pub async fn cleanup_expired_maintenance(&self, max_duration_hours: u32) -> u32 {
         let mut active = self.active_maintenance.write().await;
-        let cutoff_timestamp = Utc::now().timestamp_millis() - (max_duration_hours as i64 * 3600 * 1000);
+        let cutoff_timestamp =
+            Utc::now().timestamp_millis() - (max_duration_hours as i64 * 3600 * 1000);
         let initial_count = active.len();
 
         let mut cleaned_nodes = Vec::with_capacity(4);
@@ -156,8 +160,10 @@ impl MaintenanceTracker {
 
         let cleaned_count = initial_count - active.len();
         if cleaned_count > 0 {
-            error!("Cleaned up {} expired maintenance windows ({}h max): {:?}",
-                   cleaned_count, max_duration_hours, cleaned_nodes);
+            error!(
+                "Cleaned up {} expired maintenance windows ({}h max): {:?}",
+                cleaned_count, max_duration_hours, cleaned_nodes
+            );
         }
 
         cleaned_count as u32

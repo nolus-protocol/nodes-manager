@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::constants::alerts;
 
@@ -111,13 +111,15 @@ impl AlertService {
             previous_states.insert(node_name.to_string(), is_healthy);
 
             match (previous_health, is_healthy) {
-                (Some(true), false) | (None, false) => true,  // Became unhealthy
+                (Some(true), false) | (None, false) => true, // Became unhealthy
                 (Some(false), true) => {
                     // Became healthy - check if we should send recovery
-                    return self.send_recovery_alert_if_needed(node_name, server_host, details).await;
+                    return self
+                        .send_recovery_alert_if_needed(node_name, server_host, details)
+                        .await;
                 }
-                (Some(false), false) => true,  // Still unhealthy
-                _ => false,  // Still healthy or no change
+                (Some(false), false) => true, // Still unhealthy
+                _ => false,                   // Still healthy or no change
             }
         };
 
@@ -152,12 +154,19 @@ impl AlertService {
                         alert_state.alert_count = 1;
                         alert_state.last_alert_sent = now;
                         alert_state.has_sent_alert = true;
-                        info!("Node {} unhealthy for {} consecutive checks - sending first alert", 
-                              node_name, alerts::FIRST_ALERT_AFTER_CHECKS);
+                        info!(
+                            "Node {} unhealthy for {} consecutive checks - sending first alert",
+                            node_name,
+                            alerts::FIRST_ALERT_AFTER_CHECKS
+                        );
                         true
                     } else {
-                        info!("Node {} unhealthy check {}/{} - no alert sent yet", 
-                              node_name, alert_state.consecutive_failures, alerts::FIRST_ALERT_AFTER_CHECKS);
+                        info!(
+                            "Node {} unhealthy check {}/{} - no alert sent yet",
+                            node_name,
+                            alert_state.consecutive_failures,
+                            alerts::FIRST_ALERT_AFTER_CHECKS
+                        );
                         false
                     }
                 } else {
@@ -176,11 +185,19 @@ impl AlertService {
                     if should_send {
                         alert_state.alert_count += 1;
                         alert_state.last_alert_sent = now;
-                        let total_hours = now.signed_duration_since(alert_state.first_alert_time).num_hours();
-                        info!("Sending follow-up alert #{} for {} (unhealthy for {} hours)", alert_state.alert_count, node_name, total_hours);
+                        let total_hours = now
+                            .signed_duration_since(alert_state.first_alert_time)
+                            .num_hours();
+                        info!(
+                            "Sending follow-up alert #{} for {} (unhealthy for {} hours)",
+                            alert_state.alert_count, node_name, total_hours
+                        );
                         true
                     } else {
-                        debug!("Node {} still unhealthy but not yet time for next alert", node_name);
+                        debug!(
+                            "Node {} still unhealthy but not yet time for next alert",
+                            node_name
+                        );
                         false
                     }
                 }
@@ -267,16 +284,23 @@ impl AlertService {
     /// Private method to send webhook
     async fn send_webhook(&self, payload: &AlertPayload) -> Result<()> {
         if !self.is_enabled {
-            warn!("Alert service disabled - webhook URL not configured. Alert would be: {} - {}", payload.node_name, payload.message);
+            warn!(
+                "Alert service disabled - webhook URL not configured. Alert would be: {} - {}",
+                payload.node_name, payload.message
+            );
             warn!("Set 'alarm_webhook_url' in config/main.toml to enable alerts");
             return Ok(());
         }
 
-        info!("Sending alert for {}: {:?} to {}", payload.node_name, payload.alert_type, self.webhook_url);
+        info!(
+            "Sending alert for {}: {:?} to {}",
+            payload.node_name, payload.alert_type, self.webhook_url
+        );
 
         match timeout(
             Duration::from_secs(10),
-            self.client.post(&self.webhook_url)
+            self.client
+                .post(&self.webhook_url)
                 .header("Content-Type", "application/json")
                 .json(payload)
                 .send(),
@@ -285,18 +309,35 @@ impl AlertService {
         {
             Ok(Ok(response)) => {
                 if response.status().is_success() {
-                    info!("Alert sent successfully for {}: {:?} (status: {})", payload.node_name, payload.alert_type, response.status());
+                    info!(
+                        "Alert sent successfully for {}: {:?} (status: {})",
+                        payload.node_name,
+                        payload.alert_type,
+                        response.status()
+                    );
                 } else {
                     let status = response.status();
-                    let body = response.text().await.unwrap_or_else(|_| "Failed to read response body".to_string());
-                    error!("Alert webhook returned status: {} for {} - Response: {}", status, payload.node_name, body);
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Failed to read response body".to_string());
+                    error!(
+                        "Alert webhook returned status: {} for {} - Response: {}",
+                        status, payload.node_name, body
+                    );
                 }
             }
             Ok(Err(e)) => {
-                error!("Failed to send alert for {}: {} - Webhook URL: {}", payload.node_name, e, self.webhook_url);
+                error!(
+                    "Failed to send alert for {}: {} - Webhook URL: {}",
+                    payload.node_name, e, self.webhook_url
+                );
             }
             Err(_) => {
-                error!("Alert webhook timeout for {} - URL: {}", payload.node_name, self.webhook_url);
+                error!(
+                    "Alert webhook timeout for {} - URL: {}",
+                    payload.node_name, self.webhook_url
+                );
             }
         }
 
@@ -306,7 +347,9 @@ impl AlertService {
     /// Test webhook connectivity
     pub async fn test_webhook(&self) -> Result<()> {
         if !self.is_enabled {
-            return Err(anyhow::anyhow!("Alert service is disabled - no webhook URL configured"));
+            return Err(anyhow::anyhow!(
+                "Alert service is disabled - no webhook URL configured"
+            ));
         }
 
         let test_payload = AlertPayload {

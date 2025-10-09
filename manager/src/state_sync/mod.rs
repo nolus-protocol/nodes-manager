@@ -40,7 +40,7 @@ pub use rpc_client::fetch_state_sync_params;
 use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use crate::config::Config;
 use crate::http::HttpAgentManager;
@@ -65,44 +65,58 @@ impl StateSyncManager {
         info!("🔄 Starting state sync for {}", node_name);
 
         // Get node configuration
-        let node_config = self.config.nodes.get(node_name)
+        let node_config = self
+            .config
+            .nodes
+            .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
         if !node_config.state_sync_enabled.unwrap_or(false) {
             return Err(anyhow::anyhow!("State sync not enabled for {}", node_name));
         }
 
-        let rpc_sources = node_config.state_sync_rpc_sources.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No RPC sources configured for state sync on {}", node_name))?;
+        let rpc_sources = node_config.state_sync_rpc_sources.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No RPC sources configured for state sync on {}", node_name)
+        })?;
 
         let trust_height_offset = node_config.state_sync_trust_height_offset.unwrap_or(2000);
-        let max_sync_timeout = node_config.state_sync_max_sync_timeout_seconds.unwrap_or(600);
+        let max_sync_timeout = node_config
+            .state_sync_max_sync_timeout_seconds
+            .unwrap_or(600);
 
         // Get required paths
-        let home_dir = node_config.pruning_deploy_path.as_ref()
+        let home_dir = node_config
+            .pruning_deploy_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No home directory configured for {}", node_name))?;
         let config_path = format!("{}/config/config.toml", home_dir);
-        let service_name = node_config.pruning_service_name.as_ref()
+        let service_name = node_config
+            .pruning_service_name
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
         // Step 1: Fetch state sync parameters from RPC - FAIL FAST
         info!("Fetching state sync parameters from RPC sources");
-        let sync_params = rpc_client::fetch_state_sync_params(
-            rpc_sources,
-            trust_height_offset,
-        ).await.map_err(|e| {
-            error!("Failed to fetch state sync parameters: {}", e);
-            e
-        })?;
+        let sync_params = rpc_client::fetch_state_sync_params(rpc_sources, trust_height_offset)
+            .await
+            .map_err(|e| {
+                error!("Failed to fetch state sync parameters: {}", e);
+                e
+            })?;
 
-        info!("✓ State sync parameters fetched: height={}, hash={}",
-              sync_params.trust_height, sync_params.trust_hash);
+        info!(
+            "✓ State sync parameters fetched: height={}, hash={}",
+            sync_params.trust_height, sync_params.trust_hash
+        );
 
         // Step 2: Determine daemon binary (chain-specific)
         let daemon_binary = self.determine_daemon_binary(&node_config.network);
 
         // Step 3: Execute state sync via agent - FAIL FAST
-        info!("Sending state sync request to agent on {}", node_config.server_host);
+        info!(
+            "Sending state sync request to agent on {}",
+            node_config.server_host
+        );
 
         let payload = json!({
             "service_name": service_name,
@@ -116,13 +130,20 @@ impl StateSyncManager {
             "log_path": node_config.log_path,
         });
 
-        let result = http_manager.config.servers.get(&node_config.server_host)
+        let result = http_manager
+            .config
+            .servers
+            .get(&node_config.server_host)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", node_config.server_host))?;
 
-        let agent_url = format!("http://{}:{}/state-sync/execute",
-                               result.host, result.agent_port);
+        let agent_url = format!(
+            "http://{}:{}/state-sync/execute",
+            result.host, result.agent_port
+        );
 
-        let response = http_manager.client.post(&agent_url)
+        let response = http_manager
+            .client
+            .post(&agent_url)
             .header("Authorization", format!("Bearer {}", result.api_key))
             .json(&payload)
             .send()
@@ -132,21 +153,35 @@ impl StateSyncManager {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("State sync failed with status {}: {}", status, error_text));
+            return Err(anyhow::anyhow!(
+                "State sync failed with status {}: {}",
+                status,
+                error_text
+            ));
         }
 
-        let result: serde_json::Value = response.json().await
+        let result: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
 
-        if !result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-            let error_msg = result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        if !result
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let error_msg = result
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
             return Err(anyhow::anyhow!("State sync failed: {}", error_msg));
         }
 
         // Handle async job polling if job_id returned
         if let Some(job_id) = result.get("job_id").and_then(|v| v.as_str()) {
             info!("State sync job started with ID: {}", job_id);
-            self.poll_state_sync_job(http_manager, &node_config.server_host, job_id).await?;
+            self.poll_state_sync_job(http_manager, &node_config.server_host, job_id)
+                .await?;
         }
 
         info!("✓ State sync completed successfully for {}", node_name);
@@ -162,11 +197,16 @@ impl StateSyncManager {
     ) -> Result<()> {
         use tokio::time::{sleep, Duration};
 
-        let server_config = self.config.servers.get(server_host)
+        let server_config = self
+            .config
+            .servers
+            .get(server_host)
             .ok_or_else(|| anyhow::anyhow!("Server {} not found", server_host))?;
 
-        let status_url = format!("http://{}:{}/operation/status/{}",
-                               server_config.host, server_config.agent_port, job_id);
+        let status_url = format!(
+            "http://{}:{}/operation/status/{}",
+            server_config.host, server_config.agent_port, job_id
+        );
 
         const POLL_INTERVAL: u64 = 30; // Poll every 30 seconds
         let mut poll_count = 0;
@@ -176,7 +216,9 @@ impl StateSyncManager {
             info!("Polling state sync job status (poll #{})", poll_count);
             sleep(Duration::from_secs(POLL_INTERVAL)).await;
 
-            let response = http_manager.client.get(&status_url)
+            let response = http_manager
+                .client
+                .get(&status_url)
                 .header("Authorization", format!("Bearer {}", server_config.api_key))
                 .send()
                 .await
@@ -186,7 +228,9 @@ impl StateSyncManager {
                 continue; // Keep polling on errors
             }
 
-            let status_result: serde_json::Value = response.json().await
+            let status_result: serde_json::Value = response
+                .json()
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to parse status response: {}", e))?;
 
             if let Some(job_status) = status_result.get("job_status").and_then(|v| v.as_str()) {
@@ -196,7 +240,8 @@ impl StateSyncManager {
                         return Ok(());
                     }
                     "Failed" => {
-                        let error_msg = status_result.get("error")
+                        let error_msg = status_result
+                            .get("error")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Job failed");
                         return Err(anyhow::anyhow!("State sync job failed: {}", error_msg));

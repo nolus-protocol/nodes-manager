@@ -1,9 +1,9 @@
 // File: manager/src/health/monitor.rs
-use crate::config::{Config, NodeConfig, ServerConfig, EtlConfig};
+use crate::config::{Config, EtlConfig, NodeConfig, ServerConfig};
 use crate::database::{Database, HealthRecord};
 use crate::maintenance_tracker::MaintenanceTracker;
+use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
 use crate::snapshot::SnapshotManager;
-use crate::services::alert_service::{AlertService, AlertType, AlertSeverity};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{debug, error, info, warn, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,13 +162,18 @@ impl HealthMonitor {
 
             // Skip health checks entirely for nodes in maintenance
             if self.maintenance_tracker.is_in_maintenance(node_name).await {
-                info!("Skipping health check for {} - node in maintenance mode", node_name);
+                info!(
+                    "Skipping health check for {} - node in maintenance mode",
+                    node_name
+                );
 
                 let maintenance_status = HealthStatus {
                     node_name: node_name.clone(),
                     rpc_url: node_config.rpc_url.clone(),
                     is_healthy: false,
-                    error_message: Some("Node is in maintenance mode - health checks suspended".to_string()),
+                    error_message: Some(
+                        "Node is in maintenance mode - health checks suspended".to_string(),
+                    ),
                     last_check: Utc::now(),
                     block_height: None,
                     is_syncing: None,
@@ -188,7 +193,9 @@ impl HealthMonitor {
                 let node_name = node_name.clone();
                 let node_config = node_config.clone();
                 let monitor = self.clone();
-                tokio::spawn(async move { monitor.check_node_health(&node_name, &node_config).await })
+                tokio::spawn(
+                    async move { monitor.check_node_health(&node_name, &node_config).await },
+                )
             };
             tasks.push(task);
         }
@@ -205,17 +212,24 @@ impl HealthMonitor {
         // Store results in database and handle alerts
         for status in &health_statuses {
             if let Err(e) = self.store_health_record(status).await {
-                error!("Failed to store health record for {}: {}", status.node_name, e);
+                error!(
+                    "Failed to store health record for {}: {}",
+                    status.node_name, e
+                );
             }
 
             // Send alerts using centralized AlertService
             if let Err(e) = self.handle_health_alerts(status).await {
-                error!("Failed to handle health alerts for {}: {}", status.node_name, e);
+                error!(
+                    "Failed to handle health alerts for {}: {}",
+                    status.node_name, e
+                );
             }
         }
 
         // Per-node log monitoring - only for healthy nodes NOT in maintenance
-        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+        let non_maintenance_statuses: Vec<_> = health_statuses
+            .iter()
             .filter(|status| !status.in_maintenance)
             .collect();
 
@@ -226,13 +240,17 @@ impl HealthMonitor {
         }
 
         // Auto-restore monitoring - only check UNHEALTHY nodes ONCE per unhealthy period
-        let non_maintenance_statuses: Vec<_> = health_statuses.iter()
+        let non_maintenance_statuses: Vec<_> = health_statuses
+            .iter()
             .filter(|status| !status.in_maintenance)
             .cloned()
             .collect();
 
         if !non_maintenance_statuses.is_empty() {
-            if let Err(e) = self.monitor_auto_restore_triggers(&non_maintenance_statuses).await {
+            if let Err(e) = self
+                .monitor_auto_restore_triggers(&non_maintenance_statuses)
+                .await
+            {
                 error!("Auto-restore monitoring failed: {}", e);
             }
         }
@@ -255,7 +273,11 @@ impl HealthMonitor {
                 let service_name = service_name.clone();
                 let etl_config = etl_config.clone();
                 let monitor = self.clone();
-                tokio::spawn(async move { monitor.check_etl_service_health(&service_name, &etl_config).await })
+                tokio::spawn(async move {
+                    monitor
+                        .check_etl_service_health(&service_name, &etl_config)
+                        .await
+                })
             };
             tasks.push(task);
         }
@@ -272,12 +294,18 @@ impl HealthMonitor {
         // Store results in database and handle alerts
         for status in &etl_statuses {
             if let Err(e) = self.store_etl_health_record(status).await {
-                error!("Failed to store ETL health record for {}: {}", status.service_name, e);
+                error!(
+                    "Failed to store ETL health record for {}: {}",
+                    status.service_name, e
+                );
             }
 
             // Send alerts using centralized AlertService
             if let Err(e) = self.handle_etl_health_alerts(status).await {
-                error!("Failed to handle ETL health alerts for {}: {}", status.service_name, e);
+                error!(
+                    "Failed to handle ETL health alerts for {}: {}",
+                    status.service_name, e
+                );
             }
         }
 
@@ -285,7 +313,11 @@ impl HealthMonitor {
     }
 
     // NEW: Check individual ETL service health
-    pub async fn check_etl_service_health(&self, service_name: &str, etl_config: &EtlConfig) -> Result<EtlHealthStatus> {
+    pub async fn check_etl_service_health(
+        &self,
+        service_name: &str,
+        etl_config: &EtlConfig,
+    ) -> Result<EtlHealthStatus> {
         let endpoint = etl_config.endpoint.as_deref().unwrap_or("/health");
         let service_url = format!("http://{}:{}{}", etl_config.host, etl_config.port, endpoint);
 
@@ -303,7 +335,10 @@ impl HealthMonitor {
 
         let start_time = std::time::Instant::now();
 
-        match self.fetch_etl_health(&service_url, etl_config.timeout_seconds.unwrap_or(10)).await {
+        match self
+            .fetch_etl_health(&service_url, etl_config.timeout_seconds.unwrap_or(10))
+            .await
+        {
             Ok(response_status) => {
                 let response_time = start_time.elapsed().as_millis() as u64;
                 status.response_time_ms = Some(response_time);
@@ -311,17 +346,26 @@ impl HealthMonitor {
 
                 if response_status == 200 {
                     status.is_healthy = true;
-                    debug!("ETL service {} is healthy ({}ms response)", service_name, response_time);
+                    debug!(
+                        "ETL service {} is healthy ({}ms response)",
+                        service_name, response_time
+                    );
                 } else {
                     status.error_message = Some(format!("HTTP status {}", response_status));
-                    debug!("ETL service {} returned status {} ({}ms response)", service_name, response_status, response_time);
+                    debug!(
+                        "ETL service {} returned status {} ({}ms response)",
+                        service_name, response_status, response_time
+                    );
                 }
             }
             Err(e) => {
                 let response_time = start_time.elapsed().as_millis() as u64;
                 status.response_time_ms = Some(response_time);
                 status.error_message = Some(e.to_string());
-                debug!("ETL service {} health check failed: {} ({}ms)", service_name, e, response_time);
+                debug!(
+                    "ETL service {} health check failed: {} ({}ms)",
+                    service_name, e, response_time
+                );
             }
         }
 
@@ -350,13 +394,15 @@ impl HealthMonitor {
             "last_check": status.last_check.to_rfc3339()
         }));
 
-        self.alert_service.send_progressive_alert(
-            &status.service_name,
-            &status.server_host,
-            status.is_healthy,
-            status.error_message.clone(),
-            details,
-        ).await
+        self.alert_service
+            .send_progressive_alert(
+                &status.service_name,
+                &status.server_host,
+                status.is_healthy,
+                status.error_message.clone(),
+                details,
+            )
+            .await
     }
 
     // NEW: Store ETL health record (reuse existing table with service type)
@@ -376,14 +422,18 @@ impl HealthMonitor {
     }
 
     // NEW: Get ETL service health from database
-    pub async fn get_etl_service_health(&self, service_name: &str) -> Result<Option<EtlHealthStatus>> {
+    pub async fn get_etl_service_health(
+        &self,
+        service_name: &str,
+    ) -> Result<Option<EtlHealthStatus>> {
         let etl_key = format!("etl:{}", service_name);
         let record = self.database.get_latest_health_record(&etl_key).await?;
 
         match record {
             Some(record) => {
-                let etl_config = self.config.etl.get(service_name)
-                    .ok_or_else(|| anyhow!("ETL service {} not found in configuration", service_name))?;
+                let etl_config = self.config.etl.get(service_name).ok_or_else(|| {
+                    anyhow!("ETL service {} not found in configuration", service_name)
+                })?;
 
                 let status = EtlHealthStatus {
                     service_name: service_name.to_string(),
@@ -418,13 +468,15 @@ impl HealthMonitor {
             "last_check": status.last_check.to_rfc3339()
         }));
 
-        self.alert_service.send_progressive_alert(
-            &status.node_name,
-            &status.server_host,
-            status.is_healthy,
-            status.error_message.clone(),
-            details,
-        ).await
+        self.alert_service
+            .send_progressive_alert(
+                &status.node_name,
+                &status.server_host,
+                status.is_healthy,
+                status.error_message.clone(),
+                details,
+            )
+            .await
     }
 
     // Auto-restore monitoring - only for UNHEALTHY nodes and only ONCE per unhealthy period
@@ -434,7 +486,8 @@ impl HealthMonitor {
             _ => return Ok(()),
         };
 
-        let unhealthy_nodes: Vec<_> = health_statuses.iter()
+        let unhealthy_nodes: Vec<_> = health_statuses
+            .iter()
             .filter(|status| !status.is_healthy && status.enabled && !status.in_maintenance)
             .collect();
 
@@ -443,13 +496,22 @@ impl HealthMonitor {
             return Ok(());
         }
 
-        info!("Checking auto-restore triggers for {} unhealthy nodes", unhealthy_nodes.len());
+        info!(
+            "Checking auto-restore triggers for {} unhealthy nodes",
+            unhealthy_nodes.len()
+        );
 
         let mut tasks = Vec::new();
 
         for status in unhealthy_nodes {
-            if self.has_already_checked_auto_restore(&status.node_name).await {
-                debug!("Auto-restore triggers already checked for {} during current unhealthy state", status.node_name);
+            if self
+                .has_already_checked_auto_restore(&status.node_name)
+                .await
+            {
+                debug!(
+                    "Auto-restore triggers already checked for {} during current unhealthy state",
+                    status.node_name
+                );
                 continue;
             }
 
@@ -474,7 +536,14 @@ impl HealthMonitor {
             let monitor = self.clone();
 
             let task = tokio::spawn(async move {
-                monitor.check_auto_restore_triggers_for_node(&node_name, &server_host, &log_path, &trigger_words).await
+                monitor
+                    .check_auto_restore_triggers_for_node(
+                        &node_name,
+                        &server_host,
+                        &log_path,
+                        &trigger_words,
+                    )
+                    .await
             });
 
             tasks.push(task);
@@ -514,7 +583,10 @@ impl HealthMonitor {
             return Ok(());
         }
 
-        let server_config = self.config.servers.get(server_host)
+        let server_config = self
+            .config
+            .servers
+            .get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
         let log_file = format!("{}/out1.log", log_path);
@@ -528,7 +600,10 @@ impl HealthMonitor {
 
         match self.execute_log_command(server_config, &command).await {
             Ok(_) => {
-                warn!("Auto-restore trigger words found in {} log file: {}", node_name, log_file);
+                warn!(
+                    "Auto-restore trigger words found in {} log file: {}",
+                    node_name, log_file
+                );
                 if let Err(e) = self.execute_auto_restore(node_name, trigger_words).await {
                     error!("Auto-restore failed for {}: {}", node_name, e);
                     // Send failure alert using AlertService
@@ -565,8 +640,11 @@ impl HealthMonitor {
                 if hours_since_last >= 2 {
                     true
                 } else {
-                    debug!("Auto-restore for {} is in cooldown ({}h remaining)",
-                          node_name, 2 - hours_since_last);
+                    debug!(
+                        "Auto-restore for {} is in cooldown ({}h remaining)",
+                        node_name,
+                        2 - hours_since_last
+                    );
                     false
                 }
             }
@@ -575,36 +653,52 @@ impl HealthMonitor {
     }
 
     async fn execute_auto_restore(&self, node_name: &str, trigger_words: &[String]) -> Result<()> {
-        info!("Executing auto-restore for {} due to trigger words: {:?}", node_name, trigger_words);
+        info!(
+            "Executing auto-restore for {} due to trigger words: {:?}",
+            node_name, trigger_words
+        );
 
         {
             let mut cooldowns = self.auto_restore_cooldowns.lock().await;
             let now = Utc::now();
-            let cooldown = cooldowns.entry(node_name.to_string()).or_insert(AutoRestoreCooldown {
-                last_restore_attempt: now,
-                restore_count: 0,
-            });
+            let cooldown = cooldowns
+                .entry(node_name.to_string())
+                .or_insert(AutoRestoreCooldown {
+                    last_restore_attempt: now,
+                    restore_count: 0,
+                });
             cooldown.last_restore_attempt = now;
             cooldown.restore_count += 1;
         }
 
         // Send starting notification
-        let server_host = self.get_server_for_node(node_name).await.unwrap_or_else(|| "unknown".to_string());
-        self.alert_service.send_immediate_alert(
-            AlertType::AutoRestore,
-            AlertSeverity::Warning,
-            node_name,
-            &server_host,
-            format!("Auto-restore STARTED for {} due to corruption indicators", node_name),
-            Some(serde_json::json!({
-                "trigger_words": trigger_words,
-                "status": "starting"
-            })),
-        ).await?;
+        let server_host = self
+            .get_server_for_node(node_name)
+            .await
+            .unwrap_or_else(|| "unknown".to_string());
+        self.alert_service
+            .send_immediate_alert(
+                AlertType::AutoRestore,
+                AlertSeverity::Warning,
+                node_name,
+                &server_host,
+                format!(
+                    "Auto-restore STARTED for {} due to corruption indicators",
+                    node_name
+                ),
+                Some(serde_json::json!({
+                    "trigger_words": trigger_words,
+                    "status": "starting"
+                })),
+            )
+            .await?;
 
         match self.snapshot_manager.restore_from_snapshot(node_name).await {
             Ok(snapshot_info) => {
-                info!("Auto-restore completed for {} using snapshot: {}", node_name, snapshot_info.filename);
+                info!(
+                    "Auto-restore completed for {} using snapshot: {}",
+                    node_name, snapshot_info.filename
+                );
                 self.alert_service.send_immediate_alert(
                     AlertType::AutoRestore,
                     AlertSeverity::Info,
@@ -644,7 +738,11 @@ impl HealthMonitor {
     }
 
     // Enhanced health check with block progression tracking
-    pub async fn check_node_health(&self, node_name: &str, node_config: &NodeConfig) -> Result<HealthStatus> {
+    pub async fn check_node_health(
+        &self,
+        node_name: &str,
+        node_config: &NodeConfig,
+    ) -> Result<HealthStatus> {
         let mut status = HealthStatus {
             node_name: node_name.to_string(),
             rpc_url: node_config.rpc_url.clone(),
@@ -664,7 +762,11 @@ impl HealthMonitor {
         match self.fetch_node_status(&node_config.rpc_url).await {
             Ok(rpc_response) => {
                 if let Some(result) = rpc_response.result {
-                    let current_height = result.sync_info.latest_block_height.parse::<i64>().unwrap_or(0);
+                    let current_height = result
+                        .sync_info
+                        .latest_block_height
+                        .parse::<i64>()
+                        .unwrap_or(0);
                     let is_catching_up = result.sync_info.catching_up;
 
                     status.block_height = Some(current_height);
@@ -672,14 +774,15 @@ impl HealthMonitor {
                     status.is_syncing = Some(is_catching_up);
                     status.validator_address = Some(result.validator_info.address);
 
-                    let block_progression_healthy = self.check_block_progression(node_name, current_height).await;
+                    let block_progression_healthy = self
+                        .check_block_progression(node_name, current_height)
+                        .await;
 
                     status.is_healthy = block_progression_healthy || is_catching_up;
 
                     if !status.is_healthy && !is_catching_up {
                         status.error_message = Some("Block height not progressing".to_string());
                     }
-
                 } else if let Some(error) = rpc_response.error {
                     status.error_message = Some(format!("RPC Error: {}", error.message));
                 } else {
@@ -702,13 +805,19 @@ impl HealthMonitor {
         match block_states.get_mut(node_name) {
             None => {
                 // First time checking this node - initialize and return healthy
-                block_states.insert(node_name.to_string(), BlockHeightState {
-                    last_height: current_height,
-                    last_updated: now,
-                    unhealthy_baseline_height: None,
-                    unhealthy_since: None,
-                });
-                debug!("Initializing block height tracking for {} at height {}", node_name, current_height);
+                block_states.insert(
+                    node_name.to_string(),
+                    BlockHeightState {
+                        last_height: current_height,
+                        last_updated: now,
+                        unhealthy_baseline_height: None,
+                        unhealthy_since: None,
+                    },
+                );
+                debug!(
+                    "Initializing block height tracking for {} at height {}",
+                    node_name, current_height
+                );
                 true
             }
             Some(state) => {
@@ -720,15 +829,19 @@ impl HealthMonitor {
                         state.last_updated = now;
                         state.unhealthy_baseline_height = None;
                         state.unhealthy_since = None;
-                        info!("Node {} RECOVERED - progressed beyond baseline {} to {}",
-                              node_name, baseline_height, current_height);
+                        info!(
+                            "Node {} RECOVERED - progressed beyond baseline {} to {}",
+                            node_name, baseline_height, current_height
+                        );
                         true
                     } else {
                         // Still at or below baseline - remain unhealthy
                         state.last_height = current_height;
                         state.last_updated = now;
-                        debug!("Node {} still unhealthy - height {} not above baseline {}",
-                               node_name, current_height, baseline_height);
+                        debug!(
+                            "Node {} still unhealthy - height {} not above baseline {}",
+                            node_name, current_height, baseline_height
+                        );
                         false
                     }
                 } else {
@@ -737,8 +850,10 @@ impl HealthMonitor {
                         // Height progressed - update and stay healthy
                         state.last_height = current_height;
                         state.last_updated = now;
-                        debug!("Node {} progressed from {} to {} - staying healthy",
-                               node_name, state.last_height, current_height);
+                        debug!(
+                            "Node {} progressed from {} to {} - staying healthy",
+                            node_name, state.last_height, current_height
+                        );
                         true
                     } else {
                         // Height not progressing - check how long
@@ -754,8 +869,10 @@ impl HealthMonitor {
                         } else {
                             // Still in grace period - update last seen height but stay healthy
                             state.last_height = current_height;
-                            debug!("Node {} no progress for {}m (grace period), staying healthy",
-                                   node_name, minutes_without_progress);
+                            debug!(
+                                "Node {} no progress for {}m (grace period), staying healthy",
+                                node_name, minutes_without_progress
+                            );
                             true
                         }
                     }
@@ -801,12 +918,13 @@ impl HealthMonitor {
 
         match record {
             Some(record) => {
-                let node_config = self.config.nodes.get(node_name)
+                let node_config = self
+                    .config
+                    .nodes
+                    .get(node_name)
                     .ok_or_else(|| anyhow!("Node {} not found in configuration", node_name))?;
 
-                let is_in_maintenance = self.maintenance_tracker
-                    .is_in_maintenance(node_name)
-                    .await;
+                let is_in_maintenance = self.maintenance_tracker.is_in_maintenance(node_name).await;
 
                 let status = HealthStatus {
                     node_name: record.node_name,
@@ -868,7 +986,10 @@ impl HealthMonitor {
             let patterns = match &node_config.log_monitoring_patterns {
                 Some(patterns) if !patterns.is_empty() => patterns,
                 _ => {
-                    debug!("No log monitoring patterns configured for node: {}", status.node_name);
+                    debug!(
+                        "No log monitoring patterns configured for node: {}",
+                        status.node_name
+                    );
                     continue;
                 }
             };
@@ -889,7 +1010,15 @@ impl HealthMonitor {
             let context_lines = context_lines_value;
 
             let task = tokio::spawn(async move {
-                monitor.check_node_logs(&node_name, &server_host, &log_path, &patterns, context_lines).await
+                monitor
+                    .check_node_logs(
+                        &node_name,
+                        &server_host,
+                        &log_path,
+                        &patterns,
+                        context_lines,
+                    )
+                    .await
             });
 
             tasks.push(task);
@@ -900,7 +1029,10 @@ impl HealthMonitor {
             return Ok(());
         }
 
-        info!("Running log monitoring for {} nodes with individual patterns", tasks.len());
+        info!(
+            "Running log monitoring for {} nodes with individual patterns",
+            tasks.len()
+        );
 
         let results = join_all(tasks).await;
         for result in results {
@@ -912,8 +1044,18 @@ impl HealthMonitor {
         Ok(())
     }
 
-    async fn check_node_logs(&self, node_name: &str, server_host: &str, log_path: &str, patterns: &[String], context_lines: i32) -> Result<()> {
-        let server_config = self.config.servers.get(server_host)
+    async fn check_node_logs(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        log_path: &str,
+        patterns: &[String],
+        context_lines: i32,
+    ) -> Result<()> {
+        let server_config = self
+            .config
+            .servers
+            .get(server_host)
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
         let command = format!(
@@ -931,18 +1073,20 @@ impl HealthMonitor {
                 if !output.trim().is_empty() {
                     info!("Log patterns detected for {}, sending alert", node_name);
                     // Send log pattern alert using AlertService
-                    self.alert_service.send_immediate_alert(
-                        AlertType::LogPattern,
-                        AlertSeverity::Warning,
-                        node_name,
-                        server_host,
-                        "Log pattern match detected".to_string(),
-                        Some(serde_json::json!({
-                            "log_path": log_path,
-                            "log_output": output,
-                            "patterns": patterns
-                        })),
-                    ).await?;
+                    self.alert_service
+                        .send_immediate_alert(
+                            AlertType::LogPattern,
+                            AlertSeverity::Warning,
+                            node_name,
+                            server_host,
+                            "Log pattern match detected".to_string(),
+                            Some(serde_json::json!({
+                                "log_path": log_path,
+                                "log_output": output,
+                                "patterns": patterns
+                            })),
+                        )
+                        .await?;
                 } else {
                     debug!("No log patterns found for {}", node_name);
                 }
@@ -955,8 +1099,15 @@ impl HealthMonitor {
         Ok(())
     }
 
-    async fn execute_log_command(&self, server_config: &ServerConfig, command: &str) -> Result<String> {
-        let agent_url = format!("http://{}:{}/command/execute", server_config.host, server_config.agent_port);
+    async fn execute_log_command(
+        &self,
+        server_config: &ServerConfig,
+        command: &str,
+    ) -> Result<String> {
+        let agent_url = format!(
+            "http://{}:{}/command/execute",
+            server_config.host, server_config.agent_port
+        );
 
         let payload = serde_json::json!({
             "command": command
@@ -964,7 +1115,8 @@ impl HealthMonitor {
 
         let response = timeout(
             Duration::from_secs(server_config.request_timeout_seconds),
-            self.client.post(&agent_url)
+            self.client
+                .post(&agent_url)
                 .header("Authorization", format!("Bearer {}", server_config.api_key))
                 .json(&payload)
                 .send(),
@@ -974,11 +1126,15 @@ impl HealthMonitor {
         .map_err(|e| anyhow!("Log command request failed: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Log command returned status: {}", response.status()));
+            return Err(anyhow!(
+                "Log command returned status: {}",
+                response.status()
+            ));
         }
 
         let result: serde_json::Value = response.json().await?;
-        let output = result.get("output")
+        let output = result
+            .get("output")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();

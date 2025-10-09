@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{error, info};
 
-use crate::snapshot::{SnapshotInfo, SnapshotStats};
-use crate::web::{AppState, HermesInstance, NodeHealthSummary, MaintenanceInfo, EtlServiceSummary};
 use crate::operation_tracker::OperationStatus;
+use crate::snapshot::{SnapshotInfo, SnapshotStats};
+use crate::web::{AppState, EtlServiceSummary, HermesInstance, MaintenanceInfo, NodeHealthSummary};
 
 // Helper type for API responses
 pub type ApiResult<T> = Result<Json<ApiResponse<T>>, (StatusCode, Json<ApiResponse<()>>)>;
@@ -64,10 +64,15 @@ pub struct EmergencyCleanupQuery {
     pub max_hours: i64,
 }
 
-fn default_max_hours() -> i64 { 12 }
+fn default_max_hours() -> i64 {
+    12
+}
 
 // CHANGED: Enhanced health status conversion with better catching up detection
-async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus, config: &crate::config::Config) -> NodeHealthSummary {
+async fn convert_health_to_summary(
+    health: &crate::health::monitor::HealthStatus,
+    config: &crate::config::Config,
+) -> NodeHealthSummary {
     let node_config = config.nodes.get(&health.node_name);
 
     let maintenance_info = if health.in_maintenance {
@@ -87,9 +92,9 @@ async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus
     } else if !health.is_healthy {
         "Unhealthy".to_string()
     } else if health.is_catching_up {
-        "Catching Up".to_string()  // NEW: Clear catching up status
+        "Catching Up".to_string() // NEW: Clear catching up status
     } else {
-        "Synced".to_string()  // CHANGED: More precise "Synced" instead of "Healthy"
+        "Synced".to_string() // CHANGED: More precise "Synced" instead of "Healthy"
     };
 
     NodeHealthSummary {
@@ -101,15 +106,25 @@ async fn convert_health_to_summary(health: &crate::health::monitor::HealthStatus
         error_message: health.error_message.clone(),
         server_host: health.server_host.clone(),
         maintenance_info,
-        snapshot_enabled: node_config.map(|c| c.snapshots_enabled.unwrap_or(false)).unwrap_or(false),
-        auto_restore_enabled: node_config.map(|c| c.auto_restore_enabled.unwrap_or(false)).unwrap_or(false),
-        scheduled_snapshots_enabled: node_config.map(|c| c.snapshot_schedule.is_some()).unwrap_or(false),
-        snapshot_retention_count: node_config.and_then(|c| c.snapshot_retention_count.map(|cnt| cnt as u32)),
+        snapshot_enabled: node_config
+            .map(|c| c.snapshots_enabled.unwrap_or(false))
+            .unwrap_or(false),
+        auto_restore_enabled: node_config
+            .map(|c| c.auto_restore_enabled.unwrap_or(false))
+            .unwrap_or(false),
+        scheduled_snapshots_enabled: node_config
+            .map(|c| c.snapshot_schedule.is_some())
+            .unwrap_or(false),
+        snapshot_retention_count: node_config
+            .and_then(|c| c.snapshot_retention_count.map(|cnt| cnt as u32)),
     }
 }
 
 // NEW: Convert ETL health status to summary
-async fn convert_etl_health_to_summary(health: &crate::health::monitor::EtlHealthStatus, config: &crate::config::Config) -> EtlServiceSummary {
+async fn convert_etl_health_to_summary(
+    health: &crate::health::monitor::EtlHealthStatus,
+    config: &crate::config::Config,
+) -> EtlServiceSummary {
     let etl_config = config.etl.get(&health.service_name);
 
     let status = if health.is_healthy {
@@ -136,12 +151,20 @@ async fn get_hermes_instances(state: &AppState) -> Result<Vec<HermesInstance>, a
     let mut instances = Vec::new();
 
     for (hermes_name, hermes_config) in &state.config.hermes {
-        let status = match state.agent_manager.check_service_status(&hermes_config.server_host, &hermes_config.service_name).await {
+        let status = match state
+            .agent_manager
+            .check_service_status(&hermes_config.server_host, &hermes_config.service_name)
+            .await
+        {
             Ok(service_status) => format!("{:?}", service_status),
             Err(_) => "Unknown".to_string(),
         };
 
-        let uptime_formatted = match state.agent_manager.get_service_uptime(&hermes_config.server_host, &hermes_config.service_name).await {
+        let uptime_formatted = match state
+            .agent_manager
+            .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name)
+            .await
+        {
             Ok(Some(uptime)) => {
                 let total_seconds = uptime.as_secs();
                 let hours = total_seconds / 3600;
@@ -191,10 +214,13 @@ pub async fn get_all_nodes_health(
             }
 
             Ok(Json(ApiResponse::success(summaries)))
-        },
+        }
         Err(e) => {
             error!("Failed to get all nodes health: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -207,11 +233,17 @@ pub async fn get_node_health(
         Ok(Some(health_status)) => {
             let summary = convert_health_to_summary(&health_status, &state.config).await;
             Ok(Json(ApiResponse::success(summary)))
-        },
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("Node {} not found", node_name))))),
+        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(format!("Node {} not found", node_name))),
+        )),
         Err(e) => {
             error!("Failed to get node health for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -223,7 +255,10 @@ pub async fn get_all_hermes_health(
         Ok(hermes_instances) => Ok(Json(ApiResponse::success(hermes_instances))),
         Err(e) => {
             error!("Failed to get all hermes health: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -237,12 +272,21 @@ pub async fn get_hermes_health(
             if let Some(instance) = instances.into_iter().find(|i| i.name == hermes_name) {
                 Ok(Json(ApiResponse::success(instance)))
             } else {
-                Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("Hermes {} not found", hermes_name)))))
+                Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ApiResponse::error(format!(
+                        "Hermes {} not found",
+                        hermes_name
+                    ))),
+                ))
             }
-        },
+        }
         Err(e) => {
             error!("Failed to get hermes health for {}: {}", hermes_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -265,10 +309,13 @@ pub async fn get_all_etl_health(
             }
 
             Ok(Json(ApiResponse::success(summaries)))
-        },
+        }
         Err(e) => {
             error!("Failed to get all ETL services health: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -277,15 +324,31 @@ pub async fn get_etl_health(
     Path(service_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<EtlServiceSummary> {
-    match state.health_service.get_etl_service_health(&service_name).await {
+    match state
+        .health_service
+        .get_etl_service_health(&service_name)
+        .await
+    {
         Ok(Some(etl_status)) => {
             let summary = convert_etl_health_to_summary(&etl_status, &state.config).await;
             Ok(Json(ApiResponse::success(summary)))
-        },
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("ETL service {} not found", service_name))))),
+        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(format!(
+                "ETL service {} not found",
+                service_name
+            ))),
+        )),
         Err(e) => {
-            error!("Failed to get ETL service health for {}: {}", service_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            error!(
+                "Failed to get ETL service health for {}: {}",
+                service_name, e
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -302,36 +365,33 @@ pub async fn refresh_etl_health(
                 summaries.push(summary);
             }
             Ok(Json(ApiResponse::success(summaries)))
-        },
+        }
         Err(e) => {
             error!("Failed to refresh ETL services health: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
 
 // === CONFIGURATION ENDPOINTS ===
 
-pub async fn get_all_node_configs(
-    State(state): State<AppState>,
-) -> ApiResult<Value> {
+pub async fn get_all_node_configs(State(state): State<AppState>) -> ApiResult<Value> {
     Ok(Json(ApiResponse::success(json!({
         "nodes": state.config.nodes
     }))))
 }
 
-pub async fn get_all_hermes_configs(
-    State(state): State<AppState>,
-) -> ApiResult<Value> {
+pub async fn get_all_hermes_configs(State(state): State<AppState>) -> ApiResult<Value> {
     Ok(Json(ApiResponse::success(json!({
         "hermes": state.config.hermes
     }))))
 }
 
 // NEW: ETL configuration endpoint
-pub async fn get_all_etl_configs(
-    State(state): State<AppState>,
-) -> ApiResult<Value> {
+pub async fn get_all_etl_configs(State(state): State<AppState>) -> ApiResult<Value> {
     Ok(Json(ApiResponse::success(json!({
         "etl": state.config.etl
     }))))
@@ -348,9 +408,13 @@ pub async fn execute_manual_node_restart(
 
     // Check if node is already busy
     if state.agent_manager.is_target_busy(&node_name).await {
-        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
-            format!("Node {} is already busy with another operation", node_name)
-        ))));
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error(format!(
+                "Node {} is already busy with another operation",
+                node_name
+            ))),
+        ));
     }
 
     // Start the restart operation in background - DO NOT AWAIT
@@ -360,7 +424,10 @@ pub async fn execute_manual_node_restart(
     tokio::spawn(async move {
         match agent_manager.restart_node(&node_name_clone).await {
             Ok(_) => {
-                info!("Node restart completed successfully for {}", node_name_clone);
+                info!(
+                    "Node restart completed successfully for {}",
+                    node_name_clone
+                );
             }
             Err(e) => {
                 error!("Node restart failed for {}: {}", node_name_clone, e);
@@ -387,9 +454,13 @@ pub async fn execute_manual_hermes_restart(
     if let Some(hermes_config) = state.config.hermes.get(&hermes_name).cloned() {
         // Check if hermes is already busy (if you have tracking for hermes too)
         if state.agent_manager.is_target_busy(&hermes_name).await {
-            return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
-                format!("Hermes {} is already busy with another operation", hermes_name)
-            ))));
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ApiResponse::error(format!(
+                    "Hermes {} is already busy with another operation",
+                    hermes_name
+                ))),
+            ));
         }
 
         // Start the restart operation in background - DO NOT AWAIT
@@ -399,7 +470,10 @@ pub async fn execute_manual_hermes_restart(
         tokio::spawn(async move {
             match agent_manager.restart_hermes(&hermes_config).await {
                 Ok(_) => {
-                    info!("Hermes restart completed successfully for {}", hermes_name_clone);
+                    info!(
+                        "Hermes restart completed successfully for {}",
+                        hermes_name_clone
+                    );
                 }
                 Err(e) => {
                     error!("Hermes restart failed for {}: {}", hermes_name_clone, e);
@@ -415,7 +489,13 @@ pub async fn execute_manual_hermes_restart(
             "status": "started"
         }))))
     } else {
-        Err((StatusCode::NOT_FOUND, Json(ApiResponse::error(format!("Hermes {} not found", hermes_name)))))
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(format!(
+                "Hermes {} not found",
+                hermes_name
+            ))),
+        ))
     }
 }
 
@@ -428,9 +508,13 @@ pub async fn execute_manual_node_pruning(
 
     // Check if node is already busy
     if state.agent_manager.is_target_busy(&node_name).await {
-        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
-            format!("Node {} is already busy with another operation", node_name)
-        ))));
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error(format!(
+                "Node {} is already busy with another operation",
+                node_name
+            ))),
+        ));
     }
 
     // Start the pruning operation in background - DO NOT AWAIT
@@ -468,9 +552,13 @@ pub async fn create_snapshot(
 
     // Check if node is already busy
     if state.agent_manager.is_target_busy(&node_name).await {
-        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
-            format!("Node {} is already busy with another operation", node_name)
-        ))));
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error(format!(
+                "Node {} is already busy with another operation",
+                node_name
+            ))),
+        ));
     }
 
     // Start the snapshot creation in background - DO NOT AWAIT
@@ -480,7 +568,10 @@ pub async fn create_snapshot(
     tokio::spawn(async move {
         match agent_manager.create_node_snapshot(&node_name_clone).await {
             Ok(snapshot_info) => {
-                info!("Snapshot creation completed successfully for {}: {}", node_name_clone, snapshot_info.filename);
+                info!(
+                    "Snapshot creation completed successfully for {}: {}",
+                    node_name_clone, snapshot_info.filename
+                );
             }
             Err(e) => {
                 error!("Snapshot creation failed for {}: {}", node_name_clone, e);
@@ -505,7 +596,10 @@ pub async fn list_snapshots(
         Ok(snapshots) => Ok(Json(ApiResponse::success(snapshots))),
         Err(e) => {
             error!("Failed to list snapshots for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -515,7 +609,10 @@ pub async fn delete_snapshot(
     Path((node_name, filename)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
-    info!("Snapshot deletion requested for {}: {}", node_name, filename);
+    info!(
+        "Snapshot deletion requested for {}: {}",
+        node_name, filename
+    );
 
     // Start the deletion in background - DO NOT AWAIT
     let snapshot_service = state.snapshot_service.clone();
@@ -523,18 +620,30 @@ pub async fn delete_snapshot(
     let filename_clone = filename.clone();
 
     tokio::spawn(async move {
-        match snapshot_service.delete_snapshot(&node_name_clone, &filename_clone).await {
+        match snapshot_service
+            .delete_snapshot(&node_name_clone, &filename_clone)
+            .await
+        {
             Ok(_) => {
-                info!("Snapshot {} deleted successfully for {}", filename_clone, node_name_clone);
+                info!(
+                    "Snapshot {} deleted successfully for {}",
+                    filename_clone, node_name_clone
+                );
             }
             Err(e) => {
-                error!("Failed to delete snapshot {} for {}: {}", filename_clone, node_name_clone, e);
+                error!(
+                    "Failed to delete snapshot {} for {}: {}",
+                    filename_clone, node_name_clone, e
+                );
             }
         }
     });
 
     // Return immediately
-    info!("Snapshot {} deletion started in background for {}", filename, node_name);
+    info!(
+        "Snapshot {} deletion started in background for {}",
+        filename, node_name
+    );
     Ok(Json(ApiResponse::success(json!({
         "message": format!("Snapshot {} deletion started", filename),
         "node_name": node_name,
@@ -551,7 +660,10 @@ pub async fn get_snapshot_stats(
         Ok(stats) => Ok(Json(ApiResponse::success(stats))),
         Err(e) => {
             error!("Failed to get snapshot stats for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -562,7 +674,10 @@ pub async fn cleanup_old_snapshots(
     Query(query): Query<RetentionQuery>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
-    info!("Snapshot cleanup requested for {} (retention: {})", node_name, query.retention_count);
+    info!(
+        "Snapshot cleanup requested for {} (retention: {})",
+        node_name, query.retention_count
+    );
 
     // Start the cleanup in background - DO NOT AWAIT
     let snapshot_service = state.snapshot_service.clone();
@@ -570,12 +685,21 @@ pub async fn cleanup_old_snapshots(
     let retention_count = query.retention_count;
 
     tokio::spawn(async move {
-        match snapshot_service.cleanup_old_snapshots(&node_name_clone, retention_count).await {
+        match snapshot_service
+            .cleanup_old_snapshots(&node_name_clone, retention_count)
+            .await
+        {
             Ok(deleted_count) => {
-                info!("Snapshot cleanup completed for {} - deleted {} snapshots", node_name_clone, deleted_count);
+                info!(
+                    "Snapshot cleanup completed for {} - deleted {} snapshots",
+                    node_name_clone, deleted_count
+                );
             }
             Err(e) => {
-                error!("Failed to cleanup old snapshots for {}: {}", node_name_clone, e);
+                error!(
+                    "Failed to cleanup old snapshots for {}: {}",
+                    node_name_clone, e
+                );
             }
         }
     });
@@ -597,13 +721,20 @@ pub async fn execute_manual_restore_from_latest(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
-    info!("Manual restore from latest snapshot requested for: {}", node_name);
+    info!(
+        "Manual restore from latest snapshot requested for: {}",
+        node_name
+    );
 
     // Check if node is already busy
     if state.agent_manager.is_target_busy(&node_name).await {
-        return Err((StatusCode::CONFLICT, Json(ApiResponse::error(
-            format!("Node {} is already busy with another operation", node_name)
-        ))));
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error(format!(
+                "Node {} is already busy with another operation",
+                node_name
+            ))),
+        ));
     }
 
     // Start the restore operation in background - DO NOT AWAIT
@@ -611,12 +742,21 @@ pub async fn execute_manual_restore_from_latest(
     let node_name_clone = node_name.clone();
 
     tokio::spawn(async move {
-        match snapshot_service.restore_from_snapshot(&node_name_clone).await {
+        match snapshot_service
+            .restore_from_snapshot(&node_name_clone)
+            .await
+        {
             Ok(snapshot_info) => {
-                info!("Manual restore completed successfully for {}: {}", node_name_clone, snapshot_info.filename);
+                info!(
+                    "Manual restore completed successfully for {}: {}",
+                    node_name_clone, snapshot_info.filename
+                );
             }
             Err(e) => {
-                error!("Failed to restore from snapshot for {}: {}", node_name_clone, e);
+                error!(
+                    "Failed to restore from snapshot for {}: {}",
+                    node_name_clone, e
+                );
             }
         }
     });
@@ -636,9 +776,16 @@ pub async fn check_auto_restore_triggers(
 ) -> ApiResult<Value> {
     info!("Checking auto-restore triggers for: {}", node_name);
 
-    match state.snapshot_service.check_auto_restore_trigger(&node_name).await {
+    match state
+        .snapshot_service
+        .check_auto_restore_trigger(&node_name)
+        .await
+    {
         Ok(triggers_found) => {
-            info!("Auto-restore trigger check completed for {}: triggers_found={}", node_name, triggers_found);
+            info!(
+                "Auto-restore trigger check completed for {}: triggers_found={}",
+                node_name, triggers_found
+            );
             Ok(Json(ApiResponse::success(json!({
                 "node_name": node_name,
                 "triggers_found": triggers_found,
@@ -646,8 +793,14 @@ pub async fn check_auto_restore_triggers(
             }))))
         }
         Err(e) => {
-            error!("Failed to check auto-restore triggers for {}: {}", node_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            error!(
+                "Failed to check auto-restore triggers for {}: {}",
+                node_name, e
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -663,7 +816,11 @@ pub async fn get_auto_restore_status(
         .map(|c| c.auto_restore_enabled.unwrap_or(false) && c.snapshots_enabled.unwrap_or(false))
         .unwrap_or(false);
 
-    let trigger_words = state.config.auto_restore_trigger_words.clone().unwrap_or_default();
+    let trigger_words = state
+        .config
+        .auto_restore_trigger_words
+        .clone()
+        .unwrap_or_default();
 
     let status = json!({
         "node_name": node_name,
@@ -679,9 +836,7 @@ pub async fn get_auto_restore_status(
 
 // === OPERATION MANAGEMENT ENDPOINTS ===
 
-pub async fn get_active_operations(
-    State(state): State<AppState>,
-) -> ApiResult<OperationStatus> {
+pub async fn get_active_operations(State(state): State<AppState>) -> ApiResult<OperationStatus> {
     let operations = state.agent_manager.get_active_operations().await;
     Ok(Json(ApiResponse::success(operations)))
 }
@@ -701,7 +856,10 @@ pub async fn cancel_operation(
         }
         Err(e) => {
             error!("Failed to cancel operation for {}: {}", target_name, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::error(e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
         }
     }
 }
@@ -710,9 +868,15 @@ pub async fn emergency_cleanup_operations(
     Query(query): Query<EmergencyCleanupQuery>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
-    info!("Emergency cleanup requested for operations older than {} hours", query.max_hours);
+    info!(
+        "Emergency cleanup requested for operations older than {} hours",
+        query.max_hours
+    );
 
-    let cleaned_count = state.agent_manager.emergency_cleanup_operations(query.max_hours).await;
+    let cleaned_count = state
+        .agent_manager
+        .emergency_cleanup_operations(query.max_hours)
+        .await;
 
     Ok(Json(ApiResponse::success(json!({
         "message": format!("Emergency cleanup completed: {} operations removed", cleaned_count),
@@ -726,7 +890,11 @@ pub async fn check_target_status(
 ) -> ApiResult<Value> {
     let is_busy = state.agent_manager.is_target_busy(&target_name).await;
     let active_operation = if is_busy {
-        state.agent_manager.operation_tracker.get_active_operation(&target_name).await
+        state
+            .agent_manager
+            .operation_tracker
+            .get_active_operation(&target_name)
+            .await
     } else {
         None
     };
@@ -740,9 +908,7 @@ pub async fn check_target_status(
 
 // === MAINTENANCE SCHEDULE ENDPOINTS ===
 
-pub async fn get_maintenance_schedule(
-    State(_state): State<AppState>,
-) -> ApiResult<Value> {
+pub async fn get_maintenance_schedule(State(_state): State<AppState>) -> ApiResult<Value> {
     Ok(Json(ApiResponse::success(json!({
         "scheduled": [],
         "active": []

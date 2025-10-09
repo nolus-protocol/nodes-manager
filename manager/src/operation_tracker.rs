@@ -29,7 +29,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveOperation {
@@ -99,8 +99,12 @@ impl SimpleOperationTracker {
         let mut active = self.active_operations.write().await;
         if let Some(op) = active.remove(target_name) {
             let duration = Utc::now().signed_duration_since(op.started_at);
-            info!("Finished operation '{}' on {} (took {}m)",
-                  op.operation_type, target_name, duration.num_minutes());
+            info!(
+                "Finished operation '{}' on {} (took {}m)",
+                op.operation_type,
+                target_name,
+                duration.num_minutes()
+            );
         }
     }
 
@@ -108,12 +112,20 @@ impl SimpleOperationTracker {
     pub async fn cancel_operation(&self, target_name: &str) -> Result<()> {
         let mut active = self.active_operations.write().await;
         if let Some(op) = active.remove(target_name) {
-            warn!("Cancelled operation '{}' on {} (was running for {}m)",
-                  op.operation_type, target_name,
-                  Utc::now().signed_duration_since(op.started_at).num_minutes());
+            warn!(
+                "Cancelled operation '{}' on {} (was running for {}m)",
+                op.operation_type,
+                target_name,
+                Utc::now()
+                    .signed_duration_since(op.started_at)
+                    .num_minutes()
+            );
             Ok(())
         } else {
-            Err(anyhow::anyhow!("No active operation found on {}", target_name))
+            Err(anyhow::anyhow!(
+                "No active operation found on {}",
+                target_name
+            ))
         }
     }
 
@@ -147,17 +159,24 @@ impl SimpleOperationTracker {
         active.retain(|target_name, operation| {
             let should_keep = operation.started_at > cutoff;
             if !should_keep {
-                warn!("Cleaned up stuck operation '{}' on {} (was running for {}h)",
-                      operation.operation_type, target_name,
-                      Utc::now().signed_duration_since(operation.started_at).num_hours());
+                warn!(
+                    "Cleaned up stuck operation '{}' on {} (was running for {}h)",
+                    operation.operation_type,
+                    target_name,
+                    Utc::now()
+                        .signed_duration_since(operation.started_at)
+                        .num_hours()
+                );
             }
             should_keep
         });
 
         let cleaned_count = initial_count - active.len();
         if cleaned_count > 0 {
-            warn!("Emergency cleanup: removed {} stuck operations older than {}h",
-                  cleaned_count, max_hours);
+            warn!(
+                "Emergency cleanup: removed {} stuck operations older than {}h",
+                cleaned_count, max_hours
+            );
         }
 
         cleaned_count as u32
@@ -187,13 +206,19 @@ mod tests {
         let tracker = SimpleOperationTracker::new();
 
         // Should be able to start operation
-        assert!(tracker.try_start_operation("node-1", "restart", None).await.is_ok());
+        assert!(tracker
+            .try_start_operation("node-1", "restart", None)
+            .await
+            .is_ok());
 
         // Should be busy now
         assert!(tracker.is_busy("node-1").await);
 
         // Should not be able to start another operation
-        assert!(tracker.try_start_operation("node-1", "snapshot", None).await.is_err());
+        assert!(tracker
+            .try_start_operation("node-1", "snapshot", None)
+            .await
+            .is_err());
 
         // Should be able to finish operation
         tracker.finish_operation("node-1").await;
@@ -202,7 +227,10 @@ mod tests {
         assert!(!tracker.is_busy("node-1").await);
 
         // Should be able to start operation again
-        assert!(tracker.try_start_operation("node-1", "snapshot", None).await.is_ok());
+        assert!(tracker
+            .try_start_operation("node-1", "snapshot", None)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -210,9 +238,18 @@ mod tests {
         let tracker = SimpleOperationTracker::new();
 
         // Should be able to start operations on different targets
-        assert!(tracker.try_start_operation("node-1", "restart", None).await.is_ok());
-        assert!(tracker.try_start_operation("node-2", "snapshot", None).await.is_ok());
-        assert!(tracker.try_start_operation("hermes-1", "restart", None).await.is_ok());
+        assert!(tracker
+            .try_start_operation("node-1", "restart", None)
+            .await
+            .is_ok());
+        assert!(tracker
+            .try_start_operation("node-2", "snapshot", None)
+            .await
+            .is_ok());
+        assert!(tracker
+            .try_start_operation("hermes-1", "restart", None)
+            .await
+            .is_ok());
 
         let status = tracker.get_operation_status().await;
         assert_eq!(status.total_active, 3);
@@ -225,7 +262,10 @@ mod tests {
     async fn test_cancel_operation() {
         let tracker = SimpleOperationTracker::new();
 
-        tracker.try_start_operation("node-1", "snapshot", None).await.unwrap();
+        tracker
+            .try_start_operation("node-1", "snapshot", None)
+            .await
+            .unwrap();
         assert!(tracker.is_busy("node-1").await);
 
         tracker.cancel_operation("node-1").await.unwrap();

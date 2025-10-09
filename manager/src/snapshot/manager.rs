@@ -3,12 +3,12 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, NodeConfig};
-use crate::maintenance_tracker::MaintenanceTracker;
 use crate::http::HttpAgentManager;
-use crate::services::alert_service::{AlertService, AlertType, AlertSeverity};
+use crate::maintenance_tracker::MaintenanceTracker;
+use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotInfo {
@@ -58,10 +58,16 @@ impl SnapshotManager {
         let node_config = self.get_node_config(node_name)?;
 
         if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+            return Err(anyhow::anyhow!(
+                "Snapshots not enabled for node {}",
+                node_name
+            ));
         }
 
-        info!("Starting network snapshot creation for {} network via node {} (HTTP agent)", node_config.network, node_name);
+        info!(
+            "Starting network snapshot creation for {} network via node {} (HTTP agent)",
+            node_config.network, node_name
+        );
 
         // HttpAgentManager handles all maintenance tracking - no duplicate tracking needed
         let snapshot_result = self.http_manager.create_node_snapshot(node_name).await;
@@ -95,35 +101,54 @@ impl SnapshotManager {
 
                 // Automatic cleanup based on retention count for NETWORK snapshots
                 if let Some(retention_count) = node_config.snapshot_retention_count {
-                    info!("Running automatic cleanup for {} network (keeping {} snapshots)", snapshot_info.network, retention_count);
-                    match self.cleanup_old_network_snapshots(&snapshot_info.network, retention_count as u32).await {
+                    info!(
+                        "Running automatic cleanup for {} network (keeping {} snapshots)",
+                        snapshot_info.network, retention_count
+                    );
+                    match self
+                        .cleanup_old_network_snapshots(
+                            &snapshot_info.network,
+                            retention_count as u32,
+                        )
+                        .await
+                    {
                         Ok(deleted_count) => {
                             if deleted_count > 0 {
-                                info!("Automatic cleanup: deleted {} old network snapshots for {}", deleted_count, snapshot_info.network);
+                                info!(
+                                    "Automatic cleanup: deleted {} old network snapshots for {}",
+                                    deleted_count, snapshot_info.network
+                                );
                             }
-                        },
+                        }
                         Err(e) => {
-                            warn!("Automatic cleanup failed for {} network: {}", snapshot_info.network, e);
+                            warn!(
+                                "Automatic cleanup failed for {} network: {}",
+                                snapshot_info.network, e
+                            );
                         }
                     }
                 }
             }
             Err(e) => {
                 // Send failure alert
-                if let Err(alert_err) = self.alert_service.send_immediate_alert(
-                    AlertType::Snapshot,
-                    AlertSeverity::Critical,
-                    node_name,
-                    &node_config.server_host,
-                    format!("Network snapshot creation failed for {}: {}", node_name, e),
-                    Some(serde_json::json!({
-                        "operation_type": "snapshot_creation",
-                        "operation_status": "failed",
-                        "error_message": e.to_string(),
-                        "network": node_config.network,
-                        "connection_type": "http_agent"
-                    })),
-                ).await {
+                if let Err(alert_err) = self
+                    .alert_service
+                    .send_immediate_alert(
+                        AlertType::Snapshot,
+                        AlertSeverity::Critical,
+                        node_name,
+                        &node_config.server_host,
+                        format!("Network snapshot creation failed for {}: {}", node_name, e),
+                        Some(serde_json::json!({
+                            "operation_type": "snapshot_creation",
+                            "operation_status": "failed",
+                            "error_message": e.to_string(),
+                            "network": node_config.network,
+                            "connection_type": "http_agent"
+                        })),
+                    )
+                    .await
+                {
                     warn!("Failed to send error notification: {}", alert_err);
                 }
             }
@@ -137,52 +162,75 @@ impl SnapshotManager {
         let node_config = self.get_node_config(node_name)?;
 
         if !node_config.auto_restore_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Auto-restore not enabled for node {}", node_name));
+            return Err(anyhow::anyhow!(
+                "Auto-restore not enabled for node {}",
+                node_name
+            ));
         }
 
-        info!("Starting network snapshot restore for node {} via HTTP agent", node_name);
+        info!(
+            "Starting network snapshot restore for node {} via HTTP agent",
+            node_name
+        );
 
         // HttpAgentManager handles all maintenance tracking - no duplicate tracking needed
-        let restore_result = self.http_manager.restore_node_from_snapshot(node_name).await;
+        let restore_result = self
+            .http_manager
+            .restore_node_from_snapshot(node_name)
+            .await;
 
         // Handle result and send alerts using AlertService
         match &restore_result {
             Ok(snapshot_info) => {
-                info!("Network snapshot restored successfully for {}: {}", node_name, snapshot_info.filename);
+                info!(
+                    "Network snapshot restored successfully for {}: {}",
+                    node_name, snapshot_info.filename
+                );
 
                 // Send completion alert
-                if let Err(e) = self.alert_service.send_immediate_alert(
-                    AlertType::Snapshot,
-                    AlertSeverity::Info,
-                    node_name,
-                    &node_config.server_host,
-                    format!("Network snapshot restored successfully for {}: {}", node_name, snapshot_info.filename),
-                    Some(serde_json::json!({
-                        "operation_type": "snapshot_restore",
-                        "operation_status": "completed",
-                        "snapshot_filename": snapshot_info.filename,
-                        "network": snapshot_info.network,
-                        "connection_type": "http_agent"
-                    })),
-                ).await {
+                if let Err(e) = self
+                    .alert_service
+                    .send_immediate_alert(
+                        AlertType::Snapshot,
+                        AlertSeverity::Info,
+                        node_name,
+                        &node_config.server_host,
+                        format!(
+                            "Network snapshot restored successfully for {}: {}",
+                            node_name, snapshot_info.filename
+                        ),
+                        Some(serde_json::json!({
+                            "operation_type": "snapshot_restore",
+                            "operation_status": "completed",
+                            "snapshot_filename": snapshot_info.filename,
+                            "network": snapshot_info.network,
+                            "connection_type": "http_agent"
+                        })),
+                    )
+                    .await
+                {
                     warn!("Failed to send completion notification: {}", e);
                 }
             }
             Err(e) => {
-                if let Err(alert_err) = self.alert_service.send_immediate_alert(
-                    AlertType::Snapshot,
-                    AlertSeverity::Critical,
-                    node_name,
-                    &node_config.server_host,
-                    format!("Snapshot restore failed for {}: {}", node_name, e),
-                    Some(serde_json::json!({
-                        "operation_type": "snapshot_restore",
-                        "operation_status": "failed",
-                        "error_message": e.to_string(),
-                        "network": node_config.network,
-                        "connection_type": "http_agent"
-                    })),
-                ).await {
+                if let Err(alert_err) = self
+                    .alert_service
+                    .send_immediate_alert(
+                        AlertType::Snapshot,
+                        AlertSeverity::Critical,
+                        node_name,
+                        &node_config.server_host,
+                        format!("Snapshot restore failed for {}: {}", node_name, e),
+                        Some(serde_json::json!({
+                            "operation_type": "snapshot_restore",
+                            "operation_status": "failed",
+                            "error_message": e.to_string(),
+                            "network": node_config.network,
+                            "connection_type": "http_agent"
+                        })),
+                    )
+                    .await
+                {
                     warn!("Failed to send error notification: {}", alert_err);
                 }
             }
@@ -199,20 +247,27 @@ impl SnapshotManager {
             return Ok(false);
         }
 
-        self.http_manager.check_auto_restore_triggers(node_name).await
+        self.http_manager
+            .check_auto_restore_triggers(node_name)
+            .await
     }
 
     /// List all snapshots for a NETWORK (not specific node) via HTTP agent
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<SnapshotInfo>> {
         let node_config = self.get_node_config(node_name)?;
 
-        if !node_config.snapshots_enabled.unwrap_or(false) && !node_config.auto_restore_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Neither snapshots nor auto-restore enabled for node {}", node_name));
+        if !node_config.snapshots_enabled.unwrap_or(false)
+            && !node_config.auto_restore_enabled.unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "Neither snapshots nor auto-restore enabled for node {}",
+                node_name
+            ));
         }
 
-        let backup_path = node_config.snapshot_backup_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
+        let backup_path = node_config.snapshot_backup_path.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No snapshot backup path configured for node {}", node_name)
+        })?;
 
         // FIXED: Enhanced listing command with better error handling
         let list_cmd = format!(
@@ -224,7 +279,8 @@ impl SnapshotManager {
             backup_path, node_config.network
         );
 
-        let output = self.http_manager
+        let output = self
+            .http_manager
             .execute_single_command(&node_config.server_host, &list_cmd)
             .await
             .unwrap_or_default();
@@ -242,7 +298,9 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                let created_at = if let Some(ts_part) = filename.strip_prefix(&format!("{}_", node_config.network)) {
+                let created_at = if let Some(ts_part) =
+                    filename.strip_prefix(&format!("{}_", node_config.network))
+                {
                     chrono::NaiveDateTime::parse_from_str(ts_part, "%Y%m%d_%H%M%S")
                         .ok()
                         .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
@@ -269,70 +327,127 @@ impl SnapshotManager {
             }
         }
 
-        debug!("Found {} snapshots for network {}", snapshots.len(), node_config.network);
+        debug!(
+            "Found {} snapshots for network {}",
+            snapshots.len(),
+            node_config.network
+        );
         Ok(snapshots)
     }
 
     /// Clean up old NETWORK snapshots based on retention count via HTTP agent
-    pub async fn cleanup_old_snapshots(&self, node_name: &str, retention_count: u32) -> Result<u32> {
+    pub async fn cleanup_old_snapshots(
+        &self,
+        node_name: &str,
+        retention_count: u32,
+    ) -> Result<u32> {
         let node_config = self.get_node_config(node_name)?;
 
         if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+            return Err(anyhow::anyhow!(
+                "Snapshots not enabled for node {}",
+                node_name
+            ));
         }
 
         if retention_count == 0 {
             return Err(anyhow::anyhow!("Retention count must be at least 1"));
         }
 
-        self.cleanup_old_network_snapshots(&node_config.network, retention_count).await
+        self.cleanup_old_network_snapshots(&node_config.network, retention_count)
+            .await
     }
 
     /// FIXED: Clean up old snapshots for a specific NETWORK with improved error handling
-    async fn cleanup_old_network_snapshots(&self, network: &str, retention_count: u32) -> Result<u32> {
-        let (node_name, node_config) = self.config.nodes.iter()
-            .find(|(_, config)| config.network == network && config.snapshots_enabled.unwrap_or(false))
-            .ok_or_else(|| anyhow::anyhow!("No nodes found with snapshots enabled for network {}", network))?;
+    async fn cleanup_old_network_snapshots(
+        &self,
+        network: &str,
+        retention_count: u32,
+    ) -> Result<u32> {
+        let (node_name, node_config) = self
+            .config
+            .nodes
+            .iter()
+            .find(|(_, config)| {
+                config.network == network && config.snapshots_enabled.unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No nodes found with snapshots enabled for network {}",
+                    network
+                )
+            })?;
 
         let mut snapshots = self.list_snapshots(node_name).await?;
 
         // Sort by creation date (newest first)
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-        debug!("Cleanup analysis for {}: found {} snapshots, keeping {}",
-               network, snapshots.len(), retention_count);
+        debug!(
+            "Cleanup analysis for {}: found {} snapshots, keeping {}",
+            network,
+            snapshots.len(),
+            retention_count
+        );
 
         if snapshots.len() <= retention_count as usize {
-            info!("No old network snapshots to clean up for {} (have {}, keeping {})",
-                  network, snapshots.len(), retention_count);
+            info!(
+                "No old network snapshots to clean up for {} (have {}, keeping {})",
+                network,
+                snapshots.len(),
+                retention_count
+            );
             return Ok(0);
         }
 
         let snapshots_to_delete = &snapshots[(retention_count as usize)..];
         let mut deleted_count = 0;
 
-        info!("Cleaning up {} old network snapshots for {} (keeping {} most recent) via HTTP agent",
-              snapshots_to_delete.len(), network, retention_count);
+        info!(
+            "Cleaning up {} old network snapshots for {} (keeping {} most recent) via HTTP agent",
+            snapshots_to_delete.len(),
+            network,
+            retention_count
+        );
 
         for snapshot in snapshots_to_delete {
-            info!("Attempting to delete old snapshot: {} (created: {})",
-                  snapshot.filename, snapshot.created_at);
+            info!(
+                "Attempting to delete old snapshot: {} (created: {})",
+                snapshot.filename, snapshot.created_at
+            );
 
             // FIXED: Improved deletion with better error handling
-            match self.delete_snapshot_with_robust_cleanup(&node_config.server_host, &snapshot.snapshot_path, &snapshot.filename).await {
+            match self
+                .delete_snapshot_with_robust_cleanup(
+                    &node_config.server_host,
+                    &snapshot.snapshot_path,
+                    &snapshot.filename,
+                )
+                .await
+            {
                 Ok(_) => {
-                    info!("Successfully deleted old network snapshot: {}", snapshot.filename);
+                    info!(
+                        "Successfully deleted old network snapshot: {}",
+                        snapshot.filename
+                    );
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    error!("Failed to delete network snapshot {} via HTTP agent: {}", snapshot.filename, e);
+                    error!(
+                        "Failed to delete network snapshot {} via HTTP agent: {}",
+                        snapshot.filename, e
+                    );
                     // Continue with other deletions instead of failing completely
                 }
             }
         }
 
-        info!("Cleanup completed: deleted {} out of {} old network snapshots for {}",
-              deleted_count, snapshots_to_delete.len(), network);
+        info!(
+            "Cleanup completed: deleted {} out of {} old network snapshots for {}",
+            deleted_count,
+            snapshots_to_delete.len(),
+            network
+        );
         Ok(deleted_count)
     }
 
@@ -341,24 +456,43 @@ impl SnapshotManager {
         let node_config = self.get_node_config(node_name)?;
 
         if !node_config.snapshots_enabled.unwrap_or(false) {
-            return Err(anyhow::anyhow!("Snapshots not enabled for node {}", node_name));
+            return Err(anyhow::anyhow!(
+                "Snapshots not enabled for node {}",
+                node_name
+            ));
         }
 
-        let backup_path = node_config.snapshot_backup_path
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured for node {}", node_name))?;
+        let backup_path = node_config.snapshot_backup_path.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No snapshot backup path configured for node {}", node_name)
+        })?;
 
         let snapshot_path = format!("{}/{}", backup_path, filename);
-        self.delete_snapshot_with_robust_cleanup(&node_config.server_host, &snapshot_path, filename).await?;
+        self.delete_snapshot_with_robust_cleanup(
+            &node_config.server_host,
+            &snapshot_path,
+            filename,
+        )
+        .await?;
 
-        info!("Deleted network snapshot (directory + LZ4) {} via HTTP agent", filename);
+        info!(
+            "Deleted network snapshot (directory + LZ4) {} via HTTP agent",
+            filename
+        );
         Ok(())
     }
 
     /// FIXED: Robust snapshot deletion with separated commands and better error handling
-    async fn delete_snapshot_with_robust_cleanup(&self, server_host: &str, dir_path: &str, filename: &str) -> Result<()> {
+    async fn delete_snapshot_with_robust_cleanup(
+        &self,
+        server_host: &str,
+        dir_path: &str,
+        filename: &str,
+    ) -> Result<()> {
         // Extract the backup path from the full directory path
-        let backup_path = dir_path.rsplit_once('/').map(|(path, _)| path).unwrap_or("");
+        let backup_path = dir_path
+            .rsplit_once('/')
+            .map(|(path, _)| path)
+            .unwrap_or("");
         let lz4_path = format!("{}/{}.tar.lz4", backup_path, filename);
 
         debug!("Deleting snapshot directory: {}", dir_path);
@@ -368,13 +502,21 @@ impl SnapshotManager {
         let delete_dir_cmd = format!("rm -rf '{}'", dir_path);
         debug!("Executing directory deletion: {}", delete_dir_cmd);
 
-        match self.http_manager.execute_single_command(server_host, &delete_dir_cmd).await {
+        match self
+            .http_manager
+            .execute_single_command(server_host, &delete_dir_cmd)
+            .await
+        {
             Ok(_) => {
                 info!("Successfully deleted snapshot directory: {}", filename);
             }
             Err(e) => {
                 error!("Failed to delete snapshot directory {}: {}", filename, e);
-                return Err(anyhow::anyhow!("Failed to delete snapshot directory {}: {}", filename, e));
+                return Err(anyhow::anyhow!(
+                    "Failed to delete snapshot directory {}: {}",
+                    filename,
+                    e
+                ));
             }
         }
 
@@ -382,18 +524,29 @@ impl SnapshotManager {
         let check_lz4_cmd = format!("test -f '{}'", lz4_path);
         debug!("Checking if LZ4 file exists: {}", check_lz4_cmd);
 
-        match self.http_manager.execute_single_command(server_host, &check_lz4_cmd).await {
+        match self
+            .http_manager
+            .execute_single_command(server_host, &check_lz4_cmd)
+            .await
+        {
             Ok(_) => {
                 // LZ4 file exists, delete it
                 let delete_lz4_cmd = format!("rm -f '{}'", lz4_path);
                 debug!("Deleting LZ4 file: {}", delete_lz4_cmd);
 
-                match self.http_manager.execute_single_command(server_host, &delete_lz4_cmd).await {
+                match self
+                    .http_manager
+                    .execute_single_command(server_host, &delete_lz4_cmd)
+                    .await
+                {
                     Ok(_) => {
                         info!("Successfully deleted LZ4 file for snapshot: {}", filename);
                     }
                     Err(e) => {
-                        warn!("Failed to delete LZ4 file for {} (continuing anyway): {}", filename, e);
+                        warn!(
+                            "Failed to delete LZ4 file for {} (continuing anyway): {}",
+                            filename, e
+                        );
                         // Don't fail the entire operation for LZ4 cleanup issues
                     }
                 }
@@ -412,9 +565,7 @@ impl SnapshotManager {
         let snapshots = self.list_snapshots(node_name).await?;
 
         let total_snapshots = snapshots.len();
-        let total_size_bytes = snapshots.iter()
-            .filter_map(|s| s.file_size_bytes)
-            .sum();
+        let total_size_bytes = snapshots.iter().filter_map(|s| s.file_size_bytes).sum();
 
         let oldest_snapshot = snapshots.iter().map(|s| s.created_at).min();
         let newest_snapshot = snapshots.iter().map(|s| s.created_at).max();

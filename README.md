@@ -1,6 +1,15 @@
 # Blockchain Nodes Manager
 
+# Nodes Manager
+
+[![Tests](https://github.com/YOUR_USERNAME/nodes-manager/actions/workflows/test.yml/badge.svg)](https://github.com/YOUR_USERNAME/nodes-manager/actions/workflows/test.yml)
+[![Release](https://github.com/YOUR_USERNAME/nodes-manager/actions/workflows/release.yml/badge.svg)](https://github.com/YOUR_USERNAME/nodes-manager/actions/workflows/release.yml)
+[![codecov](https://codecov.io/gh/YOUR_USERNAME/nodes-manager/branch/main/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/nodes-manager)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a centralized web interface.
+
+**✅ 95 tests passing** | **🚀 Production-ready** | **🐳 Docker support**
 
 ## Features
 

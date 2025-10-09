@@ -1,8 +1,8 @@
 // File: agent/src/services/job_manager.rs
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::Utc;
 use tracing::{info, warn};
 
 use crate::types::{JobInfo, JobStatus};
@@ -26,10 +26,12 @@ impl JobManager {
     }
 
     pub async fn create_job(&self, operation_type: &str, target_name: &str) -> String {
-        let job_id = format!("{}_{}_{}",
-                           operation_type,
-                           target_name,
-                           Utc::now().timestamp());
+        let job_id = format!(
+            "{}_{}_{}",
+            operation_type,
+            target_name,
+            Utc::now().timestamp()
+        );
 
         let job_info = JobInfo {
             job_id: job_id.clone(),
@@ -45,7 +47,10 @@ impl JobManager {
         let mut jobs = self.jobs.write().await;
         jobs.insert(job_id.clone(), job_info);
 
-        info!("Created job {}: {} for {}", job_id, operation_type, target_name);
+        info!(
+            "Created job {}: {} for {}",
+            job_id, operation_type, target_name
+        );
         job_id
     }
 

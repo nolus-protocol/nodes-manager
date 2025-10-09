@@ -12,7 +12,8 @@ pub async fn enable_state_sync(
     info!("Enabling state sync in {}", config_path);
 
     // Read current config
-    let config_content = tokio::fs::read_to_string(config_path).await
+    let config_content = tokio::fs::read_to_string(config_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
 
     // Parse and modify config
@@ -41,13 +42,17 @@ pub async fn enable_state_sync(
         // Create updated section
         let mut new_section = String::from("[statesync]\n");
 
-        for line in section.lines().skip(1) { // Skip [statesync] line
+        for line in section.lines().skip(1) {
+            // Skip [statesync] line
             let trimmed = line.trim();
 
             if trimmed.starts_with("enable ") || trimmed.starts_with("enable=") {
                 new_section.push_str("enable = true\n");
             } else if trimmed.starts_with("rpc_servers ") || trimmed.starts_with("rpc_servers=") {
-                new_section.push_str(&format!("rpc_servers = \"{},{}\"\n", rpc_servers_str, rpc_servers_str));
+                new_section.push_str(&format!(
+                    "rpc_servers = \"{},{}\"\n",
+                    rpc_servers_str, rpc_servers_str
+                ));
             } else if trimmed.starts_with("trust_height ") || trimmed.starts_with("trust_height=") {
                 new_section.push_str(&format!("trust_height = {}\n", trust_height));
             } else if trimmed.starts_with("trust_hash ") || trimmed.starts_with("trust_hash=") {
@@ -67,14 +72,18 @@ pub async fn enable_state_sync(
         modified_config.push_str("\n\n");
         modified_config.push_str("[statesync]\n");
         modified_config.push_str("enable = true\n");
-        modified_config.push_str(&format!("rpc_servers = \"{},{}\"\n", rpc_servers_str, rpc_servers_str));
+        modified_config.push_str(&format!(
+            "rpc_servers = \"{},{}\"\n",
+            rpc_servers_str, rpc_servers_str
+        ));
         modified_config.push_str(&format!("trust_height = {}\n", trust_height));
         modified_config.push_str(&format!("trust_hash = \"{}\"\n", trust_hash));
         modified_config.push_str("trust_period = \"168h0m0s\"\n");
     }
 
     // Write modified config back
-    tokio::fs::write(config_path, modified_config).await
+    tokio::fs::write(config_path, modified_config)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to write config file: {}", e))?;
 
     info!("✓ State sync enabled in config");
@@ -86,7 +95,8 @@ pub async fn disable_state_sync(config_path: &str) -> Result<()> {
     info!("Disabling state sync in {}", config_path);
 
     // Read current config
-    let config_content = tokio::fs::read_to_string(config_path).await
+    let config_content = tokio::fs::read_to_string(config_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
 
     // Parse and modify config
@@ -108,7 +118,8 @@ pub async fn disable_state_sync(config_path: &str) -> Result<()> {
         // Create updated section with enable = false
         let mut new_section = String::from("[statesync]\n");
 
-        for line in section.lines().skip(1) { // Skip [statesync] line
+        for line in section.lines().skip(1) {
+            // Skip [statesync] line
             let trimmed = line.trim();
 
             if trimmed.starts_with("enable ") || trimmed.starts_with("enable=") {
@@ -128,7 +139,8 @@ pub async fn disable_state_sync(config_path: &str) -> Result<()> {
     }
 
     // Write modified config back
-    tokio::fs::write(config_path, modified_config).await
+    tokio::fs::write(config_path, modified_config)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to write config file: {}", e))?;
 
     info!("✓ State sync disabled in config");

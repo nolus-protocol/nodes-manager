@@ -11,8 +11,8 @@ use crate::config::{Config, ConfigManager};
 use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
-use crate::snapshot::SnapshotManager;
 use crate::operation_tracker::SimpleOperationTracker;
+use crate::snapshot::SnapshotManager;
 
 // Application state shared across all handlers
 #[derive(Clone)]

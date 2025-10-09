@@ -1,0 +1,40 @@
+# Build stage
+FROM rust:1.75 as builder
+
+WORKDIR /app
+
+# Copy manifests
+COPY Cargo.toml Cargo.lock ./
+COPY manager/Cargo.toml ./manager/
+COPY agent/Cargo.toml ./agent/
+
+# Copy source code
+COPY manager/ ./manager/
+COPY agent/ ./agent/
+
+# Build the agent binary
+RUN cargo build --package agent --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/agent /usr/local/bin/agent
+
+# Expose default port
+EXPOSE 8745
+
+# Set environment variables
+ENV RUST_LOG=info
+ENV AGENT_API_KEY=""
+
+# Run the agent
+CMD ["agent"]

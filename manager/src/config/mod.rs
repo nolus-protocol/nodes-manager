@@ -1,8 +1,8 @@
 // File: manager/src/config/mod.rs
 pub mod manager;
+pub use manager::ConfigManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-pub use manager::ConfigManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -56,11 +56,11 @@ pub struct NodeDefaults {
     /// Base deployment directory (e.g., "/opt/deploy")
     /// If set, derives: pruning_deploy_path = "{base_deploy_path}/{service_name}/data"
     pub base_deploy_path: Option<String>,
-    
+
     /// Base log directory (e.g., "/var/log")  
     /// If set, derives: log_path = "{base_log_path}/{service_name}"
     pub base_log_path: Option<String>,
-    
+
     /// Base backup directory (e.g., "/home/backup/snapshots")
     /// If set, derives: snapshot_backup_path = "{base_backup_path}"
     pub base_backup_path: Option<String>,
@@ -119,12 +119,12 @@ impl NodeConfig {
         // Extract the simple node name (remove server prefix if present)
         // Example: "enterprise-osmosis" -> "osmosis"
         let simple_name = self.extract_simple_name(node_name);
-        
+
         // Auto-derive pruning_service_name if not set
         if self.pruning_service_name.is_none() {
             self.pruning_service_name = Some(simple_name.clone());
         }
-        
+
         // Auto-derive pruning_deploy_path if not set
         // Uses base_deploy_path from server config if available
         if self.pruning_deploy_path.is_none() {
@@ -134,19 +134,20 @@ impl NodeConfig {
                 }
             }
         }
-        
+
         // Auto-derive snapshot_deploy_path if not set (remove /data suffix from pruning_deploy_path)
         if self.snapshot_deploy_path.is_none() {
             if let Some(ref pruning_path) = self.pruning_deploy_path {
                 // Remove /data suffix if present
                 self.snapshot_deploy_path = Some(
-                    pruning_path.strip_suffix("/data")
+                    pruning_path
+                        .strip_suffix("/data")
                         .unwrap_or(pruning_path)
-                        .to_string()
+                        .to_string(),
                 );
             }
         }
-        
+
         // Auto-derive log_path if not set
         // Uses base_log_path from server config if available
         if self.log_path.is_none() {
@@ -156,7 +157,7 @@ impl NodeConfig {
                 }
             }
         }
-        
+
         // Auto-derive snapshot_backup_path if not set
         // Uses base_backup_path from server config if available (shared across all nodes)
         if self.snapshot_backup_path.is_none() {
@@ -166,10 +167,10 @@ impl NodeConfig {
                 }
             }
         }
-        
+
         self
     }
-    
+
     /// Extract simple node name from full node name
     /// Examples:
     /// - "enterprise-osmosis" -> "osmosis"
@@ -178,21 +179,22 @@ impl NodeConfig {
     /// - "osmosis-archive" -> "osmosis"
     fn extract_simple_name(&self, node_name: &str) -> String {
         let parts: Vec<&str> = node_name.split('-').collect();
-        
+
         if parts.len() == 1 {
             // Single part, use as-is
             return parts[0].to_string();
         }
-        
+
         // Multiple parts - take the second part (skip server prefix)
         // "enterprise-osmosis" -> "osmosis"
         // "discovery-neutron-1" -> "neutron"
         if parts.len() >= 2 {
             // Skip first part (server name) and last part if it's a number
-            let last_is_number = parts.last()
+            let last_is_number = parts
+                .last()
                 .map(|p| p.chars().all(|c| c.is_numeric()))
                 .unwrap_or(false);
-            
+
             if last_is_number && parts.len() >= 3 {
                 // Has numeric suffix: "discovery-osmosis-1" -> use middle part
                 return parts[1].to_string();
@@ -201,7 +203,7 @@ impl NodeConfig {
                 return parts[1].to_string();
             }
         }
-        
+
         // Fallback
         parts[0].to_string()
     }

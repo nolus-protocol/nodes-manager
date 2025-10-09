@@ -9,19 +9,19 @@ use std::fmt;
 pub enum ManagerError {
     /// Configuration-related errors
     Config(ConfigError),
-    
+
     /// HTTP communication errors with agents
     Http(HttpError),
-    
+
     /// Database operation errors
     Database(DatabaseError),
-    
+
     /// Node operation errors (pruning, restart, etc.)
     NodeOperation(NodeOperationError),
-    
+
     /// Maintenance tracking errors
     Maintenance(MaintenanceError),
-    
+
     /// Other errors with context
     Other(String),
 }
@@ -31,13 +31,13 @@ pub enum ManagerError {
 pub enum ConfigError {
     /// Failed to load configuration file
     LoadFailed { path: String, reason: String },
-    
+
     /// Invalid configuration value
     InvalidValue { field: String, reason: String },
-    
+
     /// Missing required configuration
     MissingRequired { field: String },
-    
+
     /// Configuration parsing error
     ParseError { reason: String },
 }
@@ -47,16 +47,16 @@ pub enum ConfigError {
 pub enum HttpError {
     /// Connection to agent failed
     ConnectionFailed { host: String, reason: String },
-    
+
     /// Request timeout
     Timeout { host: String, operation: String },
-    
+
     /// Invalid response from agent
     InvalidResponse { host: String, reason: String },
-    
+
     /// Authentication failed
     AuthenticationFailed { host: String },
-    
+
     /// Agent returned error
     AgentError { host: String, message: String },
 }
@@ -66,10 +66,10 @@ pub enum HttpError {
 pub enum DatabaseError {
     /// Connection failed
     ConnectionFailed { reason: String },
-    
+
     /// Query execution failed
     QueryFailed { query: String, reason: String },
-    
+
     /// Data serialization/deserialization error
     SerializationError { reason: String },
 }
@@ -79,16 +79,26 @@ pub enum DatabaseError {
 pub enum NodeOperationError {
     /// Node not found in configuration
     NodeNotFound { node_name: String },
-    
+
     /// Node is busy with another operation
-    NodeBusy { node_name: String, current_operation: String },
-    
+    NodeBusy {
+        node_name: String,
+        current_operation: String,
+    },
+
     /// Operation failed
-    OperationFailed { node_name: String, operation: String, reason: String },
-    
+    OperationFailed {
+        node_name: String,
+        operation: String,
+        reason: String,
+    },
+
     /// Operation timeout
-    OperationTimeout { node_name: String, operation: String },
-    
+    OperationTimeout {
+        node_name: String,
+        operation: String,
+    },
+
     /// Invalid operation state
     InvalidState { node_name: String, reason: String },
 }
@@ -97,14 +107,17 @@ pub enum NodeOperationError {
 #[derive(Debug)]
 pub enum MaintenanceError {
     /// Node is already in maintenance
-    AlreadyInMaintenance { node_name: String, operation: String },
-    
+    AlreadyInMaintenance {
+        node_name: String,
+        operation: String,
+    },
+
     /// No active maintenance found
     NoActiveMaintenance { node_name: String },
-    
+
     /// Failed to start maintenance window
     StartFailed { node_name: String, reason: String },
-    
+
     /// Failed to end maintenance window
     EndFailed { node_name: String, reason: String },
 }
@@ -186,13 +199,31 @@ impl fmt::Display for NodeOperationError {
             NodeOperationError::NodeNotFound { node_name } => {
                 write!(f, "Node '{}' not found", node_name)
             }
-            NodeOperationError::NodeBusy { node_name, current_operation } => {
-                write!(f, "Node '{}' is busy with: {}", node_name, current_operation)
+            NodeOperationError::NodeBusy {
+                node_name,
+                current_operation,
+            } => {
+                write!(
+                    f,
+                    "Node '{}' is busy with: {}",
+                    node_name, current_operation
+                )
             }
-            NodeOperationError::OperationFailed { node_name, operation, reason } => {
-                write!(f, "Operation '{}' failed on '{}': {}", operation, node_name, reason)
+            NodeOperationError::OperationFailed {
+                node_name,
+                operation,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Operation '{}' failed on '{}': {}",
+                    operation, node_name, reason
+                )
             }
-            NodeOperationError::OperationTimeout { node_name, operation } => {
+            NodeOperationError::OperationTimeout {
+                node_name,
+                operation,
+            } => {
                 write!(f, "Operation '{}' timed out on '{}'", operation, node_name)
             }
             NodeOperationError::InvalidState { node_name, reason } => {
@@ -205,17 +236,32 @@ impl fmt::Display for NodeOperationError {
 impl fmt::Display for MaintenanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MaintenanceError::AlreadyInMaintenance { node_name, operation } => {
-                write!(f, "Node '{}' is already in maintenance: {}", node_name, operation)
+            MaintenanceError::AlreadyInMaintenance {
+                node_name,
+                operation,
+            } => {
+                write!(
+                    f,
+                    "Node '{}' is already in maintenance: {}",
+                    node_name, operation
+                )
             }
             MaintenanceError::NoActiveMaintenance { node_name } => {
                 write!(f, "No active maintenance for node '{}'", node_name)
             }
             MaintenanceError::StartFailed { node_name, reason } => {
-                write!(f, "Failed to start maintenance for '{}': {}", node_name, reason)
+                write!(
+                    f,
+                    "Failed to start maintenance for '{}': {}",
+                    node_name, reason
+                )
             }
             MaintenanceError::EndFailed { node_name, reason } => {
-                write!(f, "Failed to end maintenance for '{}': {}", node_name, reason)
+                write!(
+                    f,
+                    "Failed to end maintenance for '{}': {}",
+                    node_name, reason
+                )
             }
         }
     }

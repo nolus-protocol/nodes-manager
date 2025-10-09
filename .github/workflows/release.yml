@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        body: |
+          ## Changes in ${{ steps.get_version.outputs.version }}
+          
+          ### Binaries
+          - `manager-linux-amd64`: Manager binary for Linux (x86_64)
+          - `manager-macos-amd64`: Manager binary for macOS (x86_64)
+          - `manager-macos-arm64`: Manager binary for macOS (Apple Silicon)
+          - `agent-linux-amd64`: Agent binary for Linux (x86_64)
+          - `agent-macos-amd64`: Agent binary for macOS (x86_64)
+          - `agent-macos-arm64`: Agent binary for macOS (Apple Silicon)
+          
+          ### Installation
+          ```bash
+          # Download and install (example for Linux)
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/manager-linux-amd64
+          chmod +x manager-linux-amd64
+          sudo mv manager-linux-amd64 /usr/local/bin/manager
+          ```
+          
+          See [TESTING.md](https://github.com/${{ github.repository }}/blob/main/TESTING.md) for testing documentation.
+        draft: false
+        prerelease: false
+
+  build-binaries:
+    name: Build ${{ matrix.binary }} for ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: manager
+            artifact_name: manager-linux-amd64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: agent
+            artifact_name: agent-linux-amd64
+          
+          # macOS x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: manager
+            artifact_name: manager-macos-amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: agent
+            artifact_name: agent-macos-amd64
+          
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: manager
+            artifact_name: manager-macos-arm64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: agent
+            artifact_name: agent-macos-arm64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run tests before build
+      run: cargo test --package ${{ matrix.binary }} --release
+
+    - name: Build binary
+      run: cargo build --package ${{ matrix.binary }} --release --target ${{ matrix.target }}
+
+    - name: Strip binary (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: strip target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+    - name: Strip binary (macOS)
+      if: matrix.os == 'macos-latest'
+      run: strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
+
+    - name: Prepare binary
+      run: |
+        cd target/${{ matrix.target }}/release
+        chmod +x ${{ matrix.binary }}
+        tar czf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.binary }}
+        mv ${{ matrix.artifact_name }}.tar.gz ../../..
+
+    - name: Generate checksum
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
+        else
+          shasum -a 256 ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
+        fi
+
+    - name: Upload binary artifact
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.tar.gz
+        asset_name: ${{ matrix.artifact_name }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload checksum
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.tar.gz.sha256
+        asset_name: ${{ matrix.artifact_name }}.tar.gz.sha256
+        asset_content_type: text/plain
+
+  docker-images:
+    name: Build Docker Images
+    needs: create-release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+      if: secrets.DOCKER_USERNAME != ''
+
+    - name: Extract version
+      id: version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Build and push manager image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.manager
+        push: ${{ secrets.DOCKER_USERNAME != '' }}
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/nodes-manager:${{ steps.version.outputs.version }}
+          ${{ secrets.DOCKER_USERNAME }}/nodes-manager:latest
+        platforms: linux/amd64,linux/arm64
+      if: secrets.DOCKER_USERNAME != ''
+
+    - name: Build and push agent image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.agent
+        push: ${{ secrets.DOCKER_USERNAME != '' }}
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/nodes-agent:${{ steps.version.outputs.version }}
+          ${{ secrets.DOCKER_USERNAME }}/nodes-agent:latest
+        platforms: linux/amd64,linux/arm64
+      if: secrets.DOCKER_USERNAME != ''

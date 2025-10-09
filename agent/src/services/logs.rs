@@ -18,7 +18,11 @@ pub async fn truncate_log_file(log_path: &str) -> Result<()> {
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to truncate log file {}: {}", log_path, error));
+        return Err(anyhow!(
+            "Failed to truncate log file {}: {}",
+            log_path,
+            error
+        ));
     }
 
     info!("Log file truncated successfully: {}", log_path);
@@ -41,7 +45,11 @@ pub async fn truncate_log_directory(log_dir: &str) -> Result<()> {
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to truncate logs in directory {}: {}", log_dir, error));
+        return Err(anyhow!(
+            "Failed to truncate logs in directory {}: {}",
+            log_dir,
+            error
+        ));
     }
 
     let list_command = format!(
@@ -81,10 +89,7 @@ pub async fn delete_all_files_in_directory(log_dir: &str) -> Result<()> {
     }
 
     // Delete all files (not directories) in the specified directory
-    let delete_command = format!(
-        "find '{}' -maxdepth 1 -type f -delete",
-        log_dir
-    );
+    let delete_command = format!("find '{}' -maxdepth 1 -type f -delete", log_dir);
 
     let output = AsyncCommand::new("sh")
         .arg("-c")
@@ -94,14 +99,15 @@ pub async fn delete_all_files_in_directory(log_dir: &str) -> Result<()> {
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to delete files in directory {}: {}", log_dir, error));
+        return Err(anyhow!(
+            "Failed to delete files in directory {}: {}",
+            log_dir,
+            error
+        ));
     }
 
     // Count remaining files to verify deletion
-    let count_command = format!(
-        "find '{}' -maxdepth 1 -type f | wc -l",
-        log_dir
-    );
+    let count_command = format!("find '{}' -maxdepth 1 -type f | wc -l", log_dir);
 
     let count_output = AsyncCommand::new("sh")
         .arg("-c")
@@ -114,7 +120,10 @@ pub async fn delete_all_files_in_directory(log_dir: &str) -> Result<()> {
         .parse::<u32>()
         .unwrap_or(0);
 
-    info!("All files deleted successfully from directory: {} (remaining files: {})", log_dir, remaining_files);
+    info!(
+        "All files deleted successfully from directory: {} (remaining files: {})",
+        log_dir, remaining_files
+    );
     Ok(())
 }
 
@@ -142,13 +151,19 @@ pub async fn truncate_log_path(log_path: &str) -> Result<()> {
             truncate_log_file(log_path).await
         } else {
             warn!("Log path does not exist or is not accessible: {}", log_path);
-            Err(anyhow!("Log path does not exist or is not accessible: {}", log_path))
+            Err(anyhow!(
+                "Log path does not exist or is not accessible: {}",
+                log_path
+            ))
         }
     }
 }
 
 pub async fn truncate_service_logs(service_name: &str, log_path: &str) -> Result<()> {
-    info!("Truncating logs for service: {} at path: {}", service_name, log_path);
+    info!(
+        "Truncating logs for service: {} at path: {}",
+        service_name, log_path
+    );
 
     systemctl::stop_service(service_name).await?;
 
@@ -157,7 +172,8 @@ pub async fn truncate_service_logs(service_name: &str, log_path: &str) -> Result
         if let Err(start_err) = systemctl::start_service(service_name).await {
             return Err(anyhow!(
                 "Log truncation failed: {} AND service restart failed: {}",
-                e, start_err
+                e,
+                start_err
             ));
         }
         return Err(e);
