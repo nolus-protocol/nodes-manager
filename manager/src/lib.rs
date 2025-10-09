@@ -1,6 +1,7 @@
 pub mod config;
 pub mod constants;
 pub mod database;
+pub mod errors;
 pub mod health;
 pub mod http;
 pub mod maintenance_tracker;
