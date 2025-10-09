@@ -41,10 +41,13 @@ async fn test_ui_metrics_cards_render() {
         .expect("Failed to navigate");
 
     // Wait for metrics grid
-    tab.wait_for_element(".metrics-grid").expect("Metrics grid not found");
+    tab.wait_for_element(".metrics-grid")
+        .expect("Metrics grid not found");
 
     // Verify all 4 metric cards exist
-    let metric_cards = tab.find_elements(".metric-card").expect("Metric cards not found");
+    let metric_cards = tab
+        .find_elements(".metric-card")
+        .expect("Metric cards not found");
     assert_eq!(metric_cards.len(), 4, "Should have 4 metric cards");
 
     // Verify metric card content
@@ -92,20 +95,24 @@ async fn test_ui_javascript_app_initializes() {
     sleep(Duration::from_secs(1)).await;
 
     // Check that the app object is available in global scope
-    let app_exists = tab.evaluate("typeof app !== 'undefined'", false)
+    let app_exists = tab
+        .evaluate("typeof app !== 'undefined'", false)
         .expect("Failed to evaluate");
     assert!(app_exists.value.is_some());
 
     // Check that app has expected methods
-    let has_init = tab.evaluate("typeof app.init === 'function'", false)
+    let has_init = tab
+        .evaluate("typeof app.init === 'function'", false)
         .expect("Failed to evaluate");
     assert!(has_init.value.is_some());
 
-    let has_load_data = tab.evaluate("typeof app.loadAllData === 'function'", false)
+    let has_load_data = tab
+        .evaluate("typeof app.loadAllData === 'function'", false)
         .expect("Failed to evaluate");
     assert!(has_load_data.value.is_some());
 
-    let has_refresh_nodes = tab.evaluate("typeof app.refreshNodes === 'function'", false)
+    let has_refresh_nodes = tab
+        .evaluate("typeof app.refreshNodes === 'function'", false)
         .expect("Failed to evaluate");
     assert!(has_refresh_nodes.value.is_some());
 }
@@ -125,15 +132,15 @@ async fn test_ui_loading_states() {
     // Check for loading spinners (they should appear briefly)
     let html = tab.get_content().expect("Failed to get content");
     let document = Html::parse_document(&html);
-    
+
     // Verify loading elements exist in the HTML structure
     let loading_selector = Selector::parse(".loading").unwrap();
     let spinner_selector = Selector::parse(".spinner").unwrap();
-    
+
     // At least one loading element should be present initially
     assert!(
-        document.select(&loading_selector).count() > 0 || 
-        document.select(&spinner_selector).count() > 0
+        document.select(&loading_selector).count() > 0
+            || document.select(&spinner_selector).count() > 0
     );
 }
 
@@ -186,9 +193,12 @@ async fn test_ui_refresh_buttons_exist() {
 
     // Find all refresh buttons
     let refresh_buttons = tab.find_elements("button").expect("Buttons not found");
-    
+
     // Should have at least 3 refresh buttons (one per panel)
-    assert!(refresh_buttons.len() >= 3, "Should have at least 3 refresh buttons");
+    assert!(
+        refresh_buttons.len() >= 3,
+        "Should have at least 3 refresh buttons"
+    );
 
     // Verify refresh button onclick handlers
     let html = tab.get_content().expect("Failed to get content");
@@ -241,7 +251,11 @@ async fn test_ui_button_color_variants() {
     ];
 
     for class in button_classes {
-        assert!(html.contains(class), "Button class {} should be defined", class);
+        assert!(
+            html.contains(class),
+            "Button class {} should be defined",
+            class
+        );
     }
 }
 
@@ -257,11 +271,13 @@ async fn test_ui_responsive_grid_layout() {
     sleep(Duration::from_millis(500)).await;
 
     // Verify metrics grid uses CSS Grid
-    let grid_display = tab.evaluate(
-        "window.getComputedStyle(document.querySelector('.metrics-grid')).display",
-        false
-    ).expect("Failed to evaluate");
-    
+    let grid_display = tab
+        .evaluate(
+            "window.getComputedStyle(document.querySelector('.metrics-grid')).display",
+            false,
+        )
+        .expect("Failed to evaluate");
+
     // Should be 'grid' or contain grid
     let display_value = grid_display.value.unwrap().to_string();
     assert!(
@@ -285,11 +301,17 @@ async fn test_ui_accessibility_basics() {
     // Verify HTML lang attribute
     let html_selector = Selector::parse("html").unwrap();
     let html_elem = document.select(&html_selector).next().unwrap();
-    assert!(html_elem.value().attr("lang").is_some(), "HTML should have lang attribute");
+    assert!(
+        html_elem.value().attr("lang").is_some(),
+        "HTML should have lang attribute"
+    );
 
     // Verify page has title
     let title_selector = Selector::parse("title").unwrap();
-    assert!(document.select(&title_selector).count() > 0, "Page should have a title");
+    assert!(
+        document.select(&title_selector).count() > 0,
+        "Page should have a title"
+    );
 
     // Verify buttons have accessible text or aria-labels
     let button_selector = Selector::parse("button").unwrap();
@@ -297,7 +319,7 @@ async fn test_ui_accessibility_basics() {
         let has_text = button.text().collect::<String>().trim().len() > 0;
         let has_title = button.value().attr("title").is_some();
         let has_aria = button.value().attr("aria-label").is_some();
-        
+
         assert!(
             has_text || has_title || has_aria,
             "Buttons should have accessible text, title, or aria-label"
@@ -352,45 +374,67 @@ async fn test_ui_no_console_errors() {
             return errors;
         })()
         "#,
-        false
+        false,
     );
 
     // The page should load without console errors
-    assert!(console_errors.is_ok(), "Should be able to check console errors");
+    assert!(
+        console_errors.is_ok(),
+        "Should be able to check console errors"
+    );
 }
 
 #[test]
 fn test_ui_html_validity() {
     // Read the HTML file (relative to workspace root)
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Parse HTML
     let document = Html::parse_document(&html_content);
 
     // Verify basic HTML structure
     let html_selector = Selector::parse("html").unwrap();
-    assert_eq!(document.select(&html_selector).count(), 1, "Should have one html element");
+    assert_eq!(
+        document.select(&html_selector).count(),
+        1,
+        "Should have one html element"
+    );
 
     let head_selector = Selector::parse("head").unwrap();
-    assert_eq!(document.select(&head_selector).count(), 1, "Should have one head element");
+    assert_eq!(
+        document.select(&head_selector).count(),
+        1,
+        "Should have one head element"
+    );
 
     let body_selector = Selector::parse("body").unwrap();
-    assert_eq!(document.select(&body_selector).count(), 1, "Should have one body element");
+    assert_eq!(
+        document.select(&body_selector).count(),
+        1,
+        "Should have one body element"
+    );
 
     // Verify meta charset
     let charset_selector = Selector::parse("meta[charset]").unwrap();
-    assert!(document.select(&charset_selector).count() > 0, "Should have charset meta tag");
+    assert!(
+        document.select(&charset_selector).count() > 0,
+        "Should have charset meta tag"
+    );
 
     // Verify title
     let title_selector = Selector::parse("title").unwrap();
-    assert_eq!(document.select(&title_selector).count(), 1, "Should have one title");
+    assert_eq!(
+        document.select(&title_selector).count(),
+        1,
+        "Should have one title"
+    );
 }
 
 #[test]
 fn test_ui_required_elements_present() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
     let document = Html::parse_document(&html_content);
 
     // Verify required containers exist
@@ -423,54 +467,111 @@ fn test_ui_required_elements_present() {
 
 #[test]
 fn test_ui_css_defined() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Verify CSS is embedded
     assert!(html_content.contains("<style>"), "Should have embedded CSS");
     assert!(html_content.contains("</style>"), "CSS should be closed");
 
     // Verify important CSS rules are defined
-    assert!(html_content.contains(":root"), "Should define CSS variables");
-    assert!(html_content.contains("--primary-color"), "Should define color variables");
-    assert!(html_content.contains(".header"), "Should define header styles");
+    assert!(
+        html_content.contains(":root"),
+        "Should define CSS variables"
+    );
+    assert!(
+        html_content.contains("--primary-color"),
+        "Should define color variables"
+    );
+    assert!(
+        html_content.contains(".header"),
+        "Should define header styles"
+    );
     assert!(html_content.contains(".btn"), "Should define button styles");
 }
 
 #[test]
 fn test_ui_javascript_defined() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Verify JavaScript is embedded
-    assert!(html_content.contains("<script>"), "Should have embedded JavaScript");
-    assert!(html_content.contains("</script>"), "JavaScript should be closed");
+    assert!(
+        html_content.contains("<script>"),
+        "Should have embedded JavaScript"
+    );
+    assert!(
+        html_content.contains("</script>"),
+        "JavaScript should be closed"
+    );
 
     // Verify app object is defined
-    assert!(html_content.contains("const app ="), "Should define app object");
-    
+    assert!(
+        html_content.contains("const app ="),
+        "Should define app object"
+    );
+
     // Verify important modules exist
-    assert!(html_content.contains("const state ="), "Should define state");
-    assert!(html_content.contains("const api ="), "Should define api module");
-    assert!(html_content.contains("const utils ="), "Should define utils module");
-    assert!(html_content.contains("const cron ="), "Should define cron module");
-    assert!(html_content.contains("const templates ="), "Should define templates module");
-    assert!(html_content.contains("const renderers ="), "Should define renderers module");
-    assert!(html_content.contains("const metrics ="), "Should define metrics module");
-    assert!(html_content.contains("const ui ="), "Should define ui module");
+    assert!(
+        html_content.contains("const state ="),
+        "Should define state"
+    );
+    assert!(
+        html_content.contains("const api ="),
+        "Should define api module"
+    );
+    assert!(
+        html_content.contains("const utils ="),
+        "Should define utils module"
+    );
+    assert!(
+        html_content.contains("const cron ="),
+        "Should define cron module"
+    );
+    assert!(
+        html_content.contains("const templates ="),
+        "Should define templates module"
+    );
+    assert!(
+        html_content.contains("const renderers ="),
+        "Should define renderers module"
+    );
+    assert!(
+        html_content.contains("const metrics ="),
+        "Should define metrics module"
+    );
+    assert!(
+        html_content.contains("const ui ="),
+        "Should define ui module"
+    );
 
     // Verify important functions exist
-    assert!(html_content.contains("async init()"), "Should have init function");
-    assert!(html_content.contains("async loadAllData()"), "Should have loadAllData function");
-    assert!(html_content.contains("refreshNodes"), "Should have refreshNodes function");
-    assert!(html_content.contains("refreshHermes"), "Should have refreshHermes function");
-    assert!(html_content.contains("refreshEtl"), "Should have refreshEtl function");
+    assert!(
+        html_content.contains("async init()"),
+        "Should have init function"
+    );
+    assert!(
+        html_content.contains("async loadAllData()"),
+        "Should have loadAllData function"
+    );
+    assert!(
+        html_content.contains("refreshNodes"),
+        "Should have refreshNodes function"
+    );
+    assert!(
+        html_content.contains("refreshHermes"),
+        "Should have refreshHermes function"
+    );
+    assert!(
+        html_content.contains("refreshEtl"),
+        "Should have refreshEtl function"
+    );
 }
 
 #[test]
 fn test_ui_api_endpoints_referenced() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Verify all API endpoints are referenced
     let api_endpoints = vec![
@@ -496,37 +597,53 @@ fn test_ui_api_endpoints_referenced() {
 
 #[test]
 fn test_ui_event_handlers_defined() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Verify onclick handlers for main actions
-    assert!(html_content.contains("onclick=\"app.refreshNodes()\""), 
-        "Should have refresh nodes handler");
-    assert!(html_content.contains("onclick=\"app.refreshHermes()\""), 
-        "Should have refresh hermes handler");
-    assert!(html_content.contains("onclick=\"app.refreshEtl()\""), 
-        "Should have refresh ETL handler");
+    assert!(
+        html_content.contains("onclick=\"app.refreshNodes()\""),
+        "Should have refresh nodes handler"
+    );
+    assert!(
+        html_content.contains("onclick=\"app.refreshHermes()\""),
+        "Should have refresh hermes handler"
+    );
+    assert!(
+        html_content.contains("onclick=\"app.refreshEtl()\""),
+        "Should have refresh ETL handler"
+    );
 
     // Verify DOMContentLoaded listener
-    assert!(html_content.contains("DOMContentLoaded"), 
-        "Should listen for DOMContentLoaded");
-    assert!(html_content.contains("app.init()"), 
-        "Should call app.init() on load");
+    assert!(
+        html_content.contains("DOMContentLoaded"),
+        "Should listen for DOMContentLoaded"
+    );
+    assert!(
+        html_content.contains("app.init()"),
+        "Should call app.init() on load"
+    );
 }
 
 #[test]
 fn test_ui_no_hardcoded_data() {
-    let html_content = std::fs::read_to_string("../static/index.html")
-        .expect("Failed to read index.html");
+    let html_content =
+        std::fs::read_to_string("../static/index.html").expect("Failed to read index.html");
 
     // Verify no hardcoded node names or server IPs
     // (These should be loaded dynamically from API)
-    
+
     // Check that containers start with loading state, not data
-    assert!(html_content.contains("Loading blockchain nodes..."), 
-        "Should show loading state for nodes");
-    assert!(html_content.contains("Loading Hermes relayers..."), 
-        "Should show loading state for hermes");
-    assert!(html_content.contains("Loading ETL services..."), 
-        "Should show loading state for ETL");
+    assert!(
+        html_content.contains("Loading blockchain nodes..."),
+        "Should show loading state for nodes"
+    );
+    assert!(
+        html_content.contains("Loading Hermes relayers..."),
+        "Should show loading state for hermes"
+    );
+    assert!(
+        html_content.contains("Loading ETL services..."),
+        "Should show loading state for ETL"
+    );
 }
