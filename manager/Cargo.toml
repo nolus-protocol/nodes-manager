@@ -16,7 +16,6 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true }
-async-ssh2-tokio = { workspace = true }
 chrono = { workspace = true }
 tokio-cron-scheduler = { workspace = true }
 tracing = { workspace = true }
