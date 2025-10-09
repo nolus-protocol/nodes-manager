@@ -316,7 +316,7 @@ async fn test_ui_accessibility_basics() {
     // Verify buttons have accessible text or aria-labels
     let button_selector = Selector::parse("button").unwrap();
     for button in document.select(&button_selector) {
-        let has_text = button.text().collect::<String>().trim().len() > 0;
+        let has_text = !button.text().collect::<String>().trim().is_empty();
         let has_title = button.value().attr("title").is_some();
         let has_aria = button.value().attr("aria-label").is_some();
 
