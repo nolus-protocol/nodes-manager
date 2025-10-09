@@ -75,6 +75,7 @@ pub struct JobInfo {
     pub error_message: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct AsyncResponse {
     pub success: bool,
@@ -201,6 +202,7 @@ impl ApiResponse<()> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn success_with_snapshot(filename: String, size_bytes: u64, path: String) -> Self {
         Self {
             success: true,

@@ -1,4 +1,3 @@
-// File: manager/src/lib.rs
 pub mod config;
 pub mod database;
 pub mod health;

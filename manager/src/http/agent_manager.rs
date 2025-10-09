@@ -5,12 +5,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn, error, debug};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::{Config, HermesConfig};
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::maintenance_tracker::MaintenanceTracker;
+use crate::snapshot::SnapshotInfo;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ServiceStatus {
@@ -26,14 +27,7 @@ impl ServiceStatus {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SnapshotInfo {
-    pub filename: String,
-    pub size_bytes: u64,
-    pub created_at: DateTime<Utc>,
-    pub path: String,
-    pub compression: String,
-}
+// REMOVED: Duplicate SnapshotInfo struct - now using crate::snapshot::SnapshotInfo
 
 pub struct HttpAgentManager {
     pub config: Arc<Config>,
@@ -462,7 +456,7 @@ impl HttpAgentManager {
         // Fetch state sync parameters from RPC
         info!("Fetching state sync parameters from RPC sources");
 
-        let sync_params = crate::state_sync::rpc_client::fetch_state_sync_params(
+        let sync_params = crate::state_sync::fetch_state_sync_params(
             rpc_sources,
             trust_height_offset,
         ).await?;
@@ -508,7 +502,7 @@ impl HttpAgentManager {
         }
     }
 
-    pub async fn create_node_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+    pub async fn create_node_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         self.operation_tracker.try_start_operation(node_name, "snapshot_creation", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -547,7 +541,7 @@ impl HttpAgentManager {
         result
     }
 
-    async fn create_node_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+    async fn create_node_snapshot_impl(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
@@ -577,7 +571,7 @@ impl HttpAgentManager {
 
         let operation_result = result.get("result").unwrap_or(&result);
 
-        let snapshot_info = crate::snapshot::SnapshotInfo {
+        let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
             filename: operation_result["filename"].as_str().unwrap_or_default().to_string(),
@@ -629,7 +623,7 @@ impl HttpAgentManager {
         Ok(())
     }
 
-    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+    pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
         self.operation_tracker.try_start_operation(node_name, "snapshot_restore", None).await?;
 
         let node_config = self.config.nodes.get(node_name)
@@ -668,7 +662,7 @@ impl HttpAgentManager {
         result
     }
 
-    async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
+    async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<SnapshotInfo> {
         let node_config = self.config.nodes.get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
@@ -699,7 +693,7 @@ impl HttpAgentManager {
 
         let _result = self.execute_operation(&node_config.server_host, "/snapshot/restore", payload).await?;
 
-        let snapshot_info = crate::snapshot::SnapshotInfo {
+        let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
             filename: latest_snapshot_dir.split('/').last().unwrap_or("unknown").to_string(),
@@ -785,6 +779,38 @@ impl HttpAgentManager {
             .unwrap_or(false);
 
         Ok(triggers_found)
+    }
+
+    #[allow(dead_code)]
+    pub async fn restart_multiple_hermes(&self, hermes_configs: Vec<HermesConfig>) -> Result<Value> {
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+
+        for hermes_config in hermes_configs {
+            info!("Restarting Hermes: {}", hermes_config.service_name);
+
+            match self.restart_hermes(&hermes_config).await {
+                Ok(_) => {
+                    results.push(json!({
+                        "service_name": hermes_config.service_name,
+                        "status": "success"
+                    }));
+                }
+                Err(e) => {
+                    error!("Failed to restart Hermes {}: {}", hermes_config.service_name, e);
+                    errors.push(json!({
+                        "service_name": hermes_config.service_name,
+                        "status": "error",
+                        "error": e.to_string()
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({
+            "successes": results,
+            "errors": errors
+        }))
     }
 }
 

@@ -406,6 +406,7 @@ impl Database {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn get_maintenance_operations(&self, limit: Option<i32>) -> Result<Vec<MaintenanceOperation>> {
         debug!("Querying maintenance operations with limit: {:?}", limit);
 

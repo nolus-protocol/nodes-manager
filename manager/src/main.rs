@@ -12,6 +12,7 @@ mod maintenance_tracker;
 mod operation_tracker;
 mod scheduler;
 mod snapshot;
+mod state_sync;
 mod web;
 mod services;
 

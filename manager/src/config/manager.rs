@@ -5,7 +5,8 @@ use glob::glob;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+use serde_json::Value;
 
 pub struct ConfigManager {
     current_config: Arc<Config>,
@@ -70,11 +71,28 @@ impl ConfigManager {
                 // FIXED: Smart node naming - don't double-prefix if already prefixed
                 let final_node_name = if node_name.starts_with(&format!("{}-", server_name)) {
                     // Node name already includes server prefix, use as-is
-                    node_name
+                    node_name.clone()
                 } else {
                     // Node name doesn't include server prefix, add it
                     format!("{}-{}", server_name, node_name)
                 };
+                
+                // Auto-detect network from RPC if not specified or set to "auto"
+                if node_config.network.is_empty() || node_config.network == "auto" {
+                    debug!("Auto-detecting network for {} from RPC {}", final_node_name, node_config.rpc_url);
+                    match Self::fetch_network_from_rpc(&node_config.rpc_url).await {
+                        Ok(detected_network) => {
+                            info!("✓ Auto-detected network for {}: {}", final_node_name, detected_network);
+                            node_config.network = detected_network;
+                        }
+                        Err(e) => {
+                            warn!("Failed to auto-detect network for {}: {}. Please specify 'network' in config.", final_node_name, e);
+                        }
+                    }
+                }
+                
+                // Apply smart defaults to node config (derive paths from node name)
+                node_config = node_config.with_defaults(&server_config_file.defaults, &final_node_name);
 
                 all_nodes.insert(final_node_name, node_config);
             }
@@ -129,5 +147,34 @@ impl ConfigManager {
         );
 
         Ok(config)
+    }
+    
+    /// Fetch network ID from RPC /status endpoint
+    /// Returns the network field from the response (e.g., "pirin-1", "osmosis-1")
+    async fn fetch_network_from_rpc(rpc_url: &str) -> Result<String> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        
+        let status_url = format!("{}/status", rpc_url);
+        let response = client.get(&status_url)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to fetch RPC status from {}: {}", status_url, e))?;
+        
+        if !response.status().is_success() {
+            return Err(anyhow!("RPC status returned HTTP {}", response.status()));
+        }
+        
+        let json: Value = response.json().await
+            .map_err(|e| anyhow!("Failed to parse RPC status response: {}", e))?;
+        
+        // Extract network from response: result.node_info.network
+        let network = json["result"]["node_info"]["network"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Network field not found in RPC response"))?
+            .to_string();
+        
+        Ok(network)
     }
 }

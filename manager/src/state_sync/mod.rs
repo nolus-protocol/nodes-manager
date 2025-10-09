@@ -12,10 +12,12 @@ use tracing::{info, error};
 use crate::config::Config;
 use crate::http::HttpAgentManager;
 
+#[allow(dead_code)]
 pub struct StateSyncManager {
     config: Arc<Config>,
 }
 
+#[allow(dead_code)]
 impl StateSyncManager {
     pub fn new(config: Arc<Config>) -> Self {
         Self { config }
