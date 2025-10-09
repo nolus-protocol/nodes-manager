@@ -1,5 +1,3 @@
-// File: manager/src/health/mod.rs
-
 pub mod monitor;
 
 pub use monitor::HealthMonitor;
@@ -7,6 +5,9 @@ pub use monitor::HealthMonitor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// RPC response structures - used for JSON deserialization
+// Allow dead_code as these structs are used by serde for deserialization
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcStatus {
     pub jsonrpc: String,
@@ -14,6 +15,7 @@ pub struct RpcStatus {
     pub result: RpcResult,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcResult {
     pub node_info: NodeInfo,
@@ -21,6 +23,7 @@ pub struct RpcResult {
     pub validator_info: ValidatorInfo,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
     pub protocol_version: ProtocolVersion,
@@ -33,6 +36,7 @@ pub struct NodeInfo {
     pub other: NodeOther,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolVersion {
     pub p2p: String,
@@ -40,12 +44,14 @@ pub struct ProtocolVersion {
     pub app: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeOther {
     pub tx_index: String,
     pub rpc_address: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncInfo {
     pub latest_block_hash: String,
@@ -59,6 +65,7 @@ pub struct SyncInfo {
     pub catching_up: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     pub address: String,
@@ -66,6 +73,7 @@ pub struct ValidatorInfo {
     pub voting_power: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PubKey {
     #[serde(rename = "type")]
@@ -73,6 +81,7 @@ pub struct PubKey {
     pub value: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcError {
     pub jsonrpc: String,
@@ -80,6 +89,7 @@ pub struct RpcError {
     pub error: ErrorDetails,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetails {
     pub code: i32,
@@ -87,6 +97,7 @@ pub struct ErrorDetails {
     pub data: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthMetrics {
     pub node_name: String,
@@ -100,6 +111,7 @@ pub struct HealthMetrics {
     pub consecutive_failures: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthThresholds {
     pub max_response_time_ms: u64,

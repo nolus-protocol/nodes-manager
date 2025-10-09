@@ -41,6 +41,8 @@ pub struct MaintenanceWindow {
     pub server_name: String,
 }
 
+// Stats structures - may be used for future reporting endpoints
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceStats {
     pub total_active: usize,
@@ -49,6 +51,7 @@ pub struct MaintenanceStats {
     pub longest_running_minutes: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceReport {
     pub active_operations: Vec<MaintenanceWindow>,

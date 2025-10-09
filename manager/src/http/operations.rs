@@ -1,6 +1,8 @@
 // File: manager/src/http/operations.rs
 use serde::{Deserialize, Serialize};
 
+// Operation result structures - may be used for batch operations in future
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchOperationResult {
     pub success_count: usize,
@@ -9,6 +11,7 @@ pub struct BatchOperationResult {
     pub summary: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationResult {
     pub target_name: String,

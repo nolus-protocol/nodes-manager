@@ -32,6 +32,8 @@ pub use operations::MaintenanceScheduler;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// Operation types and results - may be used for future scheduler enhancements
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum OperationType {
     NodePruning,
@@ -40,6 +42,7 @@ pub enum OperationType {
     SnapshotCreation,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationResult {
     pub success: bool,
@@ -48,6 +51,7 @@ pub struct OperationResult {
     pub executed_at: DateTime<Utc>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationStatus {
     Scheduled,
