@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn, error};
 
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertType {
     NodeHealth,
@@ -20,6 +21,7 @@ pub enum AlertType {
     Maintenance,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertSeverity {
     Critical,

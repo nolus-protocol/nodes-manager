@@ -5,6 +5,7 @@ use tracing::{info, warn, error};
 use tracing_subscriber::{EnvFilter, fmt};
 
 mod config;
+mod constants;
 mod database;
 mod health;
 mod http;

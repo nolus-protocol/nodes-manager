@@ -3,16 +3,17 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{info, warn, error, debug};
 use chrono::Utc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::{Config, HermesConfig};
+use crate::constants::http;
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotInfo;
 
+#[non_exhaustive]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ServiceStatus {
     Running,
@@ -43,8 +44,8 @@ impl HttpAgentManager {
         maintenance_tracker: Arc<MaintenanceTracker>
     ) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
+            .timeout(http::REQUEST_TIMEOUT)
+            .connect_timeout(http::CONNECT_TIMEOUT)
             .build()
             .expect("Failed to create HTTP client for HttpAgentManager");
 
