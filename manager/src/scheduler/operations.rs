@@ -98,10 +98,8 @@ impl MaintenanceScheduler {
                 } else {
                     info!("State sync disabled for {}, skipping schedule", node_name);
                 }
-            } else {
-                if node_config.state_sync_enabled.unwrap_or(false) {
-                    info!("State sync enabled but no schedule configured for {}", node_name);
-                }
+            } else if node_config.state_sync_enabled.unwrap_or(false) {
+                info!("State sync enabled but no schedule configured for {}", node_name);
             }
         }
 
@@ -454,9 +452,9 @@ impl MaintenanceScheduler {
             return Ok(());
         }
 
-        if field.starts_with("*/") {
-            let step = field[2..].parse::<u32>()
-                .map_err(|_| anyhow!("Invalid {} step value: {}", name, &field[2..]))?;
+        if let Some(step_str) = field.strip_prefix("*/") {
+            let step = step_str.parse::<u32>()
+                .map_err(|_| anyhow!("Invalid {} step value: {}", name, step_str))?;
             if step == 0 {
                 return Err(anyhow!("{} step value cannot be 0", name));
             }

@@ -12,6 +12,12 @@ pub struct JobManager {
     jobs: Arc<RwLock<HashMap<String, JobInfo>>>,
 }
 
+impl Default for JobManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JobManager {
     pub fn new() -> Self {
         Self {

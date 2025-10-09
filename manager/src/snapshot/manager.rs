@@ -238,7 +238,7 @@ impl SnapshotManager {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 3 {
                 let full_path = parts[0];
-                let filename = full_path.split('/').last().unwrap_or(parts[0]).to_string();
+                let filename = full_path.rsplit('/').next().unwrap_or(parts[0]).to_string();
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 

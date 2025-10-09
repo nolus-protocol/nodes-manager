@@ -154,7 +154,6 @@ impl Default for MaintenanceTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio;
 
     #[tokio::test]
     async fn test_maintenance_tracking() {

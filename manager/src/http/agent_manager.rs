@@ -696,7 +696,7 @@ impl HttpAgentManager {
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
             network: node_config.network.clone(),
-            filename: latest_snapshot_dir.split('/').last().unwrap_or("unknown").to_string(),
+            filename: latest_snapshot_dir.rsplit('/').next().unwrap_or("unknown").to_string(),
             created_at: Utc::now(),
             file_size_bytes: None,
             snapshot_path: latest_snapshot_dir,
