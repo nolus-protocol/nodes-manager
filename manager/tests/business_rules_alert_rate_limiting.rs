@@ -211,11 +211,13 @@ fn test_webhook_timeout_is_reasonable() {
     const MAX_TIMEOUT: u64 = 30;
     assert!(
         alerts::WEBHOOK_TIMEOUT_SECONDS >= MIN_TIMEOUT,
-        "Timeout should be at least {} seconds", MIN_TIMEOUT
+        "Timeout should be at least {} seconds",
+        MIN_TIMEOUT
     );
     assert!(
         alerts::WEBHOOK_TIMEOUT_SECONDS <= MAX_TIMEOUT,
-        "Timeout should not exceed {} seconds", MAX_TIMEOUT
+        "Timeout should not exceed {} seconds",
+        MAX_TIMEOUT
     );
 }
 
