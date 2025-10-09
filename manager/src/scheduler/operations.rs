@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, instrument};
 use uuid::Uuid;
 
 pub struct MaintenanceScheduler {
@@ -37,6 +37,7 @@ impl MaintenanceScheduler {
         })
     }
 
+    #[instrument(skip(self))]
     pub async fn start(&self) -> Result<()> {
         info!("Starting maintenance scheduler with 6-field cron format (sec min hour day month dow)");
         let mut scheduled_count = 0;

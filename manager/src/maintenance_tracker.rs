@@ -1,11 +1,36 @@
-// File: manager/src/maintenance_tracker.rs
+//! Maintenance window tracking to prevent concurrent operations
+//!
+//! This module tracks active maintenance windows for nodes and services to ensure:
+//! - Only one operation runs per node at a time
+//! - Health checks don't alert during maintenance
+//! - Scheduled operations don't conflict with manual operations
+//!
+//! # Key Features
+//!
+//! - **Mutual exclusion**: Prevents concurrent operations on same node
+//! - **Estimated duration**: Each operation has estimated completion time
+//! - **Automatic cleanup**: Stuck maintenance windows cleaned after 48 hours
+//! - **Emergency cleanup**: API endpoint for manual intervention
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! // Start maintenance window
+//! tracker.start_maintenance("osmosis-1", "pruning", 300, "server-1").await?;
+//!
+//! // Perform operation...
+//!
+//! // End maintenance window
+//! tracker.end_maintenance("osmosis-1").await?;
+//! ```
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, instrument};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceWindow {
@@ -43,6 +68,7 @@ impl MaintenanceTracker {
         }
     }
 
+    #[instrument(skip(self), fields(node = %node_name, operation = %operation_type))]
     pub async fn start_maintenance(
         &self,
         node_name: &str,
@@ -77,6 +103,7 @@ impl MaintenanceTracker {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn end_maintenance(&self, node_name: &str) -> Result<()> {
         let mut active = self.active_maintenance.write().await;
 

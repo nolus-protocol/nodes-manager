@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, instrument};
 
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::snapshot::SnapshotManager;
@@ -29,6 +29,7 @@ impl SnapshotService {
         }
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn create_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.validate_node_name(node_name)?;
         // UNCHANGED: Creating snapshots requires snapshots_enabled
@@ -38,6 +39,7 @@ impl SnapshotService {
         self.snapshot_manager.create_snapshot(node_name).await
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn list_snapshots(&self, node_name: &str) -> Result<Vec<crate::snapshot::SnapshotInfo>> {
         self.validate_node_name(node_name)?;
         // FIXED: Allow listing if either snapshots_enabled OR auto_restore_enabled
@@ -46,6 +48,7 @@ impl SnapshotService {
         self.snapshot_manager.list_snapshots(node_name).await
     }
 
+    #[instrument(skip(self), fields(node = %node_name))]
     pub async fn restore_from_snapshot(&self, node_name: &str) -> Result<crate::snapshot::SnapshotInfo> {
         self.validate_node_name(node_name)?;
         // FIXED: Only require auto_restore_enabled for restore operations

@@ -1,11 +1,35 @@
-// File: manager/src/operation_tracker.rs
+//! Operation tracking for long-running tasks
+//!
+//! This module tracks active operations to prevent conflicts and provide visibility.
+//! Unlike maintenance tracking (which focuses on maintenance windows), this tracks
+//! the actual execution state of operations.
+//!
+//! # Key Features
+//!
+//! - **Concurrent operation prevention**: Only one operation per target (node/service)
+//! - **Operation state tracking**: Track what's running, when it started, who initiated it
+//! - **Automatic cleanup**: Stuck operations cleaned after 24 hours
+//! - **Status API**: Query active operations and their duration
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! // Try to start operation (fails if target is busy)
+//! tracker.try_start_operation("osmosis-1", "pruning", Some("user@example.com")).await?;
+//!
+//! // Perform operation...
+//!
+//! // Mark as finished
+//! tracker.finish_operation("osmosis-1").await;
+//! ```
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{info, warn, instrument};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveOperation {
@@ -34,6 +58,7 @@ impl SimpleOperationTracker {
 
     /// Try to start an operation on a target (node/hermes)
     /// Returns error if target is already busy
+    #[instrument(skip(self), fields(target = %target_name, operation = %operation_type))]
     pub async fn try_start_operation(
         &self,
         target_name: &str,
@@ -69,6 +94,7 @@ impl SimpleOperationTracker {
     }
 
     /// Mark an operation as finished
+    #[instrument(skip(self), fields(target = %target_name))]
     pub async fn finish_operation(&self, target_name: &str) {
         let mut active = self.active_operations.write().await;
         if let Some(op) = active.remove(target_name) {
