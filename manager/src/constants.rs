@@ -1,5 +1,12 @@
 //! Application-wide constants for timeouts, limits, and configuration values
 
+//! Central repository for all configuration constants and magic numbers
+//!
+//! This module organizes constants by category to improve maintainability
+//! and provide a single source of truth for timeouts, intervals, and limits.
+
+#![allow(dead_code)] // Some constants are defined for future use
+
 use std::time::Duration;
 
 /// HTTP client timeout constants

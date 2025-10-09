@@ -1,4 +1,37 @@
-// File: manager/src/state_sync/mod.rs
+//! State sync orchestration for rapid node synchronization
+//!
+//! This module provides automated state sync functionality to quickly sync blockchain nodes
+//! from a trusted snapshot height instead of syncing from genesis.
+//!
+//! # Key Features
+//!
+//! - **Automated RPC Parameter Fetching**: Automatically fetches trust height and hash from RPC sources
+//! - **Fail-Fast Design**: Immediate failure on any error with comprehensive logging
+//! - **Multi-Chain Support**: Automatic daemon binary detection (nolusd, osmosisd, neutrond, etc.)
+//! - **WASM Cache Management**: Smart cleanup of WASM cache during sync
+//! - **Config Management**: Automatic state sync parameter injection and cleanup
+//! - **Timeout Handling**: Configurable sync timeout with status monitoring
+//!
+//! # State Sync Process
+//!
+//! 1. Fetch latest block height from RPC
+//! 2. Calculate trust height (latest - offset)
+//! 3. Fetch trust hash at trust height
+//! 4. Stop blockchain service
+//! 5. Update config.toml with state sync parameters
+//! 6. Execute unsafe-reset-all to wipe chain state
+//! 7. Clean WASM cache (preserve blobs)
+//! 8. Start blockchain service
+//! 9. Wait for sync completion
+//! 10. Disable state sync in config
+//! 11. Restart service with clean config
+//!
+//! # Safety
+//!
+//! - All steps are fail-fast - any error stops the process
+//! - Original config.toml is modified directly (backup recommended)
+//! - Validator state is wiped (only for non-validators or during initial sync)
+
 pub mod rpc_client;
 
 // Re-export for easier access
@@ -48,9 +81,7 @@ impl StateSyncManager {
         // Get required paths
         let home_dir = node_config.pruning_deploy_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No home directory configured for {}", node_name))?;
-
         let config_path = format!("{}/config/config.toml", home_dir);
-
         let service_name = node_config.pruning_service_name.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
 
@@ -143,7 +174,6 @@ impl StateSyncManager {
         loop {
             poll_count += 1;
             info!("Polling state sync job status (poll #{})", poll_count);
-
             sleep(Duration::from_secs(POLL_INTERVAL)).await;
 
             let response = http_manager.client.get(&status_url)

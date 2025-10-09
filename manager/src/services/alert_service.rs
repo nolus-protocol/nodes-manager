@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn, error};
 
+use crate::constants::alerts;
+
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertType {
@@ -146,14 +148,16 @@ impl AlertService {
 
                 if alert_state.alert_count == 0 {
                     // Haven't sent first alert yet
-                    if alert_state.consecutive_failures >= 3 {
+                    if alert_state.consecutive_failures >= alerts::FIRST_ALERT_AFTER_CHECKS {
                         alert_state.alert_count = 1;
                         alert_state.last_alert_sent = now;
                         alert_state.has_sent_alert = true;
-                        info!("Node {} unhealthy for 3 consecutive checks - sending first alert", node_name);
+                        info!("Node {} unhealthy for {} consecutive checks - sending first alert", 
+                              node_name, alerts::FIRST_ALERT_AFTER_CHECKS);
                         true
                     } else {
-                        info!("Node {} unhealthy check {}/3 - no alert sent yet", node_name, alert_state.consecutive_failures);
+                        info!("Node {} unhealthy check {}/{} - no alert sent yet", 
+                              node_name, alert_state.consecutive_failures, alerts::FIRST_ALERT_AFTER_CHECKS);
                         false
                     }
                 } else {
@@ -162,11 +166,11 @@ impl AlertService {
                     let hours_since_last = time_since_last.num_hours();
 
                     let should_send = match alert_state.alert_count {
-                        1 => hours_since_last >= 6,   // Second alert after 6 hours
-                        2 => hours_since_last >= 6,   // Third alert after 6 more hours (12 total)
-                        3 => hours_since_last >= 12,  // Fourth alert after 12 more hours (24 total)
-                        4 => hours_since_last >= 24,  // Fifth alert after 24 more hours (48 total)
-                        _ => hours_since_last >= 24,  // Subsequent alerts every 24 hours
+                        1 => hours_since_last >= alerts::SECOND_ALERT_INTERVAL_HOURS,
+                        2 => hours_since_last >= alerts::THIRD_ALERT_INTERVAL_HOURS,
+                        3 => hours_since_last >= alerts::FOURTH_ALERT_INTERVAL_HOURS,
+                        4 => hours_since_last >= alerts::SUBSEQUENT_ALERT_INTERVAL_HOURS,
+                        _ => hours_since_last >= alerts::SUBSEQUENT_ALERT_INTERVAL_HOURS,
                     };
 
                     if should_send {

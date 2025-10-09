@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, instrument};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +150,7 @@ impl HealthMonitor {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn check_all_nodes(&self) -> Result<Vec<HealthStatus>> {
         let mut health_statuses = Vec::new();
         let mut tasks = Vec::new();
@@ -240,6 +241,7 @@ impl HealthMonitor {
     }
 
     // NEW: Check all ETL services health
+    #[instrument(skip(self))]
     pub async fn check_all_etl_services(&self) -> Result<Vec<EtlHealthStatus>> {
         let mut etl_statuses = Vec::new();
         let mut tasks = Vec::new();
