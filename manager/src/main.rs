@@ -18,6 +18,7 @@ mod web;
 mod services;
 
 use config::ConfigManager;
+use constants::cleanup;
 use database::Database;
 use health::HealthMonitor;
 use http::HttpAgentManager;
@@ -154,28 +155,38 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Start periodic operation cleanup (every hour)
+    // Start periodic operation cleanup (configurable interval)
     let operation_tracker_clone = operation_tracker.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // 1 hour
+        let mut interval = tokio::time::interval(
+            std::time::Duration::from_secs(cleanup::CLEANUP_INTERVAL_SECONDS)
+        );
         loop {
             interval.tick().await;
-            let cleaned = operation_tracker_clone.cleanup_old_operations(24).await; // 24 hours
+            let cleaned = operation_tracker_clone
+                .cleanup_old_operations(cleanup::OPERATION_CLEANUP_HOURS)
+                .await;
             if cleaned > 0 {
-                warn!("Cleaned up {} stuck operations older than 24 hours", cleaned);
+                warn!("Cleaned up {} stuck operations older than {} hours", 
+                      cleaned, cleanup::OPERATION_CLEANUP_HOURS);
             }
         }
     });
 
-    // Start periodic maintenance cleanup (every 6 hours)
+    // Start periodic maintenance cleanup (configurable interval)
     let maintenance_tracker_clone = maintenance_tracker.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(21600)); // 6 hours
+        let mut interval = tokio::time::interval(
+            std::time::Duration::from_secs(cleanup::CLEANUP_INTERVAL_SECONDS * 6)
+        );
         loop {
             interval.tick().await;
-            let cleaned = maintenance_tracker_clone.cleanup_expired_maintenance(48).await; // 48 hours max
+            let cleaned = maintenance_tracker_clone
+                .cleanup_expired_maintenance(cleanup::MAINTENANCE_CLEANUP_HOURS as u32)
+                .await;
             if cleaned > 0 {
-                warn!("Cleaned up {} expired maintenance windows older than 48 hours", cleaned);
+                warn!("Cleaned up {} expired maintenance windows older than {} hours", 
+                      cleaned, cleanup::MAINTENANCE_CLEANUP_HOURS);
             }
         }
     });
