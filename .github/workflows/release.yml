@@ -12,17 +12,15 @@ env:
 jobs:
   build-binaries:
     name: Build ${{ matrix.binary }} for ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     strategy:
       matrix:
         include:
           # Linux x86_64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-gnu
             binary: manager
             artifact_name: manager-linux-amd64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-gnu
             binary: agent
             artifact_name: agent-linux-amd64
     steps:
@@ -73,7 +71,7 @@ jobs:
   create-release:
     name: Create Release
     needs: build-binaries
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: write
     steps:
