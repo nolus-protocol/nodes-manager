@@ -245,3 +245,16 @@ pub struct SnapshotInfo {
     pub size_bytes: u64,
     pub path: String,
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StateSyncRequest {
+    pub service_name: String,
+    pub home_dir: String,
+    pub config_path: String,
+    pub daemon_binary: String,
+    pub rpc_servers: Vec<String>,
+    pub trust_height: i64,
+    pub trust_hash: String,
+    pub timeout_seconds: u64,
+    pub log_path: Option<String>,
+}

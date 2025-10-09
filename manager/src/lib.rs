@@ -8,6 +8,7 @@ pub mod operation_tracker;
 pub mod scheduler;
 pub mod services;
 pub mod snapshot;
+pub mod state_sync;
 pub mod web;
 
 // Re-export commonly used types

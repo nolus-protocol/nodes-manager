@@ -16,11 +16,10 @@ mod operations;
 mod services;
 mod types;
 
-use operations::{pruning, snapshots, restore};
+use operations::{pruning, snapshots, restore, state_sync};
 use services::{commands, systemctl, job_manager::JobManager};
 use types::*;
 
-// Application state with busy tracking and job management
 #[derive(Clone)]
 pub struct AppState {
     pub api_key: String,
@@ -112,7 +111,6 @@ async fn main() -> Result<()> {
         job_manager: job_manager.clone(),
     };
 
-    // Start cleanup task (every hour)
     let cleanup_state = app_state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
@@ -135,9 +133,8 @@ async fn main() -> Result<()> {
         .route("/snapshot/create", post(create_snapshot_async))
         .route("/snapshot/restore", post(restore_snapshot_async))
         .route("/snapshot/check-triggers", post(check_restore_triggers))
-        // NEW: Job status endpoint
+        .route("/state-sync/execute", post(execute_state_sync_async))  // NEW: State sync endpoint
         .route("/operation/status/:job_id", get(get_job_status))
-        // Status and cleanup endpoints
         .route("/status/busy", post(get_busy_status))
         .route("/status/cleanup", post(cleanup_operations))
         .with_state(Arc::new(app_state));
@@ -160,8 +157,6 @@ fn validate_api_key(headers: &axum::http::HeaderMap, expected_key: &str) -> bool
     false
 }
 
-// === BASIC COMMAND OPERATIONS (UNCHANGED) ===
-
 async fn execute_command(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -176,8 +171,6 @@ async fn execute_command(
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
 }
-
-// === SERVICE OPERATIONS (UNCHANGED) ===
 
 async fn get_service_status(
     State(state): State<Arc<AppState>>,
@@ -239,8 +232,6 @@ async fn get_service_uptime(
     }
 }
 
-// === LOG OPERATIONS (UNCHANGED) ===
-
 async fn truncate_logs(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -250,7 +241,6 @@ async fn truncate_logs(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.service_name, "log_truncation").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
@@ -279,8 +269,6 @@ async fn delete_all_files_in_directory(
     }
 }
 
-// === ASYNC LONG-RUNNING OPERATIONS ===
-
 async fn execute_pruning_async(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -290,15 +278,12 @@ async fn execute_pruning_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.service_name, "pruning").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    // Create job and return immediately
     let job_id = state.job_manager.create_job("pruning", &request.service_name).await;
 
-    // Spawn background task
     let state_clone = state.clone();
     let request_clone = request.clone();
     let job_id_clone = job_id.clone();
@@ -335,15 +320,12 @@ async fn create_snapshot_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_creation").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    // Create job and return immediately
     let job_id = state.job_manager.create_job("snapshot_creation", &request.node_name).await;
 
-    // Spawn background task
     let state_clone = state.clone();
     let request_clone = request.clone();
     let job_id_clone = job_id.clone();
@@ -353,7 +335,6 @@ async fn create_snapshot_async(
 
         match result {
             Ok(snapshot_info) => {
-                // Spawn background LZ4 compression
                 let backup_path = request_clone.backup_path.clone();
                 let snapshot_dirname = snapshot_info.filename.clone();
                 tokio::spawn(async move {
@@ -390,15 +371,12 @@ async fn restore_snapshot_async(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Check if node is busy
     if let Err(err) = state.try_start_operation(&request.node_name, "snapshot_restore").await {
         return Ok(ResponseJson(ApiResponse::error(err)));
     }
 
-    // Create job and return immediately
     let job_id = state.job_manager.create_job("snapshot_restore", &request.node_name).await;
 
-    // Spawn background task
     let state_clone = state.clone();
     let request_clone = request.clone();
     let job_id_clone = job_id.clone();
@@ -426,7 +404,48 @@ async fn restore_snapshot_async(
     Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
 }
 
-// === JOB STATUS ENDPOINT ===
+// NEW: State sync async endpoint
+async fn execute_state_sync_async(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<StateSyncRequest>,
+) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
+    if !validate_api_key(&headers, &state.api_key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    if let Err(err) = state.try_start_operation(&request.service_name, "state_sync").await {
+        return Ok(ResponseJson(ApiResponse::error(err)));
+    }
+
+    let job_id = state.job_manager.create_job("state_sync", &request.service_name).await;
+
+    let state_clone = state.clone();
+    let request_clone = request.clone();
+    let job_id_clone = job_id.clone();
+
+    tokio::spawn(async move {
+        let result = state_sync::execute_state_sync_sequence(&request_clone).await;
+
+        match result {
+            Ok(output) => {
+                let result_json = serde_json::json!({
+                    "output": output,
+                    "operation": "state_sync"
+                });
+                state_clone.job_manager.complete_job(&job_id_clone, result_json).await;
+            }
+            Err(e) => {
+                error!("State sync failed for {}: {}", request_clone.service_name, e);
+                state_clone.job_manager.fail_job(&job_id_clone, e.to_string()).await;
+            }
+        }
+
+        state_clone.finish_operation(&request_clone.service_name).await;
+    });
+
+    Ok(ResponseJson(ApiResponse::success_with_job(job_id, "started".to_string())))
+}
 
 async fn get_job_status(
     State(state): State<Arc<AppState>>,
@@ -466,8 +485,6 @@ async fn get_job_status(
     }
 }
 
-// === SYNCHRONOUS OPERATIONS (UNCHANGED) ===
-
 async fn check_restore_triggers(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -498,8 +515,6 @@ async fn check_restore_triggers(
         Err(e) => Ok(ResponseJson(ApiResponse::error(e.to_string()))),
     }
 }
-
-// === STATUS AND CLEANUP ENDPOINTS (UNCHANGED) ===
 
 async fn get_busy_status(
     State(state): State<Arc<AppState>>,

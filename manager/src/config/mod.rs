@@ -63,16 +63,32 @@ pub struct NodeConfig {
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
-    // NEW: Per-node log monitoring configuration
+    // Per-node log monitoring configuration
     pub log_monitoring_enabled: Option<bool>,
     pub log_monitoring_patterns: Option<Vec<String>>,
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,
     pub snapshot_backup_path: Option<String>,
-    pub snapshot_deploy_path: Option<String>,  // NEW: Separate deploy path for snapshots
+    pub snapshot_deploy_path: Option<String>,
     pub auto_restore_enabled: Option<bool>,
     pub snapshot_schedule: Option<String>,
     pub snapshot_retention_count: Option<usize>,
+    // NEW: State sync configuration (flat, following existing patterns)
+    pub state_sync_enabled: Option<bool>,
+    pub state_sync_schedule: Option<String>,
+    pub state_sync_rpc_sources: Option<Vec<String>>,
+    #[serde(default = "default_state_sync_trust_height_offset")]
+    pub state_sync_trust_height_offset: Option<u32>,
+    #[serde(default = "default_state_sync_max_sync_timeout")]
+    pub state_sync_max_sync_timeout_seconds: Option<u64>,
+}
+
+fn default_state_sync_trust_height_offset() -> Option<u32> {
+    Some(2000)
+}
+
+fn default_state_sync_max_sync_timeout() -> Option<u64> {
+    Some(600) // 10 minutes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,10 +98,9 @@ pub struct HermesConfig {
     pub log_path: Option<String>,
     pub restart_schedule: Option<String>,
     pub dependent_nodes: Option<Vec<String>>,
-    pub truncate_logs_enabled: Option<bool>,  // NEW: Enable log deletion on restart
+    pub truncate_logs_enabled: Option<bool>,
 }
 
-// NEW: ETL service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EtlConfig {
     pub server_host: String,
