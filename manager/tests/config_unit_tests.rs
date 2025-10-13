@@ -58,6 +58,7 @@ max_concurrent_requests = 5
 [nodes.dummy]
 rpc_url = "http://localhost:26657"
 server_host = "192.168.1.100"
+service_name = "dummy"
 enabled = true
     "#;
 
@@ -84,10 +85,10 @@ network = "osmosis-1"
 server_host = "localhost"
 enabled = true
 pruning_enabled = true
+service_name = "osmosisd"
 pruning_schedule = "0 0 2 * * *"
 pruning_keep_blocks = 100000
 pruning_deploy_path = "/opt/osmosis/data"
-pruning_service_name = "osmosisd"
 snapshots_enabled = true
 snapshot_schedule = "0 0 3 * * *"
 snapshot_backup_path = "/backup/snapshots"
@@ -110,7 +111,7 @@ auto_restore_enabled = true
         node.pruning_deploy_path,
         Some("/opt/osmosis/data".to_string())
     );
-    assert_eq!(node.pruning_service_name, Some("osmosisd".to_string()));
+    assert_eq!(node.service_name, "osmosisd");
     assert_eq!(node.snapshots_enabled, Some(true));
     assert_eq!(node.snapshot_schedule, Some("0 0 3 * * *".to_string()));
     assert_eq!(
@@ -131,6 +132,7 @@ api_key = "key"
 [nodes.dummy]
 rpc_url = "http://localhost:26657"
 server_host = "localhost"
+service_name = "dummy"
 enabled = true
 
 [hermes.hermes-1]
@@ -167,6 +169,7 @@ api_key = "key"
 rpc_url = "http://localhost:26657"
 network = "test-network"
 server_host = "localhost"
+service_name = "test-node"
 enabled = true
 state_sync_enabled = true
 state_sync_schedule = "0 0 5 * * *"
@@ -206,6 +209,7 @@ base_backup_path = "/home/backup/snapshots"
 rpc_url = "http://localhost:26657"
 network = "test-network"
 server_host = "localhost"
+service_name = "test-node"
 enabled = true
     "#;
 
@@ -234,18 +238,21 @@ api_key = "key"
 rpc_url = "http://localhost:26657"
 network = "network-1"
 server_host = "localhost"
+service_name = "node-1"
 enabled = true
 
 [nodes.node-2]
 rpc_url = "http://localhost:26658"
 network = "network-2"
 server_host = "localhost"
+service_name = "node-2"
 enabled = false
 
 [nodes.node-3]
 rpc_url = "http://localhost:26659"
 network = "network-3"
 server_host = "localhost"
+service_name = "node-3"
 enabled = true
     "#;
 
@@ -272,6 +279,7 @@ api_key = "key"
 [nodes.dummy]
 rpc_url = "http://localhost:26657"
 server_host = "localhost"
+service_name = "dummy"
 enabled = true
 
 [etl.etl-service-1]
@@ -307,6 +315,7 @@ api_key = "key"
 rpc_url = "http://localhost:26657"
 network = "test-network"
 server_host = "localhost"
+service_name = "monitored-node"
 enabled = true
 log_path = "/var/log/node"
 log_monitoring_enabled = true
@@ -340,6 +349,7 @@ api_key = "key"
 rpc_url = "http://localhost:26657"
 network = "test-network"
 server_host = "localhost"
+service_name = "minimal-node"
 enabled = true
     "#;
 
@@ -367,6 +377,7 @@ api_key = "key"
 [nodes.dummy]
 rpc_url = "http://localhost:26657"
 server_host = "localhost"
+service_name = "dummy"
 enabled = true
     "#;
 
@@ -388,6 +399,7 @@ api_key = "key"
 rpc_url = "http://localhost:26657"
 network = "auto"
 server_host = "localhost"
+service_name = "auto-network-node"
 enabled = true
     "#;
 
@@ -408,6 +420,7 @@ api_key = "key"
 [nodes.no-network-node]
 rpc_url = "http://localhost:26657"
 server_host = "localhost"
+service_name = "no-network-node"
 enabled = true
     "#;
 

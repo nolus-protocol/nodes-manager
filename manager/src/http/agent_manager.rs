@@ -407,10 +407,7 @@ impl HttpAgentManager {
             .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))?;
 
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         info!("Restarting node {}", node_name);
 
@@ -501,10 +498,7 @@ impl HttpAgentManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
 
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         let keep_blocks = node_config.pruning_keep_blocks.unwrap_or(50000);
         let keep_versions = node_config.pruning_keep_versions.unwrap_or(100);
@@ -617,10 +611,7 @@ impl HttpAgentManager {
 
         let config_path = format!("{}/config/config.toml", home_dir);
 
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         // Fetch state sync parameters from RPC
         info!("Fetching state sync parameters from RPC sources");
@@ -745,10 +736,7 @@ impl HttpAgentManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         let payload = json!({
             "node_name": node_name,
@@ -920,10 +908,7 @@ impl HttpAgentManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No backup path configured for {}", node_name))?;
 
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         let latest_snapshot_dir = self
             .find_latest_network_snapshot_directory(

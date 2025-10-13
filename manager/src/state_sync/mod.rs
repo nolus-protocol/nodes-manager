@@ -90,10 +90,7 @@ impl StateSyncManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No home directory configured for {}", node_name))?;
         let config_path = format!("{}/config/config.toml", home_dir);
-        let service_name = node_config
-            .pruning_service_name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No service name configured for {}", node_name))?;
+        let service_name = &node_config.service_name;
 
         // Step 1: Fetch state sync parameters from RPC - FAIL FAST
         info!("Fetching state sync parameters from RPC sources");

@@ -227,11 +227,11 @@ enabled = true
 
 # Pruning configuration
 pruning_enabled = true
+service_name = "osmosis"  # MANDATORY - systemd service name, used for path auto-derivation
 pruning_schedule = "0 0 6 * * 2"  # Tuesdays at 6AM UTC
 pruning_keep_blocks = 8000
 pruning_keep_versions = 8000
 # pruning_deploy_path auto-derived: /opt/deploy/osmosis/data
-# pruning_service_name auto-derived: osmosis
 
 # Snapshot configuration
 snapshots_enabled = true
@@ -615,17 +615,30 @@ base_backup_path = "/backup/snapshots"
 ```
 
 **Automatic Derivation:**
-- `pruning_deploy_path` → `/opt/deploy/{service_name}/data`
-- `snapshot_deploy_path` → `/opt/deploy/{service_name}`
-- `log_path` → `/var/log/{service_name}`
-- `snapshot_backup_path` → `/backup/snapshots`
-- `pruning_service_name` → auto-extracted from node name
+
+If you specify `service_name` (MANDATORY) and base paths in `[defaults]`, paths will be auto-derived:
+- `pruning_deploy_path` → `{base_deploy_path}/{service_name}/data`
+- `snapshot_deploy_path` → `{base_deploy_path}/{service_name}`
+- `log_path` → `{base_log_path}/{service_name}`
+- `snapshot_backup_path` → `{base_backup_path}`
 
 **Example:**
-Node name: `enterprise-osmosis-1`
-- Derived service name: `osmosis`
-- Derived deploy path: `/opt/deploy/osmosis/data`
-- Derived log path: `/var/log/osmosis`
+```toml
+[defaults]
+base_deploy_path = "/opt/deploy"
+base_log_path = "/var/log"
+base_backup_path = "/backup/snapshots"
+
+[nodes.osmosis-1]
+service_name = "osmosis"  # MANDATORY
+# ... rest of config
+```
+
+**Derived paths:**
+- Deploy path: `/opt/deploy/osmosis/data`
+- Snapshot path: `/opt/deploy/osmosis`
+- Log path: `/var/log/osmosis`
+- Backup path: `/backup/snapshots`
 
 ### Timezone Handling
 

@@ -74,13 +74,19 @@ pub struct NodeConfig {
     pub network: String,
     pub server_host: String,
     pub enabled: bool,
+    /// Service name - MANDATORY for path auto-derivation
+    /// This is the systemd service name and base for all derived paths
+    /// Example: "full-node-3" will derive:
+    /// - pruning_deploy_path: {base_deploy_path}/full-node-3/data
+    /// - log_path: {base_log_path}/full-node-3
+    /// - snapshot_deploy_path: {base_deploy_path}/full-node-3
+    pub service_name: String,
     // Pruning configuration
     pub pruning_enabled: Option<bool>,
     pub pruning_schedule: Option<String>,
     pub pruning_keep_blocks: Option<u32>,
     pub pruning_keep_versions: Option<u32>,
     pub pruning_deploy_path: Option<String>,
-    pub pruning_service_name: Option<String>,
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
@@ -113,24 +119,18 @@ fn default_state_sync_max_sync_timeout() -> Option<u64> {
 }
 
 impl NodeConfig {
-    /// Apply smart defaults and derive paths from node name + base paths
-    /// Base paths come from server config, node name determines the service subdirectory
-    pub fn with_defaults(mut self, defaults: &Option<NodeDefaults>, node_name: &str) -> Self {
-        // Extract the simple node name (remove server prefix if present)
-        // Example: "enterprise-osmosis" -> "osmosis"
-        let simple_name = self.extract_simple_name(node_name);
-
-        // Auto-derive pruning_service_name if not set
-        if self.pruning_service_name.is_none() {
-            self.pruning_service_name = Some(simple_name.clone());
-        }
+    /// Apply smart defaults and derive paths from service_name + base paths
+    /// Base paths come from server config, service_name determines the service subdirectory
+    pub fn with_defaults(mut self, defaults: &Option<NodeDefaults>, _node_name: &str) -> Self {
+        // Use service_name directly for all path derivations
+        let service_name = &self.service_name;
 
         // Auto-derive pruning_deploy_path if not set
         // Uses base_deploy_path from server config if available
         if self.pruning_deploy_path.is_none() {
             if let Some(defaults) = defaults {
                 if let Some(ref base) = defaults.base_deploy_path {
-                    self.pruning_deploy_path = Some(format!("{}/{}/data", base, simple_name));
+                    self.pruning_deploy_path = Some(format!("{}/{}/data", base, service_name));
                 }
             }
         }
@@ -153,7 +153,7 @@ impl NodeConfig {
         if self.log_path.is_none() {
             if let Some(defaults) = defaults {
                 if let Some(ref base) = defaults.base_log_path {
-                    self.log_path = Some(format!("{}/{}", base, simple_name));
+                    self.log_path = Some(format!("{}/{}", base, service_name));
                 }
             }
         }
@@ -169,43 +169,6 @@ impl NodeConfig {
         }
 
         self
-    }
-
-    /// Extract simple node name from full node name
-    /// Examples:
-    /// - "enterprise-osmosis" -> "osmosis"
-    /// - "discovery-neutron-1" -> "neutron"
-    /// - "nolus" -> "nolus"
-    /// - "osmosis-archive" -> "osmosis"
-    fn extract_simple_name(&self, node_name: &str) -> String {
-        let parts: Vec<&str> = node_name.split('-').collect();
-
-        if parts.len() == 1 {
-            // Single part, use as-is
-            return parts[0].to_string();
-        }
-
-        // Multiple parts - take the second part (skip server prefix)
-        // "enterprise-osmosis" -> "osmosis"
-        // "discovery-neutron-1" -> "neutron"
-        if parts.len() >= 2 {
-            // Skip first part (server name) and last part if it's a number
-            let last_is_number = parts
-                .last()
-                .map(|p| p.chars().all(|c| c.is_numeric()))
-                .unwrap_or(false);
-
-            if last_is_number && parts.len() >= 3 {
-                // Has numeric suffix: "discovery-osmosis-1" -> use middle part
-                return parts[1].to_string();
-            } else {
-                // No numeric suffix: "enterprise-osmosis" -> use second part
-                return parts[1].to_string();
-            }
-        }
-
-        // Fallback
-        parts[0].to_string()
     }
 }
 
