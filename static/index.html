@@ -2136,7 +2136,10 @@
 
                     try {
                         ui.showAlert(`Creating snapshot for ${name}...`, 'warning');
-                        const data = await api.fetchJSON(`/api/snapshots/${nodeName}/create`);
+                        const response = await fetch(`/api/snapshots/${nodeName}/create`, {
+                            method: 'POST'
+                        });
+                        const data = await response.json();
                         if (data.success) {
                             ui.showAlert(`Snapshot created for ${name}`, 'success');
                             await this.loadAllData();
