@@ -818,10 +818,7 @@ pub async fn execute_manual_state_sync(
             .await
         {
             Ok(_) => {
-                info!(
-                    "State sync completed successfully for {}",
-                    node_name_clone
-                );
+                info!("State sync completed successfully for {}", node_name_clone);
             }
             Err(e) => {
                 error!("State sync failed for {}: {}", node_name_clone, e);

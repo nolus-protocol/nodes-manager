@@ -85,9 +85,7 @@ async fn test_maintenance_endpoints_format() {
 async fn test_state_sync_endpoints_format() {
     // Test state sync endpoint paths
     let node_name = "test-node";
-    let endpoints = vec![
-        format!("/api/state-sync/{}/execute", node_name),
-    ];
+    let endpoints = vec![format!("/api/state-sync/{}/execute", node_name)];
 
     for endpoint in endpoints {
         assert!(endpoint.starts_with("/api/state-sync/"));
