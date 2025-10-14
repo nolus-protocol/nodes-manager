@@ -27,6 +27,7 @@ use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
 use services::AlertService;
 use snapshot::SnapshotManager;
+use state_sync::StateSyncManager;
 use web::start_web_server;
 
 #[tokio::main]
@@ -107,6 +108,10 @@ async fn main() -> Result<()> {
         alert_service.clone(),
     ));
     info!("Snapshot manager initialized with centralized alerting");
+
+    // Initialize state sync manager
+    let state_sync_manager = Arc::new(StateSyncManager::new(config.clone()));
+    info!("State sync manager initialized");
 
     // Initialize health monitor WITH AlertService (for auto-restore and health alerts)
     let health_monitor = Arc::new(HealthMonitor::new(
@@ -232,6 +237,7 @@ async fn main() -> Result<()> {
         Arc::new(config_manager),
         snapshot_manager,
         operation_tracker,
+        state_sync_manager,
     )
     .await?;
 

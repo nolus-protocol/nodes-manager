@@ -492,6 +492,17 @@
             border-color: #134e4a;
         }
 
+        .btn-state-sync {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+        }
+
+        .btn-state-sync:hover:not(:disabled) {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+
         .btn-etl {
             background: var(--etl-color);
             color: white;
@@ -501,6 +512,539 @@
         .btn-etl:hover:not(:disabled) {
             background: #047857;
             border-color: #047857;
+        }
+
+        /* Action Dropdown Styles */
+        .action-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+        }
+
+        .dropdown-toggle:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-hover);
+        }
+
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 0.25rem);
+            min-width: 180px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-lg);
+            z-index: 1000;
+            overflow: hidden;
+        }
+
+        .dropdown-menu.show {
+            display: block;
+        }
+
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1rem;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+            font-size: 0.75rem;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+
+        .dropdown-item:hover:not(:disabled) {
+            background: var(--bg-tertiary);
+        }
+
+        .dropdown-item:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .dropdown-divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 0.25rem 0;
+        }
+
+        /* Real-Time Operations Panel */
+        .operations-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+
+        .operations-panel.collapsed .operations-content {
+            display: none;
+        }
+
+        .operations-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .operations-header:hover {
+            background: #e5e7eb;
+        }
+
+        .operations-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .operations-count {
+            background: var(--accent-color);
+            color: white;
+            border-radius: 9999px;
+            padding: 0.125rem 0.5rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .operations-content {
+            padding: 0;
+        }
+
+        .operation-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .operation-item:last-child {
+            border-bottom: none;
+        }
+
+        .operation-icon {
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .operation-icon.pruning { background: #fff7ed; color: var(--warning-color); }
+        .operation-icon.snapshot { background: #ecfeff; color: var(--snapshot-color); }
+        .operation-icon.restore { background: #f0fdfa; color: var(--restore-color); }
+        .operation-icon.state-sync { background: #eff6ff; color: #2563eb; }
+        .operation-icon.restart { background: #f5f3ff; color: var(--hermes-color); }
+
+        .operation-details {
+            flex: 1;
+        }
+
+        .operation-name {
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+
+        .operation-target {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.125rem;
+        }
+
+        .operation-progress {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .operation-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .operation-cancel {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.7rem;
+            color: var(--error-color);
+            border: 1px solid var(--error-color);
+            background: transparent;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .operation-cancel:hover {
+            background: var(--error-color);
+            color: white;
+        }
+
+        /* Search and Filter Styles */
+        .panel-filters {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            flex-wrap: wrap;
+        }
+
+        .search-box {
+            position: relative;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            background: var(--bg-secondary);
+            transition: border-color 0.2s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1rem;
+            height: 1rem;
+            color: var(--text-muted);
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 0.375rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-btn:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .filter-btn.active {
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+
+        /* Dark Mode Styles */
+        body.dark-mode {
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --bg-tertiary: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #d1d5db;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
+            --border-hover: #4b5563;
+        }
+
+        .dark-mode-toggle {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+        }
+
+        .dark-mode-toggle:hover {
+            background: var(--bg-tertiary);
+        }
+
+        /* Notification Bell */
+        .notification-bell {
+            position: relative;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+        }
+
+        .notification-bell:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 0.25rem;
+            right: 0.25rem;
+            background: var(--error-color);
+            color: white;
+            border-radius: 9999px;
+            width: 1rem;
+            height: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.625rem;
+            font-weight: 600;
+        }
+
+        .notification-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 0.5rem);
+            width: 320px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-lg);
+            z-index: 1000;
+        }
+
+        .notification-dropdown.show {
+            display: block;
+        }
+
+        .notification-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+
+        .notification-item:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .notification-item:last-child {
+            border-bottom: none;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.25rem;
+        }
+
+        .notification-title {
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        .notification-time {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .notification-message {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Collapsible Panel */
+        .panel-collapse-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem;
+            color: var(--text-secondary);
+            transition: transform 0.2s ease;
+        }
+
+        .panel.collapsed .panel-collapse-btn {
+            transform: rotate(-90deg);
+        }
+
+        .panel.collapsed .panel-content {
+            display: none;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border-radius: 0.75rem;
+            box-shadow: var(--shadow-lg);
+            max-width: 800px;
+            width: 90%;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0;
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.375rem;
+            transition: all 0.2s ease;
+        }
+
+        .modal-close:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        /* Snapshot Table */
+        .snapshot-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .snapshot-table th {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 2px solid var(--border-color);
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .snapshot-table td {
+            padding: 0.875rem 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        .snapshot-table tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        /* Block Height Progress */
+        .block-progress {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .block-progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .block-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--error-color), var(--warning-color), var(--success-color));
+            transition: width 0.5s ease;
+        }
+
+        .blocks-behind {
+            font-size: 0.7rem;
+            color: var(--warning-color);
+            font-weight: 500;
         }
 
         /* Loading & Empty States */
@@ -608,11 +1152,52 @@
                     <span>All Systems Operational</span>
                 </div>
                 <div id="last-updated">Last updated: Never</div>
+                
+                <!-- Notification Bell -->
+                <div style="position: relative;">
+                    <button class="notification-bell" onclick="app.toggleNotifications()" title="Notifications">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/>
+                        </svg>
+                        <span class="notification-badge" id="notification-badge" style="display: none;">0</span>
+                    </button>
+                    <div class="notification-dropdown" id="notification-dropdown">
+                        <div id="notification-list">
+                            <div class="empty-state" style="padding: 2rem;">
+                                <div class="empty-state-subtitle">No new notifications</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dark Mode Toggle -->
+                <button class="dark-mode-toggle" onclick="app.toggleDarkMode()" title="Toggle Dark Mode">
+                    <svg id="dark-mode-icon" width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                    </svg>
+                </button>
             </div>
         </div>
     </header>
 
     <main class="main-container">
+        <!-- Active Operations Panel -->
+        <div class="operations-panel" id="operations-panel" style="display: none;">
+            <div class="operations-header" onclick="app.toggleOperationsPanel()">
+                <div class="operations-title">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+                    </svg>
+                    Active Operations
+                    <span class="operations-count" id="operations-count">0</span>
+                </div>
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style="transition: transform 0.2s ease;">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="operations-content" id="operations-content"></div>
+        </div>
+
         <!-- Metrics Grid -->
         <div class="metrics-grid">
             <div class="metric-card">
@@ -665,9 +1250,14 @@
         </div>
 
         <!-- Blockchain Nodes Panel -->
-        <div class="panel">
+        <div class="panel" id="nodes-panel">
             <div class="panel-header">
                 <div class="panel-title">
+                    <button class="panel-collapse-btn" onclick="app.togglePanel('nodes-panel')">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
                     <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
                     </svg>
@@ -682,6 +1272,24 @@
                     </button>
                 </div>
             </div>
+            
+            <!-- Search and Filters -->
+            <div class="panel-filters">
+                <div class="search-box">
+                    <svg class="search-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                    </svg>
+                    <input type="text" class="search-input" id="nodes-search" placeholder="Search nodes by name or server..." oninput="app.filterNodes()">
+                </div>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" data-filter="all" onclick="app.setNodeFilter('all')">All</button>
+                    <button class="filter-btn" data-filter="synced" onclick="app.setNodeFilter('synced')">Synced</button>
+                    <button class="filter-btn" data-filter="catching-up" onclick="app.setNodeFilter('catching-up')">Catching Up</button>
+                    <button class="filter-btn" data-filter="unhealthy" onclick="app.setNodeFilter('unhealthy')">Unhealthy</button>
+                    <button class="filter-btn" data-filter="maintenance" onclick="app.setNodeFilter('maintenance')">Maintenance</button>
+                </div>
+            </div>
+            
             <div class="panel-content" id="nodes-container">
                 <div class="loading">
                     <div class="spinner"></div>
@@ -691,9 +1299,14 @@
         </div>
 
         <!-- Hermes Relayers Panel -->
-        <div class="panel">
+        <div class="panel" id="hermes-panel">
             <div class="panel-header">
                 <div class="panel-title">
+                    <button class="panel-collapse-btn" onclick="app.togglePanel('hermes-panel')">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
                     <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"/>
                     </svg>
@@ -708,6 +1321,17 @@
                     </button>
                 </div>
             </div>
+            
+            <!-- Search Bar -->
+            <div class="panel-filters">
+                <div class="search-box">
+                    <svg class="search-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                    </svg>
+                    <input type="text" class="search-input" id="hermes-search" placeholder="Search Hermes by name or server..." oninput="app.filterHermes()">
+                </div>
+            </div>
+            
             <div class="panel-content" id="hermes-container">
                 <div class="loading">
                     <div class="spinner"></div>
@@ -717,9 +1341,14 @@
         </div>
 
         <!-- ETL Services Panel -->
-        <div class="panel">
+        <div class="panel" id="etl-panel">
             <div class="panel-header">
                 <div class="panel-title">
+                    <button class="panel-collapse-btn" onclick="app.togglePanel('etl-panel')">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
                     <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM4.586 8L6 9.414 7.414 8H4.586zM5 12a1 1 0 100 2h10a1 1 0 100-2H5z"/>
                     </svg>
@@ -734,6 +1363,17 @@
                     </button>
                 </div>
             </div>
+            
+            <!-- Search Bar -->
+            <div class="panel-filters">
+                <div class="search-box">
+                    <svg class="search-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                    </svg>
+                    <input type="text" class="search-input" id="etl-search" placeholder="Search ETL services by name..." oninput="app.filterEtl()">
+                </div>
+            </div>
+            
             <div class="panel-content" id="etl-container">
                 <div class="loading">
                     <div class="spinner"></div>
@@ -762,11 +1402,27 @@
                     nodes: null,
                     hermes: null,
                     etl: null,
-                    maintenance: null
+                    maintenance: null,
+                    operations: null,
+                    notifications: []
                 },
                 ui: {
                     isLoading: false,
-                    refreshInterval: null
+                    refreshInterval: null,
+                    operationsRefreshInterval: null,
+                    darkMode: false,
+                    nodeFilter: 'all',
+                    searchTerms: {
+                        nodes: '',
+                        hermes: '',
+                        etl: ''
+                    },
+                    collapsedPanels: new Set()
+                },
+                originalData: {
+                    nodes: null,
+                    hermes: null,
+                    etl: null
                 }
             };
 
@@ -984,6 +1640,7 @@
                     prune: '<svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 3a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z"/></svg>',
                     snapshot: '<svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm12 12V8l-2 2-2-2v8h4z"/></svg>',
                     restore: '<svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/></svg>',
+                    stateSync: '<svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/><circle cx="10" cy="10" r="2" fill="white"/></svg>',
                     refresh: '<svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/></svg>'
                 },
 
@@ -1035,6 +1692,13 @@
                             icon: this.icons.restore,
                             title: 'Restore from latest network snapshot - replaces all data, preserves validator state',
                             onclick: `app.executeManualRestore('${nodeName}')`
+                        },
+                        stateSync: {
+                            condition: config.state_sync_enabled,
+                            class: 'btn-state-sync',
+                            icon: this.icons.stateSync,
+                            title: 'Execute state sync - quickly sync from trusted snapshot height, wipes existing data',
+                            onclick: `app.executeStateSync('${nodeName}')`
                         }
                     };
 
@@ -1117,6 +1781,7 @@
                                     ${templates.actionButton('prune', node.node_name, config)}
                                     ${templates.actionButton('snapshot', node.node_name, config)}
                                     ${templates.actionButton('restore', node.node_name, config)}
+                                    ${templates.actionButton('stateSync', node.node_name, config)}
                                 </div>
                             </td>
                         </tr>`;
@@ -1358,8 +2023,38 @@
             return {
                 async init() {
                     cacheDOMElements();
+                    
+                    // Load saved preferences
+                    const savedDarkMode = localStorage.getItem('darkMode') === 'true';
+                    if (savedDarkMode) {
+                        this.toggleDarkMode();
+                    }
+                    
+                    const savedCollapsed = localStorage.getItem('collapsedPanels');
+                    if (savedCollapsed) {
+                        try {
+                            const collapsed = JSON.parse(savedCollapsed);
+                            collapsed.forEach(panelId => {
+                                state.ui.collapsedPanels.add(panelId);
+                                const panel = document.getElementById(panelId);
+                                if (panel) panel.classList.add('collapsed');
+                            });
+                        } catch (e) {}
+                    }
+                    
                     await this.loadAllData();
                     this.startAutoRefresh();
+                    
+                    // Start operations refresh
+                    this.loadOperations();
+                    state.ui.operationsRefreshInterval = setInterval(() => this.loadOperations(), 10000);
+                    
+                    // Close dropdowns when clicking outside
+                    document.addEventListener('click', (e) => {
+                        if (!e.target.closest('.notification-bell') && !e.target.closest('.notification-dropdown')) {
+                            document.getElementById('notification-dropdown').classList.remove('show');
+                        }
+                    });
                 },
 
                 async loadAllData() {
@@ -1514,6 +2209,39 @@
                     }
                 },
 
+                async executeStateSync(nodeName) {
+                    const name = utils.formatName(nodeName);
+                    if (!ui.confirm('Execute State Sync Confirmation',
+                        `Execute state sync for ${name}?\n\n` +
+                        'WARNING: This will:\n' +
+                        '- Stop the node service\n' +
+                        '- Fetch trusted height and hash from RPC\n' +
+                        '- Update config.toml with state sync parameters\n' +
+                        '- Execute unsafe-reset-all (WIPES ALL DATA)\n' +
+                        '- Clean WASM cache\n' +
+                        '- Start service and wait for sync\n' +
+                        '- May take 10-30 minutes\n\n' +
+                        'This action CANNOT BE UNDONE.\n\n' +
+                        'Proceed with state sync?')) return;
+
+                    try {
+                        ui.showAlert(`Starting state sync for ${name}...`, 'warning');
+                        const response = await fetch(`/api/state-sync/${nodeName}/execute`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            ui.showAlert(`State sync started for ${name}`, 'success');
+                            await this.loadAllData();
+                        } else {
+                            throw new Error(data.message || 'State sync failed');
+                        }
+                    } catch (error) {
+                        ui.showAlert(`Failed to start state sync: ${error.message}`, 'error');
+                    }
+                },
+
                 async executeHermesRestart(hermesName) {
                     const name = utils.formatName(hermesName);
                     if (!ui.confirm('Restart Hermes Confirmation',
@@ -1538,6 +2266,359 @@
                     } catch (error) {
                         ui.showAlert(`Failed to restart: ${error.message}`, 'error');
                     }
+                },
+
+                // ============================================================
+                // NEW: DARK MODE
+                // ============================================================
+                toggleDarkMode() {
+                    state.ui.darkMode = !state.ui.darkMode;
+                    document.body.classList.toggle('dark-mode', state.ui.darkMode);
+                    localStorage.setItem('darkMode', state.ui.darkMode);
+                    
+                    // Update icon
+                    const icon = document.getElementById('dark-mode-icon');
+                    if (state.ui.darkMode) {
+                        icon.innerHTML = '<path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>';
+                    } else {
+                        icon.innerHTML = '<path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>';
+                    }
+                },
+
+                // ============================================================
+                // NEW: NOTIFICATIONS
+                // ============================================================
+                toggleNotifications() {
+                    const dropdown = document.getElementById('notification-dropdown');
+                    dropdown.classList.toggle('show');
+                },
+
+                addNotification(title, message, type = 'info') {
+                    const notification = {
+                        id: Date.now(),
+                        title,
+                        message,
+                        type,
+                        timestamp: new Date(),
+                        read: false
+                    };
+                    
+                    state.data.notifications.unshift(notification);
+                    if (state.data.notifications.length > 50) {
+                        state.data.notifications = state.data.notifications.slice(0, 50);
+                    }
+                    
+                    this.updateNotificationUI();
+                },
+
+                updateNotificationUI() {
+                    const unreadCount = state.data.notifications.filter(n => !n.read).length;
+                    const badge = document.getElementById('notification-badge');
+                    const list = document.getElementById('notification-list');
+                    
+                    if (unreadCount > 0) {
+                        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+                        badge.style.display = 'flex';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                    
+                    if (state.data.notifications.length === 0) {
+                        list.innerHTML = '<div class="empty-state" style="padding: 2rem;"><div class="empty-state-subtitle">No new notifications</div></div>';
+                    } else {
+                        list.innerHTML = state.data.notifications.slice(0, 10).map(n => `
+                            <div class="notification-item" onclick="app.markNotificationRead(${n.id})" style="${n.read ? 'opacity: 0.6;' : ''}">
+                                <div class="notification-header">
+                                    <div class="notification-title">${n.title}</div>
+                                    <div class="notification-time">${utils.formatTimeAgo(n.timestamp)}</div>
+                                </div>
+                                <div class="notification-message">${n.message}</div>
+                            </div>
+                        `).join('');
+                    }
+                },
+
+                markNotificationRead(id) {
+                    const notification = state.data.notifications.find(n => n.id === id);
+                    if (notification) {
+                        notification.read = true;
+                        this.updateNotificationUI();
+                    }
+                },
+
+                // ============================================================
+                // NEW: PANEL COLLAPSE
+                // ============================================================
+                togglePanel(panelId) {
+                    const panel = document.getElementById(panelId);
+                    panel.classList.toggle('collapsed');
+                    
+                    if (panel.classList.contains('collapsed')) {
+                        state.ui.collapsedPanels.add(panelId);
+                    } else {
+                        state.ui.collapsedPanels.delete(panelId);
+                    }
+                    
+                    localStorage.setItem('collapsedPanels', JSON.stringify([...state.ui.collapsedPanels]));
+                },
+
+                toggleOperationsPanel() {
+                    const panel = document.getElementById('operations-panel');
+                    panel.classList.toggle('collapsed');
+                },
+
+                // ============================================================
+                // NEW: FILTERS & SEARCH
+                // ============================================================
+                setNodeFilter(filter) {
+                    state.ui.nodeFilter = filter;
+                    
+                    // Update button states
+                    document.querySelectorAll('#nodes-panel .filter-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.filter === filter);
+                    });
+                    
+                    this.applyNodeFilters();
+                },
+
+                filterNodes() {
+                    state.ui.searchTerms.nodes = document.getElementById('nodes-search').value.toLowerCase();
+                    this.applyNodeFilters();
+                },
+
+                applyNodeFilters() {
+                    if (!state.originalData.nodes) {
+                        state.originalData.nodes = state.data.nodes;
+                    }
+                    
+                    let filtered = state.originalData.nodes;
+                    
+                    // Apply status filter
+                    if (state.ui.nodeFilter !== 'all') {
+                        filtered = filtered.filter(node => {
+                            const status = node.status.toLowerCase();
+                            if (state.ui.nodeFilter === 'synced') return status === 'synced';
+                            if (state.ui.nodeFilter === 'catching-up') return status === 'catching up';
+                            if (state.ui.nodeFilter === 'unhealthy') return status === 'unhealthy';
+                            if (state.ui.nodeFilter === 'maintenance') return status === 'maintenance';
+                            return true;
+                        });
+                    }
+                    
+                    // Apply search
+                    if (state.ui.searchTerms.nodes) {
+                        filtered = filtered.filter(node => 
+                            node.node_name.toLowerCase().includes(state.ui.searchTerms.nodes) ||
+                            node.server_host.toLowerCase().includes(state.ui.searchTerms.nodes)
+                        );
+                    }
+                    
+                    state.data.nodes = filtered;
+                    renderers.renderNodes(filtered);
+                },
+
+                filterHermes() {
+                    state.ui.searchTerms.hermes = document.getElementById('hermes-search').value.toLowerCase();
+                    
+                    if (!state.originalData.hermes) {
+                        state.originalData.hermes = state.data.hermes;
+                    }
+                    
+                    const filtered = state.originalData.hermes.filter(hermes =>
+                        hermes.name.toLowerCase().includes(state.ui.searchTerms.hermes) ||
+                        hermes.server_host.toLowerCase().includes(state.ui.searchTerms.hermes)
+                    );
+                    
+                    state.data.hermes = filtered;
+                    renderers.renderHermes(filtered);
+                },
+
+                filterEtl() {
+                    state.ui.searchTerms.etl = document.getElementById('etl-search').value.toLowerCase();
+                    
+                    if (!state.originalData.etl) {
+                        state.originalData.etl = state.data.etl;
+                    }
+                    
+                    const filtered = state.originalData.etl.filter(etl =>
+                        etl.service_name.toLowerCase().includes(state.ui.searchTerms.etl)
+                    );
+                    
+                    state.data.etl = filtered;
+                    renderers.renderEtl(filtered);
+                },
+
+                // ============================================================
+                // NEW: OPERATIONS PANEL
+                // ============================================================
+                async loadOperations() {
+                    try {
+                        const data = await api.fetchJSON('/api/operations/active');
+                        if (data.success) {
+                            state.data.operations = data.data;
+                            this.updateOperationsPanel();
+                        }
+                    } catch (error) {
+                        console.error('Failed to load operations:', error);
+                    }
+                },
+
+                updateOperationsPanel() {
+                    const panel = document.getElementById('operations-panel');
+                    const content = document.getElementById('operations-content');
+                    const count = document.getElementById('operations-count');
+                    
+                    if (!state.data.operations || Object.keys(state.data.operations).length === 0) {
+                        panel.style.display = 'none';
+                        return;
+                    }
+                    
+                    panel.style.display = 'block';
+                    const operations = Object.entries(state.data.operations);
+                    count.textContent = operations.length;
+                    
+                    content.innerHTML = operations.map(([target, op]) => {
+                        const elapsed = Math.floor((Date.now() - new Date(op.started_at)) / 1000 / 60);
+                        const iconClass = op.operation_type.toLowerCase().replace(/_/g, '-');
+                        const icon = this.getOperationIcon(op.operation_type);
+                        
+                        return `
+                            <div class="operation-item">
+                                <div class="operation-icon ${iconClass}">${icon}</div>
+                                <div class="operation-details">
+                                    <div class="operation-name">${this.formatOperationType(op.operation_type)}</div>
+                                    <div class="operation-target">${utils.formatName(target)}</div>
+                                </div>
+                                <div class="operation-progress">
+                                    <div class="operation-time">${elapsed}m elapsed</div>
+                                    <button class="operation-cancel" onclick="app.cancelOperation('${target}')">Cancel</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                },
+
+                getOperationIcon(type) {
+                    const icons = {
+                        pruning: '✂️',
+                        snapshot: '📸',
+                        restore: '↩️',
+                        state_sync: '🔄',
+                        restart: '🔁'
+                    };
+                    return icons[type] || '⚙️';
+                },
+
+                formatOperationType(type) {
+                    return type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                },
+
+                async cancelOperation(target) {
+                    if (!confirm(`Cancel operation for ${utils.formatName(target)}?`)) return;
+                    
+                    try {
+                        const data = await api.fetchJSON(`/api/operations/${target}/cancel`);
+                        if (data.success) {
+                            ui.showAlert('Operation cancelled', 'success');
+                            await this.loadOperations();
+                        }
+                    } catch (error) {
+                        ui.showAlert(`Failed to cancel: ${error.message}`, 'error');
+                    }
+                },
+
+                // ============================================================
+                // NEW: SNAPSHOT MODAL
+                // ============================================================
+                async openSnapshotModal(nodeName) {
+                    const modal = document.getElementById('snapshot-modal');
+                    const title = document.getElementById('snapshot-modal-title');
+                    const body = document.getElementById('snapshot-modal-body');
+                    
+                    title.textContent = `Snapshots for ${utils.formatName(nodeName)}`;
+                    modal.classList.add('show');
+                    
+                    try {
+                        const data = await api.fetchJSON(`/api/snapshots/${nodeName}/list`);
+                        if (data.success && data.data.length > 0) {
+                            body.innerHTML = `
+                                <table class="snapshot-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Filename</th>
+                                            <th>Size</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${data.data.map(snap => `
+                                            <tr>
+                                                <td>${snap.filename}</td>
+                                                <td>${this.formatSize(snap.size_bytes)}</td>
+                                                <td>${new Date(snap.created_at).toLocaleString()}</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-restore" onclick="app.restoreSnapshot('${nodeName}', '${snap.filename}')">Restore</button>
+                                                    <button class="btn btn-sm" onclick="app.deleteSnapshot('${nodeName}', '${snap.filename}')">Delete</button>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            `;
+                        } else {
+                            body.innerHTML = '<div class="empty-state">No snapshots available</div>';
+                        }
+                    } catch (error) {
+                        body.innerHTML = `<div class="error-state">Failed to load snapshots: ${error.message}</div>`;
+                    }
+                },
+
+                closeSnapshotModal() {
+                    document.getElementById('snapshot-modal').classList.remove('show');
+                },
+
+                formatSize(bytes) {
+                    if (!bytes) return 'N/A';
+                    const gb = bytes / 1024 / 1024 / 1024;
+                    return gb > 1 ? `${gb.toFixed(2)} GB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+                },
+
+                async restoreSnapshot(nodeName, filename) {
+                    if (!confirm(`Restore ${filename}? This will replace all data!`)) return;
+                    
+                    try {
+                        ui.showAlert('Starting restore...', 'warning');
+                        const response = await fetch(`/api/snapshots/${nodeName}/restore`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ filename })
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            ui.showAlert('Restore started', 'success');
+                            this.closeSnapshotModal();
+                        }
+                    } catch (error) {
+                        ui.showAlert(`Restore failed: ${error.message}`, 'error');
+                    }
+                },
+
+                async deleteSnapshot(nodeName, filename) {
+                    if (!confirm(`Delete ${filename}? This cannot be undone!`)) return;
+                    
+                    try {
+                        const response = await fetch(`/api/snapshots/${nodeName}/${filename}`, {
+                            method: 'DELETE'
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            ui.showAlert('Snapshot deleted', 'success');
+                            await this.openSnapshotModal(nodeName);
+                        }
+                    } catch (error) {
+                        ui.showAlert(`Delete failed: ${error.message}`, 'error');
+                    }
                 }
             };
         })();
@@ -1545,5 +2626,26 @@
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => app.init());
     </script>
+    
+    <!-- Snapshot Management Modal -->
+    <div class="modal" id="snapshot-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="snapshot-modal-title">Manage Snapshots</h2>
+                <button class="modal-close" onclick="app.closeSnapshotModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="snapshot-modal-body">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <span>Loading snapshots...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="app.closeSnapshotModal()">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

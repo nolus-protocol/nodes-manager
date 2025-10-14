@@ -5,6 +5,7 @@ use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::snapshot::SnapshotManager;
+use crate::state_sync::StateSyncManager;
 use crate::web::{handlers, AppState};
 use anyhow::Result;
 use axum::{
@@ -24,6 +25,7 @@ pub async fn start_web_server(
     config_manager: Arc<ConfigManager>,
     snapshot_manager: Arc<SnapshotManager>,
     operation_tracker: Arc<SimpleOperationTracker>,
+    state_sync_manager: Arc<StateSyncManager>,
 ) -> Result<()> {
     let state = AppState::new(
         config.clone(),
@@ -33,6 +35,7 @@ pub async fn start_web_server(
         config_manager,
         snapshot_manager,
         operation_tracker,
+        state_sync_manager,
     );
 
     if state.config.host == "0.0.0.0" && state.config.port == 8095 {
@@ -134,6 +137,11 @@ fn create_router(state: AppState) -> Router {
         .route(
             "/api/snapshots/:node_name/auto-restore-status",
             get(handlers::get_auto_restore_status),
+        )
+        // === STATE SYNC ROUTES ===
+        .route(
+            "/api/state-sync/:node_name/execute",
+            post(handlers::execute_manual_state_sync),
         )
         // === OPERATION MANAGEMENT ROUTES ===
         .route(

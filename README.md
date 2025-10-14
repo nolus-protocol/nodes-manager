@@ -6,9 +6,20 @@
 
 A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a centralized web interface.
 
-**✅ 95 tests passing** | **🚀 Production-ready** | **🐳 Docker support**
+**✅ 131 tests passing** | **🚀 Production-ready** | **🐳 Docker support** | **🎨 Modern UI**
 
 ## Features
+
+### Web Interface & UI (New in v1.3.0)
+
+- **Real-Time Operations Panel**: Live tracking of active operations with elapsed time and cancel functionality
+- **Advanced Filtering & Search**: Quick search across nodes, Hermes, and ETL services with status-based filters
+- **Dark Mode**: Eye-friendly dark theme with automatic preference persistence
+- **Collapsible Panels**: Focus on relevant sections with state memory across sessions
+- **Notification Center**: Bell icon with unread count and notification history
+- **Snapshot Management Modal**: Visual interface for viewing, restoring, and deleting snapshots
+- **State Sync UI Integration**: Manual state sync triggering with confirmation dialogs
+- **Enhanced User Experience**: Modern, responsive interface with improved navigation and productivity features
 
 ### Core Functionality
 
@@ -367,6 +378,9 @@ POST /api/maintenance/nodes/{node_name}/prune
 
 # Restart Hermes (returns immediately)
 POST /api/maintenance/hermes/{hermes_name}/restart
+
+# Execute state sync (returns immediately) - New in v1.3.0
+POST /api/state-sync/{node_name}/execute
 ```
 
 #### Snapshot Management

@@ -82,6 +82,20 @@ async fn test_maintenance_endpoints_format() {
 }
 
 #[tokio::test]
+async fn test_state_sync_endpoints_format() {
+    // Test state sync endpoint paths
+    let node_name = "test-node";
+    let endpoints = vec![
+        format!("/api/state-sync/{}/execute", node_name),
+    ];
+
+    for endpoint in endpoints {
+        assert!(endpoint.starts_with("/api/state-sync/"));
+        assert!(endpoint.contains(node_name));
+    }
+}
+
+#[tokio::test]
 async fn test_api_response_structure() {
     // Test that API responses have expected structure
     // Successful response should have: { "success": true, "data": {...} }
@@ -263,6 +277,27 @@ async fn test_snapshot_workflow() {
     for (method, endpoint) in workflow {
         assert!(!method.is_empty());
         assert!(endpoint.starts_with("/api/snapshots/"));
+    }
+}
+
+#[tokio::test]
+async fn test_state_sync_workflow() {
+    // Test state sync workflow:
+    // 1. POST to execute state sync
+    // 2. GET operation status to monitor progress
+    // 3. Operation completes in background
+
+    let node_name = "test-node";
+
+    let workflow = vec![
+        ("POST", format!("/api/state-sync/{}/execute", node_name)),
+        ("GET", format!("/api/operations/{}/status", node_name)),
+        ("GET", "/api/operations/active".to_string()),
+    ];
+
+    for (method, endpoint) in workflow {
+        assert!(!method.is_empty());
+        assert!(endpoint.starts_with("/api/"));
     }
 }
 

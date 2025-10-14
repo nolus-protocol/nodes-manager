@@ -770,6 +770,74 @@ pub async fn execute_manual_restore_from_latest(
     }))))
 }
 
+// === STATE SYNC ENDPOINT ===
+pub async fn execute_manual_state_sync(
+    Path(node_name): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Value> {
+    info!("Manual state sync requested for: {}", node_name);
+
+    // Check if node is already busy
+    if state.agent_manager.is_target_busy(&node_name).await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error(format!(
+                "Node {} is already busy with another operation",
+                node_name
+            ))),
+        ));
+    }
+
+    // Check if state sync is enabled for this node
+    let node_config = state.config.nodes.get(&node_name);
+    if let Some(config) = node_config {
+        if !config.state_sync_enabled.unwrap_or(false) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(format!(
+                    "State sync is not enabled for node {}",
+                    node_name
+                ))),
+            ));
+        }
+    } else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(format!("Node {} not found", node_name))),
+        ));
+    }
+
+    // Start the state sync operation in background - DO NOT AWAIT
+    let state_sync_service = state.state_sync_service.clone();
+    let http_manager = state.agent_manager.clone();
+    let node_name_clone = node_name.clone();
+
+    tokio::spawn(async move {
+        match state_sync_service
+            .execute_state_sync(&node_name_clone, &http_manager)
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    "State sync completed successfully for {}",
+                    node_name_clone
+                );
+            }
+            Err(e) => {
+                error!("State sync failed for {}: {}", node_name_clone, e);
+            }
+        }
+    });
+
+    // Return immediately
+    info!("Node {} state sync started in background", node_name);
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("State sync started for node {}", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
+}
+
 pub async fn check_auto_restore_triggers(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
