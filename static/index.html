@@ -2468,14 +2468,14 @@
                     const content = document.getElementById('operations-content');
                     const count = document.getElementById('operations-count');
                     
-                    if (!state.data.operations || Object.keys(state.data.operations).length === 0) {
+                    if (!state.data.operations || !state.data.operations.busy_nodes || state.data.operations.total_active === 0) {
                         panel.style.display = 'none';
                         return;
                     }
                     
                     panel.style.display = 'block';
-                    const operations = Object.entries(state.data.operations);
-                    count.textContent = operations.length;
+                    const operations = Object.entries(state.data.operations.busy_nodes);
+                    count.textContent = state.data.operations.total_active;
                     
                     content.innerHTML = operations.map(([target, op]) => {
                         const elapsed = Math.floor((Date.now() - new Date(op.started_at)) / 1000 / 60);
