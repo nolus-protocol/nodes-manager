@@ -488,9 +488,12 @@ async fn test_concurrent_operation_prevention() {
         "/api/pruning/test-node/execute",
         "/api/state-sync/test-node/execute",
     ];
-    
+
     for endpoint in endpoints {
-        assert!(endpoint.contains("test-node"), "Endpoint should contain node name");
+        assert!(
+            endpoint.contains("test-node"),
+            "Endpoint should contain node name"
+        );
     }
 }
 
