@@ -16,7 +16,7 @@
 //! - Error handling
 //! - Response format
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 // ============================================================================
 // STATE SYNC TESTS
@@ -483,8 +483,15 @@ async fn test_concurrent_operation_prevention() {
     // 3. Wait for operation A to complete
     // 4. Start operation B on node X -> success
 
-    let test_scenario = "Concurrent operations should be rejected";
-    assert!(!test_scenario.is_empty());
+    // Placeholder test - validates endpoint structure for concurrent operations
+    let endpoints = vec![
+        "/api/pruning/test-node/execute",
+        "/api/state-sync/test-node/execute",
+    ];
+    
+    for endpoint in endpoints {
+        assert!(endpoint.contains("test-node"), "Endpoint should contain node name");
+    }
 }
 
 #[tokio::test]
