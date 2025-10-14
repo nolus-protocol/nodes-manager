@@ -1592,10 +1592,12 @@
                         }
                     }
 
-                    // Handle day of week (1=Sunday system to JavaScript 0=Sunday)
+                    // Handle day of week (tokio-cron-scheduler: 1=Monday, 2=Tuesday, ..., 7=Sunday)
+                    // JavaScript: 0=Sunday, 1=Monday, 2=Tuesday, ..., 6=Saturday
                     if (parsed.dayOfWeek !== '*') {
                         const targetDayNum = parseInt(parsed.dayOfWeek);
-                        const targetJSDay = targetDayNum === 1 ? 0 : targetDayNum - 1;
+                        // Convert tokio-cron day (1=Mon, 7=Sun) to JS day (0=Sun, 1=Mon, ...)
+                        const targetJSDay = targetDayNum === 7 ? 0 : targetDayNum;
                         const currentJSDay = next.getUTCDay();
                         let daysToAdd = targetJSDay - currentJSDay;
 
