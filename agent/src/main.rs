@@ -153,7 +153,7 @@ async fn main() -> Result<()> {
         .route("/snapshot/restore", post(restore_snapshot_async))
         .route("/snapshot/check-triggers", post(check_restore_triggers))
         .route("/state-sync/execute", post(execute_state_sync_async)) // NEW: State sync endpoint
-        .route("/operation/status/:job_id", get(get_job_status))
+        .route("/operation/status/{job_id}", get(get_job_status))
         .route("/status/busy", post(get_busy_status))
         .route("/status/cleanup", post(cleanup_operations))
         .with_state(Arc::new(app_state));
