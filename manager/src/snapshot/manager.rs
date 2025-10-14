@@ -528,7 +528,10 @@ impl SnapshotManager {
         }
 
         if orphaned_lz4_files.is_empty() {
-            debug!("No orphaned LZ4 files found for network {}", node_config.network);
+            debug!(
+                "No orphaned LZ4 files found for network {}",
+                node_config.network
+            );
             return Ok(0);
         }
 
@@ -568,7 +571,10 @@ impl SnapshotManager {
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to delete orphaned LZ4 file {} (continuing): {}", lz4_file, e);
+                    warn!(
+                        "Failed to delete orphaned LZ4 file {} (continuing): {}",
+                        lz4_file, e
+                    );
                     // Continue with other deletions
                 }
             }
