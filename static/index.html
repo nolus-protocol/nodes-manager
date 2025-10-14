@@ -2539,7 +2539,10 @@
                     if (!confirm(`Cancel operation for ${utils.formatName(target)}?`)) return;
                     
                     try {
-                        const data = await api.fetchJSON(`/api/operations/${target}/cancel`);
+                        const response = await fetch(`/api/operations/${target}/cancel`, {
+                            method: 'POST'
+                        });
+                        const data = await response.json();
                         if (data.success) {
                             ui.showAlert('Operation cancelled', 'success');
                             await this.loadOperations();
