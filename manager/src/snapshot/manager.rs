@@ -448,6 +448,132 @@ impl SnapshotManager {
             snapshots_to_delete.len(),
             network
         );
+
+        // PHASE 2: Clean up orphaned LZ4 files that no longer have corresponding directories
+        let orphaned_lz4_count = self
+            .cleanup_orphaned_lz4_files(node_name, node_config, retention_count)
+            .await?;
+
+        if orphaned_lz4_count > 0 {
+            info!(
+                "Cleaned up {} orphaned LZ4 archives for network {}",
+                orphaned_lz4_count, network
+            );
+        }
+
+        Ok(deleted_count + orphaned_lz4_count)
+    }
+
+    /// Clean up orphaned LZ4 files (archives without corresponding directories)
+    async fn cleanup_orphaned_lz4_files(
+        &self,
+        node_name: &str,
+        node_config: &crate::config::NodeConfig,
+        retention_count: u32,
+    ) -> Result<u32> {
+        let backup_path = node_config
+            .snapshot_backup_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured"))?;
+
+        // Find all LZ4 files for this network
+        let list_lz4_cmd = format!(
+            "find '{}' -maxdepth 1 -type f -name '{}_*.tar.lz4' -printf '%f\\n' | sort",
+            backup_path, node_config.network
+        );
+
+        let output = self
+            .http_manager
+            .execute_single_command(&node_config.server_host, &list_lz4_cmd)
+            .await
+            .unwrap_or_default();
+
+        if output.trim().is_empty() {
+            debug!("No LZ4 files found for network {}", node_config.network);
+            return Ok(0);
+        }
+
+        let lz4_files: Vec<String> = output
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        debug!(
+            "Found {} LZ4 files for network {}",
+            lz4_files.len(),
+            node_config.network
+        );
+
+        // Get current snapshot directories
+        let snapshots = self.list_snapshots(node_name).await?;
+        let snapshot_basenames: std::collections::HashSet<String> =
+            snapshots.iter().map(|s| s.filename.clone()).collect();
+
+        debug!(
+            "Found {} active snapshot directories for network {}",
+            snapshot_basenames.len(),
+            node_config.network
+        );
+
+        // Find orphaned LZ4 files (those without a corresponding directory)
+        let mut orphaned_lz4_files = Vec::new();
+        for lz4_file in &lz4_files {
+            // Remove the .tar.lz4 extension to get the base name
+            if let Some(basename) = lz4_file.strip_suffix(".tar.lz4") {
+                if !snapshot_basenames.contains(basename) {
+                    orphaned_lz4_files.push((lz4_file.clone(), basename.to_string()));
+                }
+            }
+        }
+
+        if orphaned_lz4_files.is_empty() {
+            debug!("No orphaned LZ4 files found for network {}", node_config.network);
+            return Ok(0);
+        }
+
+        info!(
+            "Found {} orphaned LZ4 files for network {} (no matching directory)",
+            orphaned_lz4_files.len(),
+            node_config.network
+        );
+
+        // Sort orphaned files by their timestamp (newest first)
+        orphaned_lz4_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Keep only retention_count of orphaned LZ4 files (to match the retention policy)
+        let lz4_files_to_delete = if orphaned_lz4_files.len() > retention_count as usize {
+            &orphaned_lz4_files[(retention_count as usize)..]
+        } else {
+            // If we have fewer orphaned files than retention count, don't delete any
+            // (they might be from recent snapshots being compressed)
+            return Ok(0);
+        };
+
+        let mut deleted_count = 0;
+
+        for (lz4_file, _basename) in lz4_files_to_delete {
+            let lz4_path = format!("{}/{}", backup_path, lz4_file);
+            let delete_cmd = format!("rm -f '{}'", lz4_path);
+
+            debug!("Deleting orphaned LZ4 file: {}", lz4_file);
+
+            match self
+                .http_manager
+                .execute_single_command(&node_config.server_host, &delete_cmd)
+                .await
+            {
+                Ok(_) => {
+                    info!("Successfully deleted orphaned LZ4 file: {}", lz4_file);
+                    deleted_count += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to delete orphaned LZ4 file {} (continuing): {}", lz4_file, e);
+                    // Continue with other deletions
+                }
+            }
+        }
+
         Ok(deleted_count)
     }
 
