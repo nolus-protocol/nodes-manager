@@ -70,18 +70,18 @@ fn create_router(state: AppState) -> Router {
         // === HEALTH MONITORING ROUTES ===
         .route("/api/health/nodes", get(handlers::get_all_nodes_health))
         .route(
-            "/api/health/nodes/:node_name",
+            "/api/health/nodes/{node_name}",
             get(handlers::get_node_health),
         )
         .route("/api/health/hermes", get(handlers::get_all_hermes_health))
         .route(
-            "/api/health/hermes/:hermes_name",
+            "/api/health/hermes/{hermes_name}",
             get(handlers::get_hermes_health),
         )
         // === NEW: ETL SERVICE HEALTH ROUTES ===
         .route("/api/health/etl", get(handlers::get_all_etl_health))
         .route(
-            "/api/health/etl/:service_name",
+            "/api/health/etl/{service_name}",
             get(handlers::get_etl_health),
         )
         .route(
@@ -94,54 +94,54 @@ fn create_router(state: AppState) -> Router {
         .route("/api/config/etl", get(handlers::get_all_etl_configs))
         // === MANUAL OPERATION ROUTES (WITH OPERATION TRACKING) ===
         .route(
-            "/api/maintenance/nodes/:node_name/restart",
+            "/api/maintenance/nodes/{node_name}/restart",
             post(handlers::execute_manual_node_restart),
         )
         .route(
-            "/api/maintenance/nodes/:node_name/prune",
+            "/api/maintenance/nodes/{node_name}/prune",
             post(handlers::execute_manual_node_pruning),
         )
         .route(
-            "/api/maintenance/hermes/:hermes_name/restart",
+            "/api/maintenance/hermes/{hermes_name}/restart",
             post(handlers::execute_manual_hermes_restart),
         )
         // === SNAPSHOT MANAGEMENT ROUTES ===
         .route(
-            "/api/snapshots/:node_name/create",
+            "/api/snapshots/{node_name}/create",
             post(handlers::create_snapshot),
         )
         .route(
-            "/api/snapshots/:node_name/list",
+            "/api/snapshots/{node_name}/list",
             get(handlers::list_snapshots),
         )
         .route(
-            "/api/snapshots/:node_name/stats",
+            "/api/snapshots/{node_name}/stats",
             get(handlers::get_snapshot_stats),
         )
         .route(
-            "/api/snapshots/:node_name/:filename",
+            "/api/snapshots/{node_name}/{filename}",
             delete(handlers::delete_snapshot),
         )
         .route(
-            "/api/snapshots/:node_name/cleanup",
+            "/api/snapshots/{node_name}/cleanup",
             post(handlers::cleanup_old_snapshots),
         )
         // === NEW: MANUAL RESTORE ROUTES ===
         .route(
-            "/api/snapshots/:node_name/restore",
+            "/api/snapshots/{node_name}/restore",
             post(handlers::execute_manual_restore_from_latest),
         )
         .route(
-            "/api/snapshots/:node_name/check-triggers",
+            "/api/snapshots/{node_name}/check-triggers",
             get(handlers::check_auto_restore_triggers),
         )
         .route(
-            "/api/snapshots/:node_name/auto-restore-status",
+            "/api/snapshots/{node_name}/auto-restore-status",
             get(handlers::get_auto_restore_status),
         )
         // === STATE SYNC ROUTES ===
         .route(
-            "/api/state-sync/:node_name/execute",
+            "/api/state-sync/{node_name}/execute",
             post(handlers::execute_manual_state_sync),
         )
         // === OPERATION MANAGEMENT ROUTES ===
@@ -150,11 +150,11 @@ fn create_router(state: AppState) -> Router {
             get(handlers::get_active_operations),
         )
         .route(
-            "/api/operations/:target_name/cancel",
+            "/api/operations/{target_name}/cancel",
             post(handlers::cancel_operation),
         )
         .route(
-            "/api/operations/:target_name/status",
+            "/api/operations/{target_name}/status",
             get(handlers::check_target_status),
         )
         .route(
