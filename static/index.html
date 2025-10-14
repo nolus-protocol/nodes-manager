@@ -2460,6 +2460,11 @@
                         }
                     } catch (error) {
                         console.error('Failed to load operations:', error);
+                        // Ensure panel is hidden on error
+                        const panel = document.getElementById('operations-panel');
+                        const count = document.getElementById('operations-count');
+                        if (panel) panel.style.display = 'none';
+                        if (count) count.textContent = '0';
                     }
                 },
 
@@ -2468,16 +2473,30 @@
                     const content = document.getElementById('operations-content');
                     const count = document.getElementById('operations-count');
                     
+                    // Check if we have valid operations data
                     if (!state.data.operations || !state.data.operations.busy_nodes || state.data.operations.total_active === 0) {
                         panel.style.display = 'none';
+                        count.textContent = '0';
                         return;
                     }
                     
                     panel.style.display = 'block';
-                    const operations = Object.entries(state.data.operations.busy_nodes);
                     count.textContent = state.data.operations.total_active;
                     
+                    const operations = Object.entries(state.data.operations.busy_nodes);
+                    
+                    // Guard against empty operations or malformed data
+                    if (operations.length === 0) {
+                        panel.style.display = 'none';
+                        count.textContent = '0';
+                        return;
+                    }
+                    
                     content.innerHTML = operations.map(([target, op]) => {
+                        // Guard against missing operation data
+                        if (!op || !op.operation_type) {
+                            return '';
+                        }
                         const elapsed = Math.floor((Date.now() - new Date(op.started_at)) / 1000 / 60);
                         const iconClass = op.operation_type.toLowerCase().replace(/_/g, '-');
                         const icon = this.getOperationIcon(op.operation_type);
