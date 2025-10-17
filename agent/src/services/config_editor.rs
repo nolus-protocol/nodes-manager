@@ -20,11 +20,7 @@ pub async fn enable_state_sync(
     let mut modified_config = config_content.clone();
 
     // Find [statesync] section and update it
-    let rpc_servers_str = rpc_servers
-        .iter()
-        .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let rpc_servers_str = rpc_servers.join(",");
 
     // Pattern to match the [statesync] section
     if let Some(start) = modified_config.find("[statesync]") {
@@ -50,8 +46,8 @@ pub async fn enable_state_sync(
                 new_section.push_str("enable = true\n");
             } else if trimmed.starts_with("rpc_servers ") || trimmed.starts_with("rpc_servers=") {
                 new_section.push_str(&format!(
-                    "rpc_servers = \"{},{}\"\n",
-                    rpc_servers_str, rpc_servers_str
+                    "rpc_servers = \"{}\"\n",
+                    rpc_servers_str
                 ));
             } else if trimmed.starts_with("trust_height ") || trimmed.starts_with("trust_height=") {
                 new_section.push_str(&format!("trust_height = {}\n", trust_height));
@@ -73,8 +69,8 @@ pub async fn enable_state_sync(
         modified_config.push_str("[statesync]\n");
         modified_config.push_str("enable = true\n");
         modified_config.push_str(&format!(
-            "rpc_servers = \"{},{}\"\n",
-            rpc_servers_str, rpc_servers_str
+            "rpc_servers = \"{}\"\n",
+            rpc_servers_str
         ));
         modified_config.push_str(&format!("trust_height = {}\n", trust_height));
         modified_config.push_str(&format!("trust_hash = \"{}\"\n", trust_hash));
