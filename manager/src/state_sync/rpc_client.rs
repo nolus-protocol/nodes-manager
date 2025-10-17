@@ -26,7 +26,7 @@ pub async fn fetch_state_sync_params(
     for rpc_url in rpc_sources {
         info!("Trying RPC source: {}", rpc_url);
 
-        match try_fetch_from_rpc(&client, rpc_url, trust_height_offset).await {
+        match try_fetch_from_rpc(&client, rpc_url, rpc_sources, trust_height_offset).await {
             Ok(params) => {
                 info!("✓ Successfully fetched parameters from {}", rpc_url);
                 return Ok(params);
@@ -43,9 +43,11 @@ pub async fn fetch_state_sync_params(
 }
 
 /// Try to fetch state sync parameters from a single RPC - FAIL FAST
+/// Returns parameters with ALL configured RPC servers for redundancy
 async fn try_fetch_from_rpc(
     client: &Client,
     rpc_url: &str,
+    all_rpc_sources: &[String],
     trust_height_offset: u32,
 ) -> Result<StateSyncParams> {
     // Step 1: Get latest block height - FAIL FAST
@@ -64,7 +66,7 @@ async fn try_fetch_from_rpc(
     info!("Trust hash at height {}: {}", trust_height, trust_hash);
 
     Ok(StateSyncParams {
-        rpc_servers: vec![rpc_url.to_string()],
+        rpc_servers: all_rpc_sources.to_vec(),
         trust_height,
         trust_hash,
     })
