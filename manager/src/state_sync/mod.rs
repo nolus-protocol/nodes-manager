@@ -86,9 +86,9 @@ impl StateSyncManager {
 
         // Get required paths
         let home_dir = node_config
-            .pruning_deploy_path
+            .deploy_path
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No home directory configured for {}", node_name))?;
+            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
         let config_path = format!("{}/config/config.toml", home_dir);
         let service_name = &node_config.service_name;
 

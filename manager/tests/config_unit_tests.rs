@@ -88,7 +88,7 @@ pruning_enabled = true
 service_name = "osmosisd"
 pruning_schedule = "0 0 2 * * *"
 pruning_keep_blocks = 100000
-pruning_deploy_path = "/opt/osmosis/data"
+deploy_path = "/opt/osmosis"
 snapshots_enabled = true
 snapshot_schedule = "0 0 3 * * *"
 snapshot_backup_path = "/backup/snapshots"
@@ -108,8 +108,8 @@ auto_restore_enabled = true
     assert_eq!(node.pruning_schedule, Some("0 0 2 * * *".to_string()));
     assert_eq!(node.pruning_keep_blocks, Some(100000));
     assert_eq!(
-        node.pruning_deploy_path,
-        Some("/opt/osmosis/data".to_string())
+        node.deploy_path,
+        Some("/opt/osmosis".to_string())
     );
     assert_eq!(node.service_name, "osmosisd");
     assert_eq!(node.snapshots_enabled, Some(true));

@@ -53,11 +53,11 @@ pub struct ServerConfigFile {
 /// These define WHERE your nodes are deployed, not WHAT settings they have
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NodeDefaults {
-    /// Base deployment directory (e.g., "/opt/deploy")
-    /// If set, derives: pruning_deploy_path = "{base_deploy_path}/{service_name}/data"
+    /// Base deployment directory (e.g., "/opt/deploy/nolus")
+    /// If set, derives: deploy_path = "{base_deploy_path}/{service_name}"
     pub base_deploy_path: Option<String>,
 
-    /// Base log directory (e.g., "/var/log")  
+    /// Base log directory (e.g., "/var/log")
     /// If set, derives: log_path = "{base_log_path}/{service_name}"
     pub base_log_path: Option<String>,
 
@@ -77,29 +77,35 @@ pub struct NodeConfig {
     /// Service name - MANDATORY for path auto-derivation
     /// This is the systemd service name and base for all derived paths
     /// Example: "full-node-3" will derive:
-    /// - pruning_deploy_path: {base_deploy_path}/full-node-3/data
+    /// - deploy_path: {base_deploy_path}/full-node-3
     /// - log_path: {base_log_path}/full-node-3
-    /// - snapshot_deploy_path: {base_deploy_path}/full-node-3
     pub service_name: String,
+    
+    // Deployment path - home directory for the node
+    // Auto-derived from base_deploy_path + service_name
+    // Example: /opt/deploy/nolus/full-node-3
+    pub deploy_path: Option<String>,
+    
     // Pruning configuration
     pub pruning_enabled: Option<bool>,
     pub pruning_schedule: Option<String>,
     pub pruning_keep_blocks: Option<u32>,
     pub pruning_keep_versions: Option<u32>,
-    pub pruning_deploy_path: Option<String>,
+    
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
     // Per-node log monitoring configuration
     pub log_monitoring_enabled: Option<bool>,
     pub log_monitoring_patterns: Option<Vec<String>>,
+    
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,
     pub snapshot_backup_path: Option<String>,
-    pub snapshot_deploy_path: Option<String>,
     pub auto_restore_enabled: Option<bool>,
     pub snapshot_schedule: Option<String>,
     pub snapshot_retention_count: Option<usize>,
+    
     // NEW: State sync configuration (flat, following existing patterns)
     pub state_sync_enabled: Option<bool>,
     pub state_sync_schedule: Option<String>,
@@ -125,26 +131,14 @@ impl NodeConfig {
         // Use service_name directly for all path derivations
         let service_name = &self.service_name;
 
-        // Auto-derive pruning_deploy_path if not set
+        // Auto-derive deploy_path (home directory) if not set
         // Uses base_deploy_path from server config if available
-        if self.pruning_deploy_path.is_none() {
+        // Example: /opt/deploy/nolus/full-node-3
+        if self.deploy_path.is_none() {
             if let Some(defaults) = defaults {
                 if let Some(ref base) = defaults.base_deploy_path {
-                    self.pruning_deploy_path = Some(format!("{}/{}/data", base, service_name));
+                    self.deploy_path = Some(format!("{}/{}", base, service_name));
                 }
-            }
-        }
-
-        // Auto-derive snapshot_deploy_path if not set (remove /data suffix from pruning_deploy_path)
-        if self.snapshot_deploy_path.is_none() {
-            if let Some(ref pruning_path) = self.pruning_deploy_path {
-                // Remove /data suffix if present
-                self.snapshot_deploy_path = Some(
-                    pruning_path
-                        .strip_suffix("/data")
-                        .unwrap_or(pruning_path)
-                        .to_string(),
-                );
             }
         }
 

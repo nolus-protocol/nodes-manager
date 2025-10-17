@@ -494,9 +494,12 @@ impl HttpAgentManager {
         }
 
         let deploy_path = node_config
-            .pruning_deploy_path
+            .deploy_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
+
+        // Pruning operates on the data subdirectory
+        let data_path = format!("{}/data", deploy_path);
 
         let service_name = &node_config.service_name;
 
@@ -506,7 +509,7 @@ impl HttpAgentManager {
         info!("Starting pruning sequence for node {}", node_name);
 
         let payload = json!({
-            "deploy_path": deploy_path,
+            "deploy_path": data_path,
             "keep_blocks": keep_blocks,
             "keep_versions": keep_versions,
             "service_name": service_name,
@@ -605,7 +608,7 @@ impl HttpAgentManager {
         info!("Starting state sync sequence for node {}", node_name);
 
         let home_dir = node_config
-            .pruning_deploy_path
+            .deploy_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No home directory configured for {}", node_name))?;
 
@@ -727,8 +730,8 @@ impl HttpAgentManager {
             ));
         }
 
-        let deploy_path = node_config.snapshot_deploy_path.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No snapshot deploy path configured for {}", node_name)
+        let deploy_path = node_config.deploy_path.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No deploy path configured for {}", node_name)
         })?;
 
         let backup_path = node_config
@@ -899,8 +902,8 @@ impl HttpAgentManager {
             ));
         }
 
-        let deploy_path = node_config.snapshot_deploy_path.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No snapshot deploy path configured for {}", node_name)
+        let deploy_path = node_config.deploy_path.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No deploy path configured for {}", node_name)
         })?;
 
         let backup_path = node_config

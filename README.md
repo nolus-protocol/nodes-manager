@@ -225,7 +225,7 @@ max_concurrent_requests = 5
 
 # Smart defaults - automatically derive paths for all nodes on this server
 [defaults]
-base_deploy_path = "/opt/deploy"           # Auto-derives pruning_deploy_path
+base_deploy_path = "/opt/deploy"           # Auto-derives deploy_path
 base_log_path = "/var/log"                 # Auto-derives log_path
 base_backup_path = "/backup/snapshots"     # Auto-derives snapshot_backup_path
 
@@ -242,12 +242,13 @@ service_name = "osmosis"  # MANDATORY - systemd service name, used for path auto
 pruning_schedule = "0 0 6 * * 2"  # Tuesdays at 6AM UTC
 pruning_keep_blocks = 8000
 pruning_keep_versions = 8000
-# pruning_deploy_path auto-derived: /opt/deploy/osmosis/data
+# deploy_path auto-derived: /opt/deploy/osmosis (home directory)
+# Note: pruning operations automatically use /opt/deploy/osmosis/data
 
 # Snapshot configuration
 snapshots_enabled = true
 # snapshot_backup_path auto-derived: /backup/snapshots
-# snapshot_deploy_path auto-derived: /opt/deploy/osmosis
+# Snapshots use deploy_path directly: /opt/deploy/osmosis
 auto_restore_enabled = true
 
 # Scheduled snapshots (optional)
@@ -631,8 +632,9 @@ base_backup_path = "/backup/snapshots"
 **Automatic Derivation:**
 
 If you specify `service_name` (MANDATORY) and base paths in `[defaults]`, paths will be auto-derived:
-- `pruning_deploy_path` → `{base_deploy_path}/{service_name}/data`
-- `snapshot_deploy_path` → `{base_deploy_path}/{service_name}`
+- `deploy_path` → `{base_deploy_path}/{service_name}` (home directory for the node)
+- Pruning operations automatically append `/data` to `deploy_path`
+- Snapshot operations use `deploy_path` directly
 - `log_path` → `{base_log_path}/{service_name}`
 - `snapshot_backup_path` → `{base_backup_path}`
 
@@ -649,10 +651,10 @@ service_name = "osmosis"  # MANDATORY
 ```
 
 **Derived paths:**
-- Deploy path: `/opt/deploy/osmosis/data`
-- Snapshot path: `/opt/deploy/osmosis`
+- Deploy path: `/opt/deploy/osmosis` (home directory)
 - Log path: `/var/log/osmosis`
 - Backup path: `/backup/snapshots`
+- Note: Pruning operations automatically use `/opt/deploy/osmosis/data`
 
 ### Timezone Handling
 
