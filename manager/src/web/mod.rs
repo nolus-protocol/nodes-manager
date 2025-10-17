@@ -22,7 +22,6 @@ pub struct AppState {
     pub health_service: Arc<HealthMonitor>,
     pub agent_manager: Arc<HttpAgentManager>,
     pub snapshot_service: Arc<SnapshotManager>,
-    pub state_sync_service: Arc<StateSyncManager>,
 }
 
 impl AppState {
@@ -35,14 +34,12 @@ impl AppState {
         _config_manager: Arc<ConfigManager>,
         snapshot_manager: Arc<SnapshotManager>,
         _operation_tracker: Arc<SimpleOperationTracker>,
-        state_sync_manager: Arc<StateSyncManager>,
     ) -> Self {
         Self {
             config,
             health_service: health_monitor,
             agent_manager: http_manager,
             snapshot_service: snapshot_manager,
-            state_sync_service: state_sync_manager,
         }
     }
 }

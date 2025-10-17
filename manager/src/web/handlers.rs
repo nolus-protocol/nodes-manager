@@ -808,15 +808,11 @@ pub async fn execute_manual_state_sync(
     }
 
     // Start the state sync operation in background - DO NOT AWAIT
-    let state_sync_service = state.state_sync_service.clone();
     let http_manager = state.agent_manager.clone();
     let node_name_clone = node_name.clone();
 
     tokio::spawn(async move {
-        match state_sync_service
-            .execute_state_sync(&node_name_clone, &http_manager)
-            .await
-        {
+        match http_manager.execute_state_sync(&node_name_clone).await {
             Ok(_) => {
                 info!("State sync completed successfully for {}", node_name_clone);
             }

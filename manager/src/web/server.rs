@@ -26,7 +26,6 @@ pub async fn start_web_server(
     config_manager: Arc<ConfigManager>,
     snapshot_manager: Arc<SnapshotManager>,
     operation_tracker: Arc<SimpleOperationTracker>,
-    state_sync_manager: Arc<StateSyncManager>,
 ) -> Result<()> {
     let state = AppState::new(
         config.clone(),
@@ -36,7 +35,6 @@ pub async fn start_web_server(
         config_manager,
         snapshot_manager,
         operation_tracker,
-        state_sync_manager,
     );
 
     if state.config.host == "0.0.0.0" && state.config.port == 8095 {
