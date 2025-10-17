@@ -13,7 +13,6 @@ use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::snapshot::SnapshotManager;
-use crate::state_sync::StateSyncManager;
 
 // Application state shared across all handlers
 #[derive(Clone)]

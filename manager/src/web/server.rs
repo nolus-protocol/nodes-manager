@@ -5,7 +5,6 @@ use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
 use crate::snapshot::SnapshotManager;
-use crate::state_sync::StateSyncManager;
 use crate::web::{handlers, AppState};
 use anyhow::Result;
 use axum::{
