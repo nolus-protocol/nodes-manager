@@ -80,32 +80,32 @@ pub struct NodeConfig {
     /// - deploy_path: {base_deploy_path}/full-node-3
     /// - log_path: {base_log_path}/full-node-3
     pub service_name: String,
-    
+
     // Deployment path - home directory for the node
     // Auto-derived from base_deploy_path + service_name
     // Example: /opt/deploy/nolus/full-node-3
     pub deploy_path: Option<String>,
-    
+
     // Pruning configuration
     pub pruning_enabled: Option<bool>,
     pub pruning_schedule: Option<String>,
     pub pruning_keep_blocks: Option<u32>,
     pub pruning_keep_versions: Option<u32>,
-    
+
     // Log configuration
     pub log_path: Option<String>,
     pub truncate_logs_enabled: Option<bool>,
     // Per-node log monitoring configuration
     pub log_monitoring_enabled: Option<bool>,
     pub log_monitoring_patterns: Option<Vec<String>>,
-    
+
     // Snapshot configuration
     pub snapshots_enabled: Option<bool>,
     pub snapshot_backup_path: Option<String>,
     pub auto_restore_enabled: Option<bool>,
     pub snapshot_schedule: Option<String>,
     pub snapshot_retention_count: Option<usize>,
-    
+
     // NEW: State sync configuration (flat, following existing patterns)
     pub state_sync_enabled: Option<bool>,
     pub state_sync_schedule: Option<String>,

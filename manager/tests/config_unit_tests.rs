@@ -107,10 +107,7 @@ auto_restore_enabled = true
     assert_eq!(node.pruning_enabled, Some(true));
     assert_eq!(node.pruning_schedule, Some("0 0 2 * * *".to_string()));
     assert_eq!(node.pruning_keep_blocks, Some(100000));
-    assert_eq!(
-        node.deploy_path,
-        Some("/opt/osmosis".to_string())
-    );
+    assert_eq!(node.deploy_path, Some("/opt/osmosis".to_string()));
     assert_eq!(node.service_name, "osmosisd");
     assert_eq!(node.snapshots_enabled, Some(true));
     assert_eq!(node.snapshot_schedule, Some("0 0 3 * * *".to_string()));

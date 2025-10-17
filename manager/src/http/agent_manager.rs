@@ -730,9 +730,10 @@ impl HttpAgentManager {
             ));
         }
 
-        let deploy_path = node_config.deploy_path.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No deploy path configured for {}", node_name)
-        })?;
+        let deploy_path = node_config
+            .deploy_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
 
         let backup_path = node_config
             .snapshot_backup_path
@@ -902,9 +903,10 @@ impl HttpAgentManager {
             ));
         }
 
-        let deploy_path = node_config.deploy_path.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No deploy path configured for {}", node_name)
-        })?;
+        let deploy_path = node_config
+            .deploy_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No deploy path configured for {}", node_name))?;
 
         let backup_path = node_config
             .snapshot_backup_path
