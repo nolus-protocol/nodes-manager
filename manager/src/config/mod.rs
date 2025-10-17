@@ -121,7 +121,7 @@ fn default_state_sync_trust_height_offset() -> Option<u32> {
 }
 
 fn default_state_sync_max_sync_timeout() -> Option<u64> {
-    Some(600) // 10 minutes
+    Some(1800) // 30 minutes
 }
 
 impl NodeConfig {
