@@ -96,10 +96,12 @@ impl MockRpcServer {
 
     /// Mock block endpoint for state sync trusted block lookup
     pub async fn mock_block_at_height(&self, height: u64, block_hash: &str, block_time: &str) {
+        use wiremock::matchers::path;
+
+        // Mock GET /block?height={height}
         Mock::given(method("GET"))
+            .and(path("/block"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
                 "result": {
                     "block_id": {
                         "hash": block_hash
@@ -210,6 +212,39 @@ impl MockRpcServer {
                         "catching_up": catching_up
                     }
                 }
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock latest block endpoint (for state sync parameter fetching)
+    pub async fn mock_latest_block(&self, height: u64) {
+        use wiremock::matchers::path;
+
+        // Mock GET /block (returns latest block)
+        Mock::given(method("GET"))
+            .and(path("/block"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "result": {
+                    "block": {
+                        "header": {
+                            "height": height.to_string()
+                        }
+                    }
+                }
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock error response
+    pub async fn mock_error(&self, path: &str, status: u16, error_message: &str) {
+        use wiremock::matchers::path as path_matcher;
+
+        Mock::given(method("GET"))
+            .and(path_matcher(path))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({
+                "error": error_message
             })))
             .mount(&self.server)
             .await;
