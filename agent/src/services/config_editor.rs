@@ -45,10 +45,7 @@ pub async fn enable_state_sync(
             if trimmed.starts_with("enable ") || trimmed.starts_with("enable=") {
                 new_section.push_str("enable = true\n");
             } else if trimmed.starts_with("rpc_servers ") || trimmed.starts_with("rpc_servers=") {
-                new_section.push_str(&format!(
-                    "rpc_servers = \"{}\"\n",
-                    rpc_servers_str
-                ));
+                new_section.push_str(&format!("rpc_servers = \"{}\"\n", rpc_servers_str));
             } else if trimmed.starts_with("trust_height ") || trimmed.starts_with("trust_height=") {
                 new_section.push_str(&format!("trust_height = {}\n", trust_height));
             } else if trimmed.starts_with("trust_hash ") || trimmed.starts_with("trust_hash=") {
@@ -68,10 +65,7 @@ pub async fn enable_state_sync(
         modified_config.push_str("\n\n");
         modified_config.push_str("[statesync]\n");
         modified_config.push_str("enable = true\n");
-        modified_config.push_str(&format!(
-            "rpc_servers = \"{}\"\n",
-            rpc_servers_str
-        ));
+        modified_config.push_str(&format!("rpc_servers = \"{}\"\n", rpc_servers_str));
         modified_config.push_str(&format!("trust_height = {}\n", trust_height));
         modified_config.push_str(&format!("trust_hash = \"{}\"\n", trust_hash));
         modified_config.push_str("trust_period = \"168h0m0s\"\n");
