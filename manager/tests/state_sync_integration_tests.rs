@@ -10,7 +10,7 @@
 mod common;
 
 use common::fixtures::*;
-use manager::config::{Config, NodeConfig, ServerConfig};
+use manager::config::{Config, NodeConfig};
 use manager::state_sync::fetch_state_sync_params;
 use std::collections::HashMap;
 
@@ -249,7 +249,7 @@ async fn test_trust_height_offset_calculation() {
             .mock_block_at_height(expected_trust_height, "HASH123", "2025-01-17T10:00:00Z")
             .await;
 
-        let result = fetch_state_sync_params(&[mock_rpc.base_url.clone()], offset).await;
+        let result = fetch_state_sync_params(std::slice::from_ref(&mock_rpc.base_url), offset).await;
         assert!(result.is_ok());
 
         let params = result.unwrap();
@@ -326,7 +326,7 @@ async fn test_invalid_block_response() {
     // Mock invalid JSON response
     mock_rpc.mock_error("/block", 200, "Invalid JSON").await;
 
-    let result = fetch_state_sync_params(&[mock_rpc.base_url.clone()], 2000).await;
+    let result = fetch_state_sync_params(std::slice::from_ref(&mock_rpc.base_url), 2000).await;
 
     // Should fail on invalid response
     assert!(result.is_err());
