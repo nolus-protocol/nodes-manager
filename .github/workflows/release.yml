@@ -93,16 +93,43 @@ jobs:
       id: get_version
       run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-    - name: Check for release notes
-      id: release_notes
+    - name: Prepare release notes
       run: |
         VERSION="${GITHUB_REF#refs/tags/}"
         NOTES_FILE="RELEASE_NOTES_${VERSION}.md"
         if [ -f "$NOTES_FILE" ]; then
-          echo "found=true" >> $GITHUB_OUTPUT
-          echo "file=$NOTES_FILE" >> $GITHUB_OUTPUT
+          echo "Using release notes from $NOTES_FILE"
+          cp "$NOTES_FILE" release_notes.md
         else
-          echo "found=false" >> $GITHUB_OUTPUT
+          echo "No release notes file found, generating default"
+          cat > release_notes.md << 'EOF'
+        ## Changes in ${{ steps.get_version.outputs.version }}
+        
+        ### Binaries
+        - `manager-linux-amd64.tar.gz`: Manager binary for Linux (x86_64)
+        - `agent-linux-amd64.tar.gz`: Agent binary for Linux (x86_64)
+        
+        ### Installation
+        ```bash
+        # Download and install manager
+        wget https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/manager-linux-amd64.tar.gz
+        tar xzf manager-linux-amd64.tar.gz
+        chmod +x manager
+        sudo mv manager /usr/local/bin/
+        
+        # Download and install agent
+        wget https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/agent-linux-amd64.tar.gz
+        tar xzf agent-linux-amd64.tar.gz
+        chmod +x agent
+        sudo mv agent /usr/local/bin/
+        ```
+        
+        ### Verification
+        ```bash
+        sha256sum -c manager-linux-amd64.tar.gz.sha256
+        sha256sum -c agent-linux-amd64.tar.gz.sha256
+        ```
+        EOF
         fi
 
     - name: Create Release
@@ -110,11 +137,8 @@ jobs:
       with:
         tag_name: ${{ steps.get_version.outputs.version }}
         name: Release ${{ steps.get_version.outputs.version }}
-        body_path: ${{ steps.release_notes.outputs.found == 'true' && steps.release_notes.outputs.file || '' }}
-        body: ${{ steps.release_notes.outputs.found == 'false' && format('## Changes in {0}\n\n### Binaries\n- `manager-linux-amd64.tar.gz`: Manager binary for Linux (x86_64)\n- `agent-linux-amd64.tar.gz`: Agent binary for Linux (x86_64)\n\n### Installation\n```bash\n# Download and install (example for Linux)\nwget https://github.com/{1}/releases/download/{0}/manager-linux-amd64.tar.gz\ntar xzf manager-linux-amd64.tar.gz\nchmod +x manager\nsudo mv manager /usr/local/bin/\n```\n\n### Verification\n```bash\n# Verify checksum\nwget https://github.com/{1}/releases/download/{0}/manager-linux-amd64.tar.gz.sha256\nsha256sum -c manager-linux-amd64.tar.gz.sha256\n```', steps.get_version.outputs.version, github.repository) || '' }}
+        body_path: release_notes.md
         files: release-assets/*
-</parameter>
-
         draft: false
         prerelease: false
       env:
