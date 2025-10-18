@@ -168,7 +168,10 @@ async fn wait_for_sync_completion(
 
             match commands::execute_shell_command(&check_status_cmd).await {
                 Ok(output) => {
-                    let catching_up = output.trim();
+                    // Trim whitespace and trailing characters like }, ", etc.
+                    let catching_up = output
+                        .trim()
+                        .trim_matches(|c| c == '}' || c == '"' || c == ' ');
                     info!("Sync status: catching_up = {}", catching_up);
 
                     if catching_up == "false" {
