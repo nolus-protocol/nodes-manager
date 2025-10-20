@@ -1456,11 +1456,11 @@
                         }
                     }
 
-                    // Handle day of week (tokio-cron-scheduler: 1=Monday, 2=Tuesday, ..., 7=Sunday)
+                    // Handle day of week (standard cron format: 0=Sunday, 1=Monday, ..., 6=Saturday, 7=Sunday)
                     // JavaScript: 0=Sunday, 1=Monday, 2=Tuesday, ..., 6=Saturday
                     if (parsed.dayOfWeek !== '*') {
                         const targetDayNum = parseInt(parsed.dayOfWeek);
-                        // Convert tokio-cron day (1=Mon, 7=Sun) to JS day (0=Sun, 1=Mon, ...)
+                        // Standard cron and JS use same format - just handle 7 as Sunday
                         const targetJSDay = targetDayNum === 7 ? 0 : targetDayNum;
                         const currentJSDay = next.getUTCDay();
                         let daysToAdd = targetJSDay - currentJSDay;
