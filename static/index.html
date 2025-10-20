@@ -1632,14 +1632,16 @@
                             </td>
                             <td style="width: 20%;">
                                 <div class="schedule-info">
-                                    ${templates.scheduleItem('Pruning', config.pruning_schedule)}
+                                    ${templates.scheduleItem('Pruning', config.pruning_schedule, config.pruning_enabled)}
                                     ${templates.scheduleItem('Snapshot', config.snapshot_schedule, config.snapshots_enabled)}
+                                    ${templates.scheduleItem('State Sync', config.state_sync_schedule, config.state_sync_enabled)}
                                 </div>
                             </td>
                             <td style="width: 20%;">
                                 <div class="next-run-info">
-                                    ${templates.nextRunItem('Next Pruning', config.pruning_schedule)}
+                                    ${templates.nextRunItem('Next Pruning', config.pruning_schedule, config.pruning_enabled)}
                                     ${templates.nextRunItem('Next Snapshot', config.snapshot_schedule, config.snapshots_enabled)}
+                                    ${templates.nextRunItem('Next State Sync', config.state_sync_schedule, config.state_sync_enabled)}
                                 </div>
                             </td>
                             <td style="width: 20%;">
