@@ -11,7 +11,7 @@ env:
 jobs:
   test:
     name: Test Suite
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
 
   coverage:
     name: Code Coverage
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     continue-on-error: true  # Don't fail the build on security warnings
     steps:
     - name: Checkout code

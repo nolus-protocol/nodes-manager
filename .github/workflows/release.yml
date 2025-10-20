@@ -12,7 +12,7 @@ env:
 jobs:
   build-binaries:
     name: Build ${{ matrix.binary }} for ${{ matrix.target }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -71,7 +71,7 @@ jobs:
   create-release:
     name: Create Release
     needs: build-binaries
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
