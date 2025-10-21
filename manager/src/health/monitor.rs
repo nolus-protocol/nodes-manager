@@ -1059,7 +1059,7 @@ impl HealthMonitor {
             .ok_or_else(|| anyhow!("Server {} not found", server_host))?;
 
         let command = format!(
-            "tail -n 1000 {}/out1.log | grep -n -A {} -B {} -E '{}'",
+            "tail -n 5000 {}/out1.log | grep -n -A {} -B {} -E '{}'",
             log_path,
             context_lines,
             context_lines,
