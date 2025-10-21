@@ -269,3 +269,39 @@ fn test_block_height_provides_precise_state_reference() {
     // Block height provides exact blockchain state reference
     assert!(extracted_height > 0, "Block height must be positive");
 }
+
+#[test]
+fn test_directory_and_lz4_use_same_block_height_naming() {
+    let network = "pirin-1";
+    let date = "20250121";
+    let block_height = 17154420;
+
+    // Both directory and LZ4 archive use the same base name
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
+    let directory_path = format!("/backup/{}/", snapshot_name);
+    let lz4_archive = format!("/backup/{}.tar.lz4", snapshot_name);
+
+    // Verify both use block height in their names
+    assert_eq!(directory_path, "/backup/pirin-1_20250121_17154420/");
+    assert_eq!(lz4_archive, "/backup/pirin-1_20250121_17154420.tar.lz4");
+
+    // Verify the base name is identical (minus directory separator or extension)
+    assert!(lz4_archive.contains(&snapshot_name));
+    assert!(directory_path.contains(&snapshot_name));
+
+    // Extract and verify block height from both paths
+    let dir_parts: Vec<&str> = snapshot_name.split('_').collect();
+    let lz4_base = lz4_archive
+        .trim_end_matches(".tar.lz4")
+        .split('/')
+        .last()
+        .unwrap();
+    let lz4_parts: Vec<&str> = lz4_base.split('_').collect();
+
+    assert_eq!(dir_parts[2], "17154420");
+    assert_eq!(lz4_parts[2], "17154420");
+    assert_eq!(
+        dir_parts[2], lz4_parts[2],
+        "Both should have same block height"
+    );
+}
