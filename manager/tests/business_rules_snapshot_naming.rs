@@ -294,7 +294,7 @@ fn test_directory_and_lz4_use_same_block_height_naming() {
     let lz4_base = lz4_archive
         .trim_end_matches(".tar.lz4")
         .split('/')
-        .last()
+        .next_back()
         .unwrap();
     let lz4_parts: Vec<&str> = lz4_base.split('_').collect();
 
