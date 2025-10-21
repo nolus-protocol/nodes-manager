@@ -40,8 +40,25 @@ impl MaintenanceScheduler {
 
     #[instrument(skip(self))]
     pub async fn start(&self) -> Result<()> {
+        // Log timezone information for debugging
+        let now_utc = Utc::now();
+        let now_local = chrono::Local::now();
         info!(
             "Starting maintenance scheduler with 6-field cron format (sec min hour day month dow)"
+        );
+        info!(
+            "⏰ Scheduler timezone info - UTC: {}, Local: {}, Offset: {} hours",
+            now_utc.format("%Y-%m-%d %H:%M:%S %Z"),
+            now_local.format("%Y-%m-%d %H:%M:%S %Z"),
+            now_local.offset().local_minus_utc() / 3600
+        );
+        warn!(
+            "⚠️  WARNING: tokio-cron-scheduler uses SYSTEM LOCAL TIMEZONE by default, NOT UTC!"
+        );
+        warn!(
+            "⚠️  Cron schedules will execute in {} timezone (UTC{:+})",
+            now_local.format("%Z"),
+            now_local.offset().local_minus_utc() / 3600
         );
         let mut scheduled_count = 0;
 
