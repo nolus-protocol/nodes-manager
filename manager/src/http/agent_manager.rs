@@ -598,10 +598,16 @@ impl HttpAgentManager {
 
         // Auto-detect network from RPC if not configured or set to "auto"
         let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            info!(
+                "Auto-detecting network for {} from RPC {}",
+                node_name, node_config.rpc_url
+            );
             match self.fetch_network_from_rpc(&node_config.rpc_url).await {
                 Ok(detected_network) => {
-                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    info!(
+                        "✓ Auto-detected network for {}: {}",
+                        node_name, detected_network
+                    );
                     detected_network
                 }
                 Err(e) => {
@@ -683,17 +689,22 @@ impl HttpAgentManager {
     /// Used as fallback when network is not configured
     async fn fetch_network_from_rpc(&self, rpc_url: &str) -> Result<String> {
         let status_url = format!("{}/status", rpc_url);
-        
+
         let response = self
             .client
             .get(&status_url)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch RPC status from {}: {}", status_url, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to fetch RPC status from {}: {}", status_url, e)
+            })?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("RPC status returned HTTP {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "RPC status returned HTTP {}",
+                response.status()
+            ));
         }
 
         let json: serde_json::Value = response
@@ -782,10 +793,16 @@ impl HttpAgentManager {
 
         // Auto-detect network from RPC if not configured or set to "auto"
         let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            info!(
+                "Auto-detecting network for {} from RPC {}",
+                node_name, node_config.rpc_url
+            );
             match self.fetch_network_from_rpc(&node_config.rpc_url).await {
                 Ok(detected_network) => {
-                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    info!(
+                        "✓ Auto-detected network for {}: {}",
+                        node_name, detected_network
+                    );
                     detected_network
                 }
                 Err(e) => {
@@ -828,7 +845,7 @@ impl HttpAgentManager {
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
-            network: network,
+            network,
             filename: operation_result["filename"]
                 .as_str()
                 .unwrap_or_default()
@@ -974,10 +991,16 @@ impl HttpAgentManager {
 
         // Auto-detect network from RPC if not configured or set to "auto"
         let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            info!(
+                "Auto-detecting network for {} from RPC {}",
+                node_name, node_config.rpc_url
+            );
             match self.fetch_network_from_rpc(&node_config.rpc_url).await {
                 Ok(detected_network) => {
-                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    info!(
+                        "✓ Auto-detected network for {}: {}",
+                        node_name, detected_network
+                    );
                     detected_network
                 }
                 Err(e) => {
@@ -1004,11 +1027,7 @@ impl HttpAgentManager {
         let service_name = &node_config.service_name;
 
         let latest_snapshot_dir = self
-            .find_latest_network_snapshot_directory(
-                &node_config.server_host,
-                backup_path,
-                &network,
-            )
+            .find_latest_network_snapshot_directory(&node_config.server_host, backup_path, &network)
             .await?;
 
         info!(
@@ -1030,7 +1049,7 @@ impl HttpAgentManager {
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
-            network: network,
+            network,
             filename: latest_snapshot_dir
                 .rsplit('/')
                 .next()
