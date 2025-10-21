@@ -596,6 +596,25 @@ impl HttpAgentManager {
             ));
         }
 
+        // Auto-detect network from RPC if not configured or set to "auto"
+        let network = if node_config.network.is_empty() || node_config.network == "auto" {
+            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
+                Ok(detected_network) => {
+                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    detected_network
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                        node_name, e
+                    ));
+                }
+            }
+        } else {
+            node_config.network.clone()
+        };
+
         let rpc_sources = node_config.state_sync_rpc_sources.as_ref().ok_or_else(|| {
             anyhow::anyhow!("No RPC sources configured for state sync on {}", node_name)
         })?;
@@ -627,7 +646,7 @@ impl HttpAgentManager {
             sync_params.trust_height, sync_params.trust_hash
         );
 
-        let daemon_binary = self.determine_daemon_binary(&node_config.network);
+        let daemon_binary = self.determine_daemon_binary(&network);
 
         info!(
             "Sending state sync request to agent on {}",
@@ -658,6 +677,37 @@ impl HttpAgentManager {
 
         info!("✓ State sync completed successfully for {}", node_name);
         Ok(())
+    }
+
+    /// Fetch network ID from RPC /status endpoint at runtime
+    /// Used as fallback when network is not configured
+    async fn fetch_network_from_rpc(&self, rpc_url: &str) -> Result<String> {
+        let status_url = format!("{}/status", rpc_url);
+        
+        let response = self
+            .client
+            .get(&status_url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch RPC status from {}: {}", status_url, e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("RPC status returned HTTP {}", response.status()));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse RPC status response: {}", e))?;
+
+        // Extract network from response: result.node_info.network
+        let network = json["result"]["node_info"]["network"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Network field not found in RPC response"))?
+            .to_string();
+
+        Ok(network)
     }
 
     fn determine_daemon_binary(&self, network: &str) -> String {
@@ -730,6 +780,25 @@ impl HttpAgentManager {
             ));
         }
 
+        // Auto-detect network from RPC if not configured or set to "auto"
+        let network = if node_config.network.is_empty() || node_config.network == "auto" {
+            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
+                Ok(detected_network) => {
+                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    detected_network
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                        node_name, e
+                    ));
+                }
+            }
+        } else {
+            node_config.network.clone()
+        };
+
         let deploy_path = node_config
             .deploy_path
             .as_ref()
@@ -744,7 +813,7 @@ impl HttpAgentManager {
 
         let payload = json!({
             "node_name": node_name,
-            "network": node_config.network,
+            "network": &network,
             "deploy_path": deploy_path,
             "backup_path": backup_path,
             "service_name": service_name,
@@ -759,7 +828,7 @@ impl HttpAgentManager {
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
-            network: node_config.network.clone(),
+            network: network,
             filename: operation_result["filename"]
                 .as_str()
                 .unwrap_or_default()
@@ -903,6 +972,25 @@ impl HttpAgentManager {
             ));
         }
 
+        // Auto-detect network from RPC if not configured or set to "auto"
+        let network = if node_config.network.is_empty() || node_config.network == "auto" {
+            info!("Auto-detecting network for {} from RPC {}", node_name, node_config.rpc_url);
+            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
+                Ok(detected_network) => {
+                    info!("✓ Auto-detected network for {}: {}", node_name, detected_network);
+                    detected_network
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                        node_name, e
+                    ));
+                }
+            }
+        } else {
+            node_config.network.clone()
+        };
+
         let deploy_path = node_config
             .deploy_path
             .as_ref()
@@ -919,7 +1007,7 @@ impl HttpAgentManager {
             .find_latest_network_snapshot_directory(
                 &node_config.server_host,
                 backup_path,
-                &node_config.network,
+                &network,
             )
             .await?;
 
@@ -942,7 +1030,7 @@ impl HttpAgentManager {
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
-            network: node_config.network.clone(),
+            network: network,
             filename: latest_snapshot_dir
                 .rsplit('/')
                 .next()
