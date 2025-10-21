@@ -6,7 +6,7 @@
 
 A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a centralized web interface.
 
-**✅ 131 tests passing** | **🚀 Production-ready** | **🐳 Docker support** | **🎨 Modern UI**
+**✅ 131 tests passing** | **🚀 Production-ready** | **🎨 Modern UI**
 
 ## Features
 
