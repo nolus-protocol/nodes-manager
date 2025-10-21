@@ -7,13 +7,12 @@ use crate::types::{SnapshotInfo, SnapshotRequest};
 
 pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result<SnapshotInfo> {
     info!(
-        "Starting snapshot creation for network: {} (from node: {})",
-        request.network, request.node_name
+        "Starting snapshot creation: {} (from node: {})",
+        request.snapshot_name, request.node_name
     );
 
-    // Generate snapshot directory name using NETWORK instead of node_name
-    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let snapshot_dirname = format!("{}_{}", request.network, timestamp);
+    // Use pre-built snapshot name from manager (includes network, date, and block height)
+    let snapshot_dirname = request.snapshot_name.clone();
     let snapshot_path = format!("{}/{}", request.backup_path, snapshot_dirname);
 
     // Step 1: Verify source directories exist BEFORE starting snapshot
@@ -123,8 +122,8 @@ pub async fn execute_full_snapshot_sequence(request: &SnapshotRequest) -> Result
     }
     info!("✓ Service verified as active");
 
-    info!("Network snapshot created successfully: {} ({:.1} MB) - contains both data and wasm with validator state, can be used by any node on {} network",
-          snapshot_dirname, size_bytes as f64 / 1024.0 / 1024.0, request.network);
+    info!("Network snapshot created successfully: {} ({:.1} MB) - contains both data and wasm with validator state",
+          snapshot_dirname, size_bytes as f64 / 1024.0 / 1024.0);
 
     Ok(SnapshotInfo {
         filename: snapshot_dirname,

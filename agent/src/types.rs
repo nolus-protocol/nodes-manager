@@ -38,7 +38,7 @@ pub struct PruningRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SnapshotRequest {
     pub node_name: String,
-    pub network: String,
+    pub snapshot_name: String, // Pre-built by manager: network_date_blockheight (e.g., "pirin-1_20250121_17154420")
     pub deploy_path: String,
     pub backup_path: String,
     pub service_name: String,

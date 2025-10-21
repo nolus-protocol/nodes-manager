@@ -4,6 +4,7 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -687,6 +688,39 @@ impl HttpAgentManager {
 
     /// Fetch network ID from RPC /status endpoint at runtime
     /// Used as fallback when network is not configured
+    async fn fetch_block_height_from_rpc(&self, rpc_url: &str) -> Result<u64> {
+        let status_url = format!("{}/status", rpc_url);
+        let response = self
+            .client
+            .get(&status_url)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to query RPC status: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "RPC returned error status: {}",
+                response.status()
+            ));
+        }
+
+        let rpc_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse RPC response: {}", e))?;
+
+        let block_height_str = rpc_response["result"]["sync_info"]["latest_block_height"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Block height not found in RPC response"))?;
+
+        let block_height = block_height_str
+            .parse::<u64>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse block height: {}", e))?;
+
+        Ok(block_height)
+    }
+
     async fn fetch_network_from_rpc(&self, rpc_url: &str) -> Result<String> {
         let status_url = format!("{}/status", rpc_url);
 
@@ -816,6 +850,21 @@ impl HttpAgentManager {
             node_config.network.clone()
         };
 
+        // Fetch current block height from RPC for snapshot naming
+        info!(
+            "Fetching current block height for {} from RPC {}",
+            node_name, node_config.rpc_url
+        );
+        let block_height = self
+            .fetch_block_height_from_rpc(&node_config.rpc_url)
+            .await?;
+        info!("✓ Current block height for {}: {}", node_name, block_height);
+
+        // Build snapshot name: network_date_blockheight (e.g., "pirin-1_20250121_17154420")
+        let date = chrono::Utc::now().format("%Y%m%d").to_string();
+        let snapshot_name = format!("{}_{}_{}", network, date, block_height);
+        info!("✓ Snapshot name: {}", snapshot_name);
+
         let deploy_path = node_config
             .deploy_path
             .as_ref()
@@ -830,7 +879,7 @@ impl HttpAgentManager {
 
         let payload = json!({
             "node_name": node_name,
-            "network": &network,
+            "snapshot_name": &snapshot_name,
             "deploy_path": deploy_path,
             "backup_path": backup_path,
             "service_name": service_name,
@@ -845,7 +894,7 @@ impl HttpAgentManager {
 
         let snapshot_info = SnapshotInfo {
             node_name: node_name.to_string(),
-            network,
+            network: network.clone(),
             filename: operation_result["filename"]
                 .as_str()
                 .unwrap_or_default()
@@ -1071,8 +1120,10 @@ impl HttpAgentManager {
         backup_path: &str,
         network: &str,
     ) -> Result<String> {
+        // Sort by block height (last field after underscore) numerically, not alphabetically
+        // Snapshot format: network_date_blockheight (e.g., pirin-1_20250121_17154420)
         let list_cmd = format!(
-            "find '{}' -maxdepth 1 -type d -name '{}_*' | sort | tail -1",
+            "find '{}' -maxdepth 1 -type d -name '{}_*' | awk -F_ '{{print $NF, $0}}' | sort -k1 -n | tail -1 | awk '{{print $2}}'",
             backup_path, network
         );
 

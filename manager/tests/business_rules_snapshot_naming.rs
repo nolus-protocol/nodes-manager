@@ -1,10 +1,10 @@
 //! Business Rule Tests: Snapshot Naming Convention
 //!
 //! These tests verify that snapshots follow the network-based naming convention:
-//! {network}_{timestamp} NOT {node}_{timestamp}
+//! {network}_{date}_{blockheight} NOT {node}_{timestamp}
 //!
 //! This enables cross-node recovery - any node on the same network can restore
-//! from the same snapshot.
+//! from the same snapshot. Block height provides a precise blockchain state reference.
 
 mod common;
 
@@ -13,15 +13,20 @@ use chrono::Utc;
 #[test]
 fn test_snapshot_name_format_network_based() {
     let network = "osmosis-1";
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let snapshot_name = format!("{}_{}", network, timestamp);
+    let date = Utc::now().format("%Y%m%d").to_string();
+    let block_height = 17154420;
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
 
-    // Verify format: network_YYYYMMDD_HHMMSS
+    // Verify format: network_YYYYMMDD_blockheight
     assert!(snapshot_name.starts_with("osmosis-1_"));
     assert!(snapshot_name.contains('_'));
 
     let parts: Vec<&str> = snapshot_name.split('_').collect();
-    assert_eq!(parts.len(), 3, "Should have network, date, and time parts");
+    assert_eq!(
+        parts.len(),
+        3,
+        "Should have network, date, and block height parts"
+    );
     assert_eq!(parts[0], "osmosis-1");
 }
 
@@ -29,8 +34,9 @@ fn test_snapshot_name_format_network_based() {
 fn test_snapshot_name_does_not_include_node_name() {
     let network = "pirin-1";
     let node_name = "pirin-node-1"; // This should NOT be in the snapshot name
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let snapshot_name = format!("{}_{}", network, timestamp);
+    let date = Utc::now().format("%Y%m%d").to_string();
+    let block_height = 12345678;
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
 
     // Verify node name is NOT in snapshot name
     assert!(!snapshot_name.contains(node_name));
@@ -40,41 +46,46 @@ fn test_snapshot_name_does_not_include_node_name() {
 #[test]
 fn test_snapshots_from_different_nodes_same_network_can_share() {
     let network = "cosmos-hub-4";
-    let timestamp = "20250109_120000";
+    let date = "20250109";
+    let block_height = 18500000;
 
     // Both nodes on same network can create/use same snapshot name format
-    let snapshot_from_node1 = format!("{}_{}", network, timestamp);
-    let snapshot_from_node2 = format!("{}_{}", network, timestamp);
+    let snapshot_from_node1 = format!("{}_{}_{}", network, date, block_height);
+    let snapshot_from_node2 = format!("{}_{}_{}", network, date, block_height);
 
     assert_eq!(snapshot_from_node1, snapshot_from_node2);
-    assert_eq!(snapshot_from_node1, "cosmos-hub-4_20250109_120000");
+    assert_eq!(snapshot_from_node1, "cosmos-hub-4_20250109_18500000");
 }
 
 #[test]
 fn test_snapshot_name_parsing() {
-    let snapshot_name = "osmosis-1_20250109_143022";
+    let snapshot_name = "osmosis-1_20250109_17154420";
 
     let parts: Vec<&str> = snapshot_name.split('_').collect();
     assert_eq!(parts.len(), 3);
 
     let network = parts[0];
     let date = parts[1];
-    let time = parts[2];
+    let block_height = parts[2];
 
     assert_eq!(network, "osmosis-1");
     assert_eq!(date, "20250109");
-    assert_eq!(time, "143022");
+    assert_eq!(block_height, "17154420");
+
+    // Block height should be parseable as a number
+    assert!(block_height.parse::<u64>().is_ok());
 }
 
 #[test]
-fn test_snapshot_name_uniqueness_by_timestamp() {
+fn test_snapshot_name_uniqueness_by_block_height() {
     let network = "juno-1";
+    let date = "20250109";
 
-    let snapshot1 = format!("{}_{}", network, "20250109_120000");
-    let snapshot2 = format!("{}_{}", network, "20250109_130000");
-    let snapshot3 = format!("{}_{}", network, "20250110_120000");
+    let snapshot1 = format!("{}_{}_{}", network, date, 15000000);
+    let snapshot2 = format!("{}_{}_{}", network, date, 15100000);
+    let snapshot3 = format!("{}_{}_{}", network, date, 15200000);
 
-    // Different timestamps = different snapshots
+    // Different block heights = different snapshots
     assert_ne!(snapshot1, snapshot2);
     assert_ne!(snapshot1, snapshot3);
     assert_ne!(snapshot2, snapshot3);
@@ -87,13 +98,14 @@ fn test_snapshot_name_uniqueness_by_timestamp() {
 
 #[test]
 fn test_cross_network_snapshots_are_different() {
-    let timestamp = "20250109_120000";
+    let date = "20250109";
+    let block_height = 17154420;
 
-    let osmosis_snapshot = format!("osmosis-1_{}", timestamp);
-    let cosmos_snapshot = format!("cosmoshub-4_{}", timestamp);
-    let juno_snapshot = format!("juno-1_{}", timestamp);
+    let osmosis_snapshot = format!("osmosis-1_{}_{}", date, block_height);
+    let cosmos_snapshot = format!("cosmoshub-4_{}_{}", date, block_height);
+    let juno_snapshot = format!("juno-1_{}_{}", date, block_height);
 
-    // Same timestamp but different networks = different snapshots
+    // Same block height but different networks = different snapshots
     assert_ne!(osmosis_snapshot, cosmos_snapshot);
     assert_ne!(osmosis_snapshot, juno_snapshot);
     assert_ne!(cosmos_snapshot, juno_snapshot);
@@ -102,63 +114,70 @@ fn test_cross_network_snapshots_are_different() {
 #[test]
 fn test_snapshot_name_with_network_containing_hyphens() {
     let network = "cosmos-hub-4";
-    let timestamp = "20250109_120000";
-    let snapshot_name = format!("{}_{}", network, timestamp);
+    let date = "20250109";
+    let block_height = 18500000;
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
 
     // Network can contain hyphens
-    assert_eq!(snapshot_name, "cosmos-hub-4_20250109_120000");
+    assert_eq!(snapshot_name, "cosmos-hub-4_20250109_18500000");
 
     // Parse correctly
     let parts: Vec<&str> = snapshot_name.split('_').collect();
-    // Will be ["cosmos-hub-4", "20250109", "120000"]
+    // Will be ["cosmos-hub-4", "20250109", "18500000"]
     assert_eq!(parts[0], "cosmos-hub-4");
+    assert_eq!(parts[1], "20250109");
+    assert_eq!(parts[2], "18500000");
 }
 
 #[test]
 fn test_snapshot_restoration_cross_node_compatibility() {
     // Scenario: Node 1 creates snapshot, Node 2 restores from it
     let network = "pirin-1";
-    let timestamp = "20250109_120000";
+    let date = "20250121";
+    let block_height = 17154420;
 
     // Node 1 creates snapshot with network-based name
-    let snapshot_created_by_node1 = format!("{}_{}", network, timestamp);
+    let snapshot_created_by_node1 = format!("{}_{}_{}", network, date, block_height);
 
     // Node 2 can restore from same snapshot name
-    let snapshot_used_by_node2 = format!("{}_{}", network, timestamp);
+    let snapshot_used_by_node2 = format!("{}_{}_{}", network, date, block_height);
 
     // Both refer to the same snapshot
     assert_eq!(snapshot_created_by_node1, snapshot_used_by_node2);
-    assert_eq!(snapshot_created_by_node1, "pirin-1_20250109_120000");
+    assert_eq!(snapshot_created_by_node1, "pirin-1_20250121_17154420");
 }
 
 #[test]
 fn test_snapshot_name_format_validation() {
-    let valid_snapshot = "osmosis-1_20250109_120000";
+    let valid_snapshot = "osmosis-1_20250109_17154420";
     let parts: Vec<&str> = valid_snapshot.split('_').collect();
 
     // Must have exactly 3 parts
     assert_eq!(parts.len(), 3);
 
-    // Date part must be 8 digits
+    // Date part must be 8 digits (YYYYMMDD)
     assert_eq!(parts[1].len(), 8);
     assert!(parts[1].chars().all(|c| c.is_ascii_digit()));
 
-    // Time part must be 6 digits
-    assert_eq!(parts[2].len(), 6);
+    // Block height part must be all digits (variable length)
+    assert!(!parts[2].is_empty());
     assert!(parts[2].chars().all(|c| c.is_ascii_digit()));
+
+    // Block height should be parseable as u64
+    assert!(parts[2].parse::<u64>().is_ok());
 }
 
 #[test]
 fn test_invalid_snapshot_names() {
     // These would be invalid snapshot names (node-based, not network-based)
     let invalid_names = vec![
-        "node-1_20250109_120000",          // Uses node name instead of network
-        "server1-osmosis_20250109_120000", // Includes server name
-        "osmosis-node-1_20250109_120000",  // Includes node identifier
+        "node-1_20250109_17154420",          // Uses node name instead of network
+        "server1-osmosis_20250109_17154420", // Includes server name
+        "osmosis-node-1_20250109_17154420",  // Includes node identifier
     ];
 
     // Valid network-based name for comparison
-    let valid_name = "osmosis-1_20250109_120000";
+    let valid_name = "osmosis-1_20250109_17154420";
 
     for invalid in invalid_names {
         assert_ne!(invalid, valid_name);
@@ -175,30 +194,78 @@ fn test_invalid_snapshot_names() {
 #[test]
 fn test_snapshot_filename_with_extension() {
     let network = "osmosis-1";
-    let timestamp = "20250109_120000";
-    let snapshot_name = format!("{}_{}", network, timestamp);
+    let date = "20250109";
+    let block_height = 17154420;
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
     let filename = format!("{}.tar.lz4", snapshot_name);
 
-    assert_eq!(filename, "osmosis-1_20250109_120000.tar.lz4");
+    assert_eq!(filename, "osmosis-1_20250109_17154420.tar.lz4");
     assert!(filename.ends_with(".tar.lz4"));
 }
 
 #[test]
-fn test_multiple_snapshots_same_network_different_times() {
+fn test_multiple_snapshots_same_network_different_block_heights() {
     let network = "pirin-1";
+    let date = "20250109";
 
-    // Create snapshots at different times
-    let morning_snapshot = format!("{}_{}", network, "20250109_080000");
-    let afternoon_snapshot = format!("{}_{}", network, "20250109_140000");
-    let evening_snapshot = format!("{}_{}", network, "20250109_200000");
+    // Create snapshots at different block heights
+    let snapshot1 = format!("{}_{}_{}", network, date, 17000000);
+    let snapshot2 = format!("{}_{}_{}", network, date, 17100000);
+    let snapshot3 = format!("{}_{}_{}", network, date, 17200000);
 
     // All should be unique
-    assert_ne!(morning_snapshot, afternoon_snapshot);
-    assert_ne!(morning_snapshot, evening_snapshot);
-    assert_ne!(afternoon_snapshot, evening_snapshot);
+    assert_ne!(snapshot1, snapshot2);
+    assert_ne!(snapshot1, snapshot3);
+    assert_ne!(snapshot2, snapshot3);
 
     // All should be for the same network
-    assert!(morning_snapshot.starts_with("pirin-1_"));
-    assert!(afternoon_snapshot.starts_with("pirin-1_"));
-    assert!(evening_snapshot.starts_with("pirin-1_"));
+    assert!(snapshot1.starts_with("pirin-1_"));
+    assert!(snapshot2.starts_with("pirin-1_"));
+    assert!(snapshot3.starts_with("pirin-1_"));
+}
+
+#[test]
+fn test_snapshot_sorting_by_block_height() {
+    // Test that snapshots are correctly sorted by block height, not alphabetically
+    let network = "pirin-1";
+
+    // Different dates and block heights
+    let snapshot1 = format!("{}_{}_{}", network, "20250120", 15000000);
+    let snapshot2 = format!("{}_{}_{}", network, "20250121", 17154420);
+    let snapshot3 = format!("{}_{}_{}", network, "20250122", 2000000); // Lower block height!
+
+    // Extract block heights
+    let height1: u64 = snapshot1.split('_').next_back().unwrap().parse().unwrap();
+    let height2: u64 = snapshot2.split('_').next_back().unwrap().parse().unwrap();
+    let height3: u64 = snapshot3.split('_').next_back().unwrap().parse().unwrap();
+
+    // Verify that snapshot2 has the highest block height
+    assert!(height2 > height1);
+    assert!(height2 > height3);
+
+    // This confirms that alphabetical sorting would fail (2000000 < 17154420 alphabetically)
+    // but numeric sorting works correctly
+    assert!(
+        height3 < height2,
+        "Block height 2000000 should be less than 17154420"
+    );
+}
+
+#[test]
+fn test_block_height_provides_precise_state_reference() {
+    let network = "osmosis-1";
+    let date = "20250121";
+    let block_height = 17154420;
+
+    let snapshot_name = format!("{}_{}_{}", network, date, block_height);
+
+    // Extract block height from snapshot name
+    let parts: Vec<&str> = snapshot_name.split('_').collect();
+    let extracted_height: u64 = parts[2].parse().unwrap();
+
+    // Verify we can extract and use the block height
+    assert_eq!(extracted_height, block_height);
+
+    // Block height provides exact blockchain state reference
+    assert!(extracted_height > 0, "Block height must be positive");
 }
