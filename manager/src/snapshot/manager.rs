@@ -298,22 +298,10 @@ impl SnapshotManager {
                 let file_size_bytes = parts[1].parse::<u64>().ok();
                 let timestamp_unix = parts[2].parse::<i64>().unwrap_or(0);
 
-                let created_at = if let Some(ts_part) =
-                    filename.strip_prefix(&format!("{}_", node_config.network))
-                {
-                    chrono::NaiveDateTime::parse_from_str(ts_part, "%Y%m%d_%H%M%S")
-                        .ok()
-                        .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
-                        .unwrap_or_else(|| {
-                            DateTime::from_timestamp(timestamp_unix, 0)
-                                .map(|dt| dt.with_timezone(&Utc))
-                                .unwrap_or_else(Utc::now)
-                        })
-                } else {
-                    DateTime::from_timestamp(timestamp_unix, 0)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(Utc::now)
-                };
+                // Use filesystem timestamp as primary source (works with both old timestamp and new block height formats)
+                let created_at = DateTime::from_timestamp(timestamp_unix, 0)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now);
 
                 snapshots.push(SnapshotInfo {
                     node_name: node_name.to_string(),
