@@ -52,13 +52,11 @@ impl MaintenanceScheduler {
             now_local.format("%Y-%m-%d %H:%M:%S %Z"),
             now_local.offset().local_minus_utc() / 3600
         );
-        warn!(
-            "⚠️  WARNING: tokio-cron-scheduler uses SYSTEM LOCAL TIMEZONE by default, NOT UTC!"
+        info!(
+            "✅ Scheduler configured to use UTC timezone explicitly"
         );
-        warn!(
-            "⚠️  Cron schedules will execute in {} timezone (UTC{:+})",
-            now_local.format("%Z"),
-            now_local.offset().local_minus_utc() / 3600
+        info!(
+            "✅ All cron schedules will execute in UTC (not system local time)"
         );
         let mut scheduled_count = 0;
 
@@ -206,7 +204,7 @@ impl MaintenanceScheduler {
         let database = self.database.clone();
         let node_name_clone = node_name.clone();
 
-        let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
+        let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
             let http_manager = http_manager.clone();
             let database = database.clone();
             let node_name = node_name_clone.clone();
@@ -280,7 +278,7 @@ impl MaintenanceScheduler {
         let database = self.database.clone();
         let node_name_clone = node_name.clone();
 
-        let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
+        let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
             let snapshot_manager = snapshot_manager.clone();
             let database = database.clone();
             let node_name = node_name_clone.clone();
@@ -355,7 +353,7 @@ impl MaintenanceScheduler {
         let database = self.database.clone();
         let node_name_clone = node_name.clone();
 
-        let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
+        let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
             let http_manager = http_manager.clone();
             let database = database.clone();
             let node_name = node_name_clone.clone();
@@ -434,7 +432,7 @@ impl MaintenanceScheduler {
         let database = self.database.clone();
         let hermes_name_clone = hermes_name.clone();
 
-        let job = Job::new_async(schedule.as_str(), move |_uuid, _scheduler| {
+        let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
             let http_manager = http_manager.clone();
             let _config = _config.clone();
             let database = database.clone();
