@@ -52,12 +52,8 @@ impl MaintenanceScheduler {
             now_local.format("%Y-%m-%d %H:%M:%S %Z"),
             now_local.offset().local_minus_utc() / 3600
         );
-        info!(
-            "✅ Scheduler configured to use UTC timezone explicitly"
-        );
-        info!(
-            "✅ All cron schedules will execute in UTC (not system local time)"
-        );
+        info!("✅ Scheduler configured to use UTC timezone explicitly");
+        info!("✅ All cron schedules will execute in UTC (not system local time)");
         let mut scheduled_count = 0;
 
         // Schedule pruning operations
