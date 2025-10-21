@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=1200, user-scalable=yes">
     <title>Infrastructure Console</title>
     <style>
         * {
@@ -275,10 +275,56 @@
         }
 
         /* Table Styles */
+        .table-container {
+            overflow-x: auto;
+            min-width: 100%;
+            -webkit-overflow-scrolling: touch;
+        }
+
         .infrastructure-table {
             width: 100%;
+            min-width: 1200px;
             border-collapse: collapse;
             font-size: 0.875rem;
+        }
+
+        .infrastructure-table thead th {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 2px solid var(--border-color);
+            background: var(--bg-tertiary);
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            white-space: nowrap;
+        }
+
+        .infrastructure-table thead th:hover {
+            background: var(--border-hover);
+        }
+
+        .infrastructure-table thead th.sortable::after {
+            content: '⇅';
+            margin-left: 0.5rem;
+            opacity: 0.3;
+            font-size: 0.875rem;
+        }
+
+        .infrastructure-table thead th.sort-asc::after {
+            content: '↑';
+            opacity: 1;
+            color: var(--accent-color);
+        }
+
+        .infrastructure-table thead th.sort-desc::after {
+            content: '↓';
+            opacity: 1;
+            color: var(--accent-color);
         }
 
         .infrastructure-table td {
@@ -1281,7 +1327,12 @@
                         hermes: '',
                         etl: ''
                     },
-                    collapsedPanels: new Set()
+                    collapsedPanels: new Set(),
+                    sorting: {
+                        nodes: { column: 'next', direction: 'asc' },
+                        hermes: { column: 'next', direction: 'asc' },
+                        etl: { column: 'name', direction: 'asc' }
+                    }
                 },
                 originalData: {
                     nodes: null,
@@ -1604,11 +1655,43 @@
                         return;
                     }
 
+                    const sortConfig = state.ui.sorting.nodes;
                     const sorted = [...nodes].sort((a, b) => {
                         const configA = state.configs.nodes[a.node_name] || {};
                         const configB = state.configs.nodes[b.node_name] || {};
-                        return utils.getCronSortValue(configA.pruning_schedule) - 
-                               utils.getCronSortValue(configB.pruning_schedule);
+                        
+                        let comparison = 0;
+                        
+                        switch(sortConfig.column) {
+                            case 'name':
+                                comparison = a.node_name.localeCompare(b.node_name);
+                                break;
+                            case 'status':
+                                const statusOrder = { 'error': 0, 'maintenance': 1, 'syncing': 2, 'healthy': 3, 'unknown': 4 };
+                                comparison = (statusOrder[a.status] || 5) - (statusOrder[b.status] || 5);
+                                break;
+                            case 'server':
+                                comparison = a.server_host.localeCompare(b.server_host);
+                                break;
+                            case 'next':
+                                const nextA = Math.min(
+                                    configA.pruning_enabled ? utils.getCronSortValue(configA.pruning_schedule) : Infinity,
+                                    configA.snapshots_enabled ? utils.getCronSortValue(configA.snapshot_schedule) : Infinity,
+                                    configA.state_sync_enabled ? utils.getCronSortValue(configA.state_sync_schedule) : Infinity
+                                );
+                                const nextB = Math.min(
+                                    configB.pruning_enabled ? utils.getCronSortValue(configB.pruning_schedule) : Infinity,
+                                    configB.snapshots_enabled ? utils.getCronSortValue(configB.snapshot_schedule) : Infinity,
+                                    configB.state_sync_enabled ? utils.getCronSortValue(configB.state_sync_schedule) : Infinity
+                                );
+                                comparison = nextA - nextB;
+                                break;
+                            default:
+                                comparison = utils.getCronSortValue(configA.pruning_schedule) - 
+                                           utils.getCronSortValue(configB.pruning_schedule);
+                        }
+                        
+                        return sortConfig.direction === 'asc' ? comparison : -comparison;
                     });
 
                     const rows = sorted.map(node => {
@@ -1655,7 +1738,30 @@
                         </tr>`;
                     }).join('');
 
-                    dom.nodesContainer.innerHTML = `<table class="infrastructure-table"><tbody>${rows}</tbody></table>`;
+                    const sortIndicator = (col) => {
+                        if (sortConfig.column !== col) return 'sortable';
+                        return sortConfig.direction === 'asc' ? 'sort-asc' : 'sort-desc';
+                    };
+                    
+                    const header = `
+                        <thead>
+                            <tr>
+                                <th class="${sortIndicator('name')}" onclick="app.sortNodes('name')" style="width: 20%;">Node / Server</th>
+                                <th class="${sortIndicator('status')}" onclick="app.sortNodes('status')" style="width: 20%;">Status / Block</th>
+                                <th style="width: 20%;">Schedules</th>
+                                <th class="${sortIndicator('next')}" onclick="app.sortNodes('next')" style="width: 20%;">Next Run</th>
+                                <th style="width: 20%;">Actions</th>
+                            </tr>
+                        </thead>
+                    `;
+                    
+                    dom.nodesContainer.innerHTML = `
+                        <div class="table-container">
+                            <table class="infrastructure-table">
+                                ${header}
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>`;
                 },
 
                 renderHermes(instances) {
@@ -1667,11 +1773,36 @@
                         return;
                     }
 
+                    const sortConfig = state.ui.sorting.hermes;
                     const sorted = [...instances].sort((a, b) => {
                         const configA = state.configs.hermes[a.name] || {};
                         const configB = state.configs.hermes[b.name] || {};
-                        return utils.getCronSortValue(configA.restart_schedule) - 
-                               utils.getCronSortValue(configB.restart_schedule);
+                        
+                        let comparison = 0;
+                        
+                        switch(sortConfig.column) {
+                            case 'name':
+                                comparison = a.name.localeCompare(b.name);
+                                break;
+                            case 'status':
+                                const statusOrder = { 'error': 0, 'stopped': 1, 'running': 2, 'unknown': 3 };
+                                const statusA = a.status.replace(/[()]/g, '').toLowerCase();
+                                const statusB = b.status.replace(/[()]/g, '').toLowerCase();
+                                comparison = (statusOrder[statusA] || 4) - (statusOrder[statusB] || 4);
+                                break;
+                            case 'server':
+                                comparison = a.server_host.localeCompare(b.server_host);
+                                break;
+                            case 'next':
+                                comparison = utils.getCronSortValue(configA.restart_schedule) - 
+                                           utils.getCronSortValue(configB.restart_schedule);
+                                break;
+                            default:
+                                comparison = utils.getCronSortValue(configA.restart_schedule) - 
+                                           utils.getCronSortValue(configB.restart_schedule);
+                        }
+                        
+                        return sortConfig.direction === 'asc' ? comparison : -comparison;
                     });
 
                     const rows = sorted.map(hermes => {
@@ -1709,7 +1840,30 @@
                         </tr>`;
                     }).join('');
 
-                    dom.hermesContainer.innerHTML = `<table class="infrastructure-table"><tbody>${rows}</tbody></table>`;
+                    const sortIndicator = (col) => {
+                        if (sortConfig.column !== col) return 'sortable';
+                        return sortConfig.direction === 'asc' ? 'sort-asc' : 'sort-desc';
+                    };
+                    
+                    const header = `
+                        <thead>
+                            <tr>
+                                <th class="${sortIndicator('name')}" onclick="app.sortHermes('name')" style="width: 25%;">Name / Server</th>
+                                <th class="${sortIndicator('status')}" onclick="app.sortHermes('status')" style="width: 20%;">Status</th>
+                                <th style="width: 20%;">Schedule</th>
+                                <th class="${sortIndicator('next')}" onclick="app.sortHermes('next')" style="width: 15%;">Next Run</th>
+                                <th style="width: 20%;">Actions</th>
+                            </tr>
+                        </thead>
+                    `;
+                    
+                    dom.hermesContainer.innerHTML = `
+                        <div class="table-container">
+                            <table class="infrastructure-table">
+                                ${header}
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>`;
                 },
 
                 renderEtl(services) {
@@ -1721,7 +1875,29 @@
                         return;
                     }
 
-                    const rows = services.map(etl => `<tr>
+                    const sortConfig = state.ui.sorting.etl;
+                    const sorted = [...services].sort((a, b) => {
+                        let comparison = 0;
+                        
+                        switch(sortConfig.column) {
+                            case 'name':
+                                comparison = a.service_name.localeCompare(b.service_name);
+                                break;
+                            case 'status':
+                                const statusOrder = { 'error': 0, 'unknown': 1, 'healthy': 2 };
+                                comparison = (statusOrder[a.status] || 3) - (statusOrder[b.status] || 3);
+                                break;
+                            case 'server':
+                                comparison = a.server_host.localeCompare(b.server_host);
+                                break;
+                            default:
+                                comparison = a.service_name.localeCompare(b.service_name);
+                        }
+                        
+                        return sortConfig.direction === 'asc' ? comparison : -comparison;
+                    });
+
+                    const rows = sorted.map(etl => `<tr>
                         <td style="width: 25%;">
                             <div class="node-info">
                                 <div class="node-name">${utils.formatName(etl.service_name)}</div>
@@ -1757,7 +1933,30 @@
                         </td>
                     </tr>`).join('');
 
-                    dom.etlContainer.innerHTML = `<table class="infrastructure-table"><tbody>${rows}</tbody></table>`;
+                    const sortIndicator = (col) => {
+                        if (sortConfig.column !== col) return 'sortable';
+                        return sortConfig.direction === 'asc' ? 'sort-asc' : 'sort-desc';
+                    };
+                    
+                    const header = `
+                        <thead>
+                            <tr>
+                                <th class="${sortIndicator('name')}" onclick="app.sortEtl('name')" style="width: 25%;">Name / Server</th>
+                                <th class="${sortIndicator('status')}" onclick="app.sortEtl('status')" style="width: 20%;">Status</th>
+                                <th style="width: 25%;">Service URL / Response</th>
+                                <th style="width: 20%;">Last Check</th>
+                                <th style="width: 10%;">Actions</th>
+                            </tr>
+                        </thead>
+                    `;
+                    
+                    dom.etlContainer.innerHTML = `
+                        <div class="table-container">
+                            <table class="infrastructure-table">
+                                ${header}
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>`;
                 }
             };
 
@@ -2279,6 +2478,39 @@
                     
                     state.data.nodes = filtered;
                     renderers.renderNodes(filtered);
+                },
+
+                sortNodes(column) {
+                    const sorting = state.ui.sorting.nodes;
+                    if (sorting.column === column) {
+                        sorting.direction = sorting.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sorting.column = column;
+                        sorting.direction = 'asc';
+                    }
+                    renderers.renderNodes(state.data.nodes);
+                },
+
+                sortHermes(column) {
+                    const sorting = state.ui.sorting.hermes;
+                    if (sorting.column === column) {
+                        sorting.direction = sorting.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sorting.column = column;
+                        sorting.direction = 'asc';
+                    }
+                    renderers.renderHermes(state.data.hermes);
+                },
+
+                sortEtl(column) {
+                    const sorting = state.ui.sorting.etl;
+                    if (sorting.column === column) {
+                        sorting.direction = sorting.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sorting.column = column;
+                        sorting.direction = 'asc';
+                    }
+                    renderers.renderEtl(state.data.etl);
                 },
 
                 filterHermes() {
