@@ -48,7 +48,7 @@ A comprehensive Rust-based infrastructure management system for 20+ blockchain n
 
 ### Snapshot System Features
 
-- **Network-Based Naming**: Snapshots are named by network (e.g., `pirin-1_20250101_120000`) enabling cross-node recovery
+- **Network-Based Naming**: Snapshots are named by network with block height (e.g., `pirin-1_20250121_17154420` for network `pirin-1`, date `20250121`, block height `17154420`) enabling cross-node recovery
 - **Validator Safety**: Current validator state is preserved during restore to prevent consensus violations
 - **LZ4 Compression**: Fast background compression with good ratios
 - **Automatic Backups**: Scheduled network snapshot creation
@@ -444,7 +444,7 @@ cosmos-pruner prune /opt/deploy/osmosis/data --blocks=8000 --versions=8000
 ### Network-Based Snapshot System with Validator State Preservation
 
 **Features:**
-- **Network-Based Naming**: Snapshots named by network (e.g., `pirin-1_20250101_120000`) for cross-node compatibility
+- **Network-Based Naming**: Snapshots named by network with block height (e.g., `pirin-1_20250121_17154420`) for cross-node compatibility. The block height provides a precise reference point for the snapshot state.
 - **Cross-Node Recovery**: Any node on the same network can restore from shared network snapshots
 - **Validator State Preservation**: Current validator signing state is backed up and restored to prevent double-signing
 - **LZ4 Compression**: Fast background compression with good ratios
@@ -453,14 +453,15 @@ cosmos-pruner prune /opt/deploy/osmosis/data --blocks=8000 --versions=8000
 - **Long Operation Support**: 24-hour timeout for large snapshots
 
 **Network Snapshot Process:**
-1. Start maintenance tracking (24-hour timeout)
-2. Stop blockchain service via HTTP agent
-3. Create network-named directory: `{network}_{timestamp}`
-4. Copy data and wasm directories (excluding validator state)
-5. Remove any validator state files from snapshot
-6. Start blockchain service via HTTP agent
-7. Apply network retention policy if configured
-8. Background LZ4 compression
+1. Query RPC for current block height
+2. Build snapshot name: `{network}_{date}_{block_height}`
+3. Start maintenance tracking (24-hour timeout)
+4. Stop blockchain service via HTTP agent
+5. Create network-named directory with block height
+6. Copy data and wasm directories (INCLUDING validator state for compatibility)
+7. Start blockchain service via HTTP agent
+8. Apply network retention policy if configured
+9. Verify snapshot integrity
 
 **Cross-Node Restore Process:**
 1. Start maintenance tracking (24-hour timeout)
@@ -473,6 +474,19 @@ cosmos-pruner prune /opt/deploy/osmosis/data --blocks=8000 --versions=8000
 8. Start blockchain service via HTTP agent
 9. Verify service health
 10. Send completion notification
+
+**Snapshot Selection:**
+- Restore automatically finds the latest snapshot for the network
+- Sorting uses **numeric comparison on block height** (not alphabetical)
+- Ensures correct selection: block 17154420 is chosen over 02000000
+- Example: `pirin-1_20250121_17154420` vs `pirin-1_20241115_02000000`
+
+**Snapshot Retention Policy:**
+- Retention is **network-based**, not per-node (shared snapshots)
+- Configured via `snapshot_retention_count` (e.g., keep 3 most recent)
+- Cleanup uses **filesystem creation timestamps** for sorting
+- Works with both old timestamp format and new block height format
+- Also cleans up orphaned `.tar.lz4` files without directories
 
 **Auto-Restore System:**
 - Monitors node logs for trigger words (configurable patterns)
@@ -661,7 +675,8 @@ service_name = "osmosis"  # MANDATORY
 # Create snapshot on node1 - creates network-based snapshot
 curl -X POST http://localhost:8095/api/snapshots/pirin-node-1/create
 
-# Result: Creates snapshot named "pirin-1_20250115_120000"
+# Result: Creates snapshot named "pirin-1_20250121_17154420"
+# (network: pirin-1, date: 20250121, block height: 17154420)
 # This snapshot can be used by ANY node on pirin-1 network
 ```
 
