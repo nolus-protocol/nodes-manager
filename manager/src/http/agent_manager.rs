@@ -1261,6 +1261,96 @@ impl HttpAgentManager {
             "errors": errors
         }))
     }
+
+    /// Check if all dependent nodes are healthy and synced
+    #[allow(dead_code)]
+    pub async fn check_node_dependencies(
+        &self,
+        dependent_node_names: &Option<Vec<String>>,
+    ) -> Result<bool> {
+        let Some(node_names) = dependent_node_names else {
+            // No dependencies configured, return true
+            return Ok(true);
+        };
+
+        if node_names.is_empty() {
+            return Ok(true);
+        }
+
+        debug!("Checking health of {} dependent nodes", node_names.len());
+
+        for node_name in node_names {
+            let Some(node_config) = self.config.nodes.get(node_name) else {
+                warn!("Dependent node {} not found in configuration", node_name);
+                return Ok(false);
+            };
+
+            // Check if node is healthy via RPC
+            let request_body = json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": [],
+                "id": "dependency-check"
+            });
+
+            match self
+                .client
+                .post(&node_config.rpc_url)
+                .json(&request_body)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    match response.json::<Value>().await {
+                        Ok(rpc_response) => {
+                            if let Some(result) = rpc_response.get("result") {
+                                // Check if node is syncing/catching up
+                                if let Some(sync_info) = result.get("sync_info") {
+                                    if let Some(catching_up) =
+                                        sync_info.get("catching_up").and_then(|v| v.as_bool())
+                                    {
+                                        if catching_up {
+                                            debug!(
+                                                "Dependent node {} is still catching up",
+                                                node_name
+                                            );
+                                            return Ok(false);
+                                        }
+                                    }
+                                }
+                                debug!("Dependent node {} is healthy and synced", node_name);
+                            } else {
+                                debug!("Dependent node {} returned error", node_name);
+                                return Ok(false);
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to parse RPC response for {}: {}", node_name, e);
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(response) => {
+                    debug!(
+                        "Dependent node {} returned status {}",
+                        node_name,
+                        response.status()
+                    );
+                    return Ok(false);
+                }
+                Err(e) => {
+                    debug!("Failed to check dependent node {}: {}", node_name, e);
+                    return Ok(false);
+                }
+            }
+        }
+
+        info!(
+            "All {} dependent nodes are healthy and synced",
+            node_names.len()
+        );
+        Ok(true)
+    }
 }
 
 impl Clone for HttpAgentManager {

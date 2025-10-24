@@ -8,6 +8,10 @@
 //! # Services
 //!
 //! - **AlertService**: Centralized webhook-based alerting with progressive rate limiting
+//! - **MaintenanceService**: Orchestrates maintenance operations (pruning, snapshots, etc.)
+//! - **HermesService**: Manages Hermes relayer instances
+//! - **HealthService**: Health monitoring and status queries
+//! - **SnapshotService**: Snapshot creation, restoration, and management
 //!
 //! # Design Principles
 //!
@@ -16,5 +20,11 @@
 //! - Services coordinate between HTTP agents, database, and tracking systems
 
 pub mod alert_service;
+pub mod hermes_service;
+pub mod maintenance_service;
+pub mod snapshot_service;
 
 pub use alert_service::AlertService;
+pub use hermes_service::HermesService;
+pub use maintenance_service::MaintenanceService;
+pub use snapshot_service::SnapshotService;

@@ -4,6 +4,7 @@ use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
+use crate::services::{HermesService, MaintenanceService, SnapshotService};
 use crate::snapshot::SnapshotManager;
 use crate::web::{handlers, AppState};
 use anyhow::Result;
@@ -25,6 +26,9 @@ pub async fn start_web_server(
     config_manager: Arc<ConfigManager>,
     snapshot_manager: Arc<SnapshotManager>,
     operation_tracker: Arc<SimpleOperationTracker>,
+    hermes_service: Arc<HermesService>,
+    maintenance_service: Arc<MaintenanceService>,
+    snapshot_service_v2: Arc<SnapshotService>,
 ) -> Result<()> {
     let state = AppState::new(
         config.clone(),
@@ -34,6 +38,9 @@ pub async fn start_web_server(
         config_manager,
         snapshot_manager,
         operation_tracker,
+        hermes_service,
+        maintenance_service,
+        snapshot_service_v2,
     );
 
     if state.config.host == "0.0.0.0" && state.config.port == 8095 {

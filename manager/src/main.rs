@@ -25,7 +25,7 @@ use http::HttpAgentManager;
 use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
-use services::AlertService;
+use services::{AlertService, HermesService, MaintenanceService, SnapshotService};
 use snapshot::SnapshotManager;
 
 use web::start_web_server;
@@ -119,22 +119,6 @@ async fn main() -> Result<()> {
     ));
     info!("Health monitor initialized with centralized alerting and auto-restore capability");
 
-    // Initialize scheduler
-    let scheduler = Arc::new(
-        MaintenanceScheduler::new(
-            database.clone(),
-            http_manager.clone(),
-            config.clone(),
-            snapshot_manager.clone(),
-        )
-        .await?,
-    );
-    info!("Maintenance scheduler initialized");
-
-    // Start scheduler
-    scheduler.start().await?;
-    info!("Scheduler started");
-
     // Start periodic health monitoring with configurable interval (including ETL services)
     let health_monitor_clone = health_monitor.clone();
     let alert_service_clone = alert_service.clone();
@@ -224,6 +208,43 @@ async fn main() -> Result<()> {
         error!("alarm_webhook_url = \"https://n8n-hooks.kostovster.io/webhook/nodes\"");
     }
 
+    // Initialize business logic services with AlertService integration
+    let hermes_service = Arc::new(HermesService::new(
+        config.clone(),
+        http_manager.clone(),
+        alert_service.clone(),
+    ));
+    info!("HermesService initialized with alert integration");
+
+    let maintenance_service = Arc::new(MaintenanceService::new(
+        config.clone(),
+        database.clone(),
+        http_manager.clone(),
+        alert_service.clone(),
+    ));
+    info!("MaintenanceService initialized with alert integration");
+
+    let snapshot_service_v2 = Arc::new(SnapshotService::new(
+        config.clone(),
+        snapshot_manager.clone(),
+    ));
+    info!("SnapshotService initialized");
+
+    // Initialize and start scheduler with service layer integration
+    let scheduler = Arc::new(
+        MaintenanceScheduler::new(
+            config.clone(),
+            maintenance_service.clone(),
+            hermes_service.clone(),
+        )
+        .await?,
+    );
+    info!("Maintenance scheduler initialized with service layer");
+
+    // Start scheduler
+    scheduler.start().await?;
+    info!("Scheduler started with AlertService integration");
+
     // Start web server
     start_web_server(
         config,
@@ -233,6 +254,9 @@ async fn main() -> Result<()> {
         Arc::new(config_manager),
         snapshot_manager,
         operation_tracker,
+        hermes_service,
+        maintenance_service,
+        snapshot_service_v2,
     )
     .await?;
 

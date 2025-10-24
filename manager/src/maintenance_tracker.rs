@@ -171,6 +171,93 @@ impl MaintenanceTracker {
 
         cleaned_count as u32
     }
+
+    /// Get the status of a specific node's maintenance
+    #[allow(dead_code)]
+    pub async fn get_maintenance_status(&self, node_name: &str) -> Option<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        active.get(node_name).cloned()
+    }
+
+    /// Get all active maintenance windows
+    #[allow(dead_code)]
+    pub async fn get_all_in_maintenance(&self) -> Vec<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        active.values().cloned().collect()
+    }
+
+    /// Get overdue maintenance operations
+    #[allow(dead_code)]
+    pub async fn get_overdue_maintenance(&self) -> Vec<MaintenanceWindow> {
+        let active = self.active_maintenance.read().await;
+        let now = Utc::now();
+
+        active
+            .values()
+            .filter(|maintenance| {
+                let elapsed = now.signed_duration_since(maintenance.started_at);
+                elapsed.num_minutes() > (maintenance.estimated_duration_minutes as i64)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Get maintenance statistics
+    #[allow(dead_code)]
+    pub async fn get_maintenance_stats(&self) -> MaintenanceStats {
+        let active = self.active_maintenance.read().await;
+        let now = Utc::now();
+
+        let total_active = active.len();
+        let mut longest_running_minutes = 0u32;
+
+        for maintenance in active.values() {
+            let elapsed = now.signed_duration_since(maintenance.started_at);
+            let elapsed_minutes = elapsed.num_minutes() as u32;
+            if elapsed_minutes > longest_running_minutes {
+                longest_running_minutes = elapsed_minutes;
+            }
+        }
+
+        MaintenanceStats {
+            total_active,
+            total_completed_today: 0,    // Would need database tracking
+            average_duration_minutes: 0, // Would need database tracking
+            longest_running_minutes,
+        }
+    }
+
+    /// Get comprehensive maintenance report
+    #[allow(dead_code)]
+    pub async fn get_maintenance_report(&self) -> MaintenanceReport {
+        let active_operations = self.get_all_in_maintenance().await;
+        let overdue_operations = self.get_overdue_maintenance().await;
+        let stats = self.get_maintenance_stats().await;
+
+        MaintenanceReport {
+            active_operations,
+            overdue_operations,
+            stats,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Emergency clear all maintenance windows
+    #[allow(dead_code)]
+    pub async fn emergency_clear_all_maintenance(&self) -> u32 {
+        let mut active = self.active_maintenance.write().await;
+        let count = active.len() as u32;
+
+        if count > 0 {
+            warn!(
+                "EMERGENCY: Clearing all {} active maintenance windows",
+                count
+            );
+            active.clear();
+        }
+
+        count
+    }
 }
 
 impl Clone for MaintenanceTracker {
