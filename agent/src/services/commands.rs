@@ -260,7 +260,6 @@ pub async fn copy_snapshot_directories_mandatory(
 
     // Copy data directory first
     let data_source = format!("{}/data", snapshot_dir);
-    let data_target = format!("{}/data", target_dir);
 
     let data_exists_cmd = format!("test -d '{}'", data_source);
     execute_shell_command(&data_exists_cmd).await.map_err(|_| {
@@ -270,11 +269,11 @@ pub async fn copy_snapshot_directories_mandatory(
         )
     })?;
 
-    copy_directory(&data_source, &data_target, "Data restore").await?;
+    // Copy to target_dir (not target_dir/data) - cp -r will create the data subdirectory
+    copy_directory(&data_source, target_dir, "Data restore").await?;
 
     // Then copy wasm directory
     let wasm_source = format!("{}/wasm", snapshot_dir);
-    let wasm_target = format!("{}/wasm", target_dir);
 
     let wasm_exists_cmd = format!("test -d '{}'", wasm_source);
     execute_shell_command(&wasm_exists_cmd).await.map_err(|_| {
@@ -284,7 +283,8 @@ pub async fn copy_snapshot_directories_mandatory(
         )
     })?;
 
-    copy_directory(&wasm_source, &wasm_target, "Wasm restore").await?;
+    // Copy to target_dir (not target_dir/wasm) - cp -r will create the wasm subdirectory
+    copy_directory(&wasm_source, target_dir, "Wasm restore").await?;
 
     info!("Copy completed - both data and wasm directories copied successfully");
     Ok(())
