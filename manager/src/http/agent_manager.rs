@@ -672,15 +672,9 @@ impl HttpAgentManager {
             "log_path": node_config.log_path,
         });
 
-        let result = self
+        let _result = self
             .execute_operation(&node_config.server_host, "/state-sync/execute", payload)
             .await?;
-
-        if let Some(job_id) = result.get("job_id").and_then(|v| v.as_str()) {
-            info!("State sync job started with ID: {}", job_id);
-            self.poll_for_completion(&node_config.server_host, job_id)
-                .await?;
-        }
 
         info!("✓ State sync completed successfully for {}", node_name);
         Ok(())
