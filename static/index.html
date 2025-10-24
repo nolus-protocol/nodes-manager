@@ -1598,6 +1598,13 @@
                             title: 'Execute pruning operation - stops node, runs cosmos-pruner, restarts node',
                             onclick: `app.executeNodePruning('${nodeName}')`
                         },
+                        restart: {
+                            condition: true,
+                            class: 'btn-maintenance',
+                            icon: this.icons.restart,
+                            title: 'Restart node service - stops and starts the blockchain node',
+                            onclick: `app.executeNodeRestart('${nodeName}')`
+                        },
                         snapshot: {
                             condition: config.snapshots_enabled,
                             class: 'btn-snapshot',
@@ -2242,6 +2249,35 @@
                         }
                     } catch (error) {
                         ui.showAlert(`Failed to start pruning: ${error.message}`, 'error');
+                    }
+                },
+
+                async executeNodeRestart(nodeName) {
+                    const name = utils.formatName(nodeName);
+                    if (!ui.confirm('Restart Node Confirmation',
+                        `Restart ${name}?\n\n` +
+                        'This will:\n' +
+                        '- Stop the node service\n' +
+                        '- Start the node service\n' +
+                        '- Node will be briefly unavailable\n' +
+                        '- Usually takes 1-2 minutes\n\n' +
+                        'Proceed with restart?')) return;
+
+                    try {
+                        ui.showAlert(`Restarting ${name}...`, 'warning');
+                        const response = await fetch(`/api/maintenance/nodes/${nodeName}/restart`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            ui.showAlert(`${name} restarted successfully`, 'success');
+                            await this.loadAllData();
+                        } else {
+                            throw new Error(data.message || 'Restart failed');
+                        }
+                    } catch (error) {
+                        ui.showAlert(`Failed to restart node: ${error.message}`, 'error');
                     }
                 },
 

@@ -14,10 +14,7 @@ pub struct SnapshotService {
 }
 
 impl SnapshotService {
-    pub fn new(
-        config: Arc<Config>,
-        snapshot_manager: Arc<SnapshotManager>,
-    ) -> Self {
+    pub fn new(config: Arc<Config>, snapshot_manager: Arc<SnapshotManager>) -> Self {
         Self {
             config,
             snapshot_manager,

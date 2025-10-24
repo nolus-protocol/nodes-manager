@@ -23,8 +23,10 @@ pub mod alert_service;
 pub mod hermes_service;
 pub mod maintenance_service;
 pub mod snapshot_service;
+pub mod state_sync_service;
 
 pub use alert_service::AlertService;
 pub use hermes_service::HermesService;
 pub use maintenance_service::MaintenanceService;
 pub use snapshot_service::SnapshotService;
+pub use state_sync_service::StateSyncService;

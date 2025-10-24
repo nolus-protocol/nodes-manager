@@ -121,7 +121,10 @@ impl MaintenanceScheduler {
                 {
                     Ok(_) => {
                         scheduled_count += 1;
-                        info!("✓ Scheduled Hermes restart for {}: {}", hermes_name, schedule);
+                        info!(
+                            "✓ Scheduled Hermes restart for {}: {}",
+                            hermes_name, schedule
+                        );
                     }
                     Err(e) => {
                         error!(
@@ -138,7 +141,10 @@ impl MaintenanceScheduler {
                 .start()
                 .await
                 .map_err(|e| anyhow!("Failed to start scheduler: {}", e))?;
-            info!("✅ Scheduler started with {} scheduled jobs", scheduled_count);
+            info!(
+                "✅ Scheduler started with {} scheduled jobs",
+                scheduled_count
+            );
         } else {
             warn!("⚠️ No jobs scheduled. Scheduler not started.");
         }

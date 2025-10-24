@@ -503,7 +503,10 @@ pub async fn create_snapshot(
         .await
     {
         Ok(operation_id) => {
-            info!("Snapshot creation started for {}: {}", node_name, operation_id);
+            info!(
+                "Snapshot creation started for {}: {}",
+                node_name, operation_id
+            );
             Ok(Json(ApiResponse::success(json!({
                 "message": format!("Snapshot creation started for node {}", node_name),
                 "operation_id": operation_id,
@@ -547,9 +550,16 @@ pub async fn delete_snapshot(
         node_name, filename
     );
 
-    match state.snapshot_service.delete_snapshot(&node_name, &filename).await {
+    match state
+        .snapshot_service
+        .delete_snapshot(&node_name, &filename)
+        .await
+    {
         Ok(_) => {
-            info!("Snapshot {} deleted successfully for {}", filename, node_name);
+            info!(
+                "Snapshot {} deleted successfully for {}",
+                filename, node_name
+            );
             Ok(Json(ApiResponse::success(json!({
                 "message": format!("Snapshot {} deleted successfully", filename),
                 "node_name": node_name,
@@ -558,7 +568,10 @@ pub async fn delete_snapshot(
             }))))
         }
         Err(e) => {
-            error!("Failed to delete snapshot {} for {}: {}", filename, node_name, e);
+            error!(
+                "Failed to delete snapshot {} for {}: {}",
+                filename, node_name, e
+            );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiResponse::error(e.to_string())),
@@ -625,7 +638,11 @@ pub async fn execute_manual_restore_from_latest(
         node_name
     );
 
-    match state.snapshot_service.restore_from_snapshot(&node_name).await {
+    match state
+        .snapshot_service
+        .restore_from_snapshot(&node_name)
+        .await
+    {
         Ok(snapshot_info) => {
             info!(
                 "Manual restore completed successfully for {}: {}",
@@ -655,27 +672,12 @@ pub async fn execute_manual_state_sync(
 ) -> ApiResult<Value> {
     info!("Manual state sync requested for: {}", node_name);
 
-    // Check if state sync is enabled for this node
-    let node_config = state.config.nodes.get(&node_name);
-    if let Some(config) = node_config {
-        if !config.state_sync_enabled.unwrap_or(false) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error(format!(
-                    "State sync is not enabled for node {}",
-                    node_name
-                ))),
-            ));
-        }
-    } else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiResponse::error(format!("Node {} not found", node_name))),
-        ));
-    }
-
-    // Execute state sync via low-level HTTP agent manager
-    match state.http_agent_manager.execute_state_sync(&node_name).await {
+    // Execute state sync via StateSyncService
+    match state
+        .state_sync_service
+        .execute_state_sync(&node_name)
+        .await
+    {
         Ok(_) => {
             info!("State sync completed successfully for {}", node_name);
             Ok(Json(ApiResponse::success(json!({
@@ -771,7 +773,11 @@ pub async fn cancel_operation(
 ) -> ApiResult<Value> {
     info!("Operation cancellation requested for: {}", target_name);
 
-    match state.http_agent_manager.cancel_operation(&target_name).await {
+    match state
+        .http_agent_manager
+        .cancel_operation(&target_name)
+        .await
+    {
         Ok(_) => {
             info!("Operation cancelled successfully for {}", target_name);
             Ok(Json(ApiResponse::success(json!({

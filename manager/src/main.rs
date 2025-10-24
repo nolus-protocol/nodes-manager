@@ -25,7 +25,9 @@ use http::HttpAgentManager;
 use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
-use services::{AlertService, HermesService, MaintenanceService, SnapshotService};
+use services::{
+    AlertService, HermesService, MaintenanceService, SnapshotService, StateSyncService,
+};
 use snapshot::SnapshotManager;
 
 use web::start_web_server;
@@ -230,6 +232,13 @@ async fn main() -> Result<()> {
     ));
     info!("SnapshotService initialized");
 
+    let state_sync_service = Arc::new(StateSyncService::new(
+        config.clone(),
+        http_manager.clone(),
+        alert_service.clone(),
+    ));
+    info!("StateSyncService initialized with alert integration");
+
     // Initialize and start scheduler with service layer integration
     let scheduler = Arc::new(
         MaintenanceScheduler::new(
@@ -257,6 +266,7 @@ async fn main() -> Result<()> {
         hermes_service,
         maintenance_service,
         snapshot_service_v2,
+        state_sync_service,
     )
     .await?;
 
