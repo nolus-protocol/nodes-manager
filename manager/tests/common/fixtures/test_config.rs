@@ -104,16 +104,12 @@ impl MainConfigBuilder {
     fn to_toml(&self) -> String {
         let webhook = self.alert_webhook_url.as_deref().unwrap_or("");
         format!(
-            r#"
-[server]
+            r#"# Test configuration
 host = "{}"
 port = {}
-
-[health]
 check_interval_seconds = {}
-
-[alerts]
-webhook_url = "{}"
+rpc_timeout_seconds = 60
+alarm_webhook_url = "{}"
 "#,
             self.host, self.port, self.health_check_interval_seconds, webhook
         )
@@ -177,11 +173,11 @@ impl ServerConfigBuilder {
 
     fn to_toml(&self) -> String {
         let mut toml = format!(
-            r#"
-[server]
+            r#"[server]
 host = "{}"
 agent_port = {}
 api_key = "{}"
+
 "#,
             self.host, self.agent_port, self.api_key
         );
@@ -232,15 +228,17 @@ impl NodeConfigBuilder {
 
     fn to_toml(&self) -> String {
         format!(
-            r#"
-[[nodes]]
-name = "{}"
+            r#"[nodes.{}]
 rpc_url = "{}"
+server_host = "test-server"
+service_name = "{}"
 network = "{}"
-enable_pruning = {}
-enable_snapshots = {}
+enabled = true
+pruning_enabled = {}
+snapshots_enabled = {}
+
 "#,
-            self.name, self.rpc_url, self.network, self.enable_pruning, self.enable_snapshots
+            self.name, self.rpc_url, self.name, self.network, self.enable_pruning, self.enable_snapshots
         )
     }
 }
