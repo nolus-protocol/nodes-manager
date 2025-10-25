@@ -4,6 +4,10 @@ name = "agent"
 version = "1.5.0"
 edition = "2021"
 
+[lib]
+name = "agent"
+path = "src/lib.rs"
+
 [[bin]]
 name = "agent"
 path = "src/main.rs"
