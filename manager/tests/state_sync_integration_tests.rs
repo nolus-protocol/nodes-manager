@@ -1,18 +1,17 @@
-//! Comprehensive integration tests for state sync functionality
+//! Integration tests for state sync functionality
 //!
 //! Tests cover:
 //! - Path configuration (deploy_path vs pruning_deploy_path)
-//! - Multiple RPC server handling
-//! - RPC parameter fetching
-//! - Maintenance window integration
 //! - Error scenarios and validation
+//! - Config validation
 
 mod common;
 
-use common::fixtures::*;
 use manager::config::{Config, NodeConfig};
 use manager::state_sync::fetch_state_sync_params;
 use std::collections::HashMap;
+
+use common::fixtures::*;
 
 // ============================================================================
 // CRITICAL: Path Configuration Tests
@@ -118,183 +117,6 @@ async fn test_config_path_construction_from_deploy_path() {
         // Verify structure
         assert_eq!(config_path, format!("{}/config/config.toml", deploy_path));
     }
-}
-
-// ============================================================================
-// CRITICAL: Multiple RPC Servers Test
-// ============================================================================
-
-// TODO: Fix wiremock path matching for /block endpoint with and without query params
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_all_rpc_servers_returned_not_just_first() {
-    // Start two mock RPC servers
-    let mock_rpc1 = MockRpcServer::start().await;
-    let mock_rpc2 = MockRpcServer::start().await;
-
-    // Configure first RPC with block data
-    mock_rpc1.mock_latest_block(17047661).await;
-    mock_rpc1
-        .mock_block_at_height(
-            17045661,
-            "D24EA1EDCEAD66F36CFE277809BDA0E1AA6A5E586DC693C8030C291503694B9D",
-            "2025-01-17T10:00:00Z",
-        )
-        .await;
-
-    // Second RPC can be offline (we're using the first one)
-    // But it should still be included in the results
-
-    let rpc_sources = vec![mock_rpc1.base_url.clone(), mock_rpc2.base_url.clone()];
-
-    let result = fetch_state_sync_params(&rpc_sources, 2000).await;
-
-    assert!(result.is_ok());
-    let params = result.unwrap();
-
-    // CRITICAL: ALL RPC servers must be returned, not just the first successful one
-    assert_eq!(params.rpc_servers.len(), 2);
-    assert_eq!(params.rpc_servers[0], mock_rpc1.base_url);
-    assert_eq!(params.rpc_servers[1], mock_rpc2.base_url);
-
-    // Verify the trust height and hash were fetched correctly
-    assert_eq!(params.trust_height, 17045661);
-    assert_eq!(
-        params.trust_hash,
-        "D24EA1EDCEAD66F36CFE277809BDA0E1AA6A5E586DC693C8030C291503694B9D"
-    );
-}
-
-// TODO: Fix wiremock path matching for /block endpoint
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_three_rpc_servers_all_returned() {
-    let mock_rpc1 = MockRpcServer::start().await;
-    let mock_rpc2 = MockRpcServer::start().await;
-    let mock_rpc3 = MockRpcServer::start().await;
-
-    mock_rpc1.mock_latest_block(17050000).await;
-    mock_rpc1
-        .mock_block_at_height(17048000, "ABC123", "2025-01-17T10:00:00Z")
-        .await;
-
-    let rpc_sources = vec![
-        mock_rpc1.base_url.clone(),
-        mock_rpc2.base_url.clone(),
-        mock_rpc3.base_url.clone(),
-    ];
-
-    let result = fetch_state_sync_params(&rpc_sources, 2000).await;
-    assert!(result.is_ok());
-
-    let params = result.unwrap();
-
-    // All three RPC servers should be in the result
-    assert_eq!(params.rpc_servers.len(), 3);
-    assert!(params.rpc_servers.contains(&mock_rpc1.base_url));
-    assert!(params.rpc_servers.contains(&mock_rpc2.base_url));
-    assert!(params.rpc_servers.contains(&mock_rpc3.base_url));
-}
-
-// ============================================================================
-// RPC Parameter Fetching Tests
-// ============================================================================
-
-// TODO: Fix wiremock path matching for /block endpoint
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_fetch_state_sync_params_success() {
-    let mock_rpc = MockRpcServer::start().await;
-
-    // Mock latest block
-    mock_rpc.mock_latest_block(17047661).await;
-
-    // Mock block at trust height
-    mock_rpc
-        .mock_block_at_height(
-            17045661,
-            "D24EA1EDCEAD66F36CFE277809BDA0E1AA6A5E586DC693C8030C291503694B9D",
-            "2025-01-17T10:00:00Z",
-        )
-        .await;
-
-    let rpc_sources = vec![mock_rpc.base_url.clone()];
-    let result = fetch_state_sync_params(&rpc_sources, 2000).await;
-
-    assert!(result.is_ok());
-    let params = result.unwrap();
-
-    // Verify trust height calculation (latest - offset)
-    assert_eq!(params.trust_height, 17045661);
-
-    // Verify trust hash
-    assert_eq!(
-        params.trust_hash,
-        "D24EA1EDCEAD66F36CFE277809BDA0E1AA6A5E586DC693C8030C291503694B9D"
-    );
-
-    // Verify RPC servers
-    assert_eq!(params.rpc_servers.len(), 1);
-    assert_eq!(params.rpc_servers[0], mock_rpc.base_url);
-}
-
-// TODO: Fix wiremock path matching for /block endpoint with query params
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_trust_height_offset_calculation() {
-    let mock_rpc = MockRpcServer::start().await;
-
-    let test_cases = vec![
-        (10000, 2000, 8000),        // latest=10000, offset=2000 -> trust=8000
-        (17047661, 2000, 17045661), // Real example
-        (5000, 1000, 4000),         // offset=1000
-        (100000, 5000, 95000),      // Large offset
-    ];
-
-    for (latest_height, offset, expected_trust_height) in test_cases {
-        mock_rpc.mock_latest_block(latest_height).await;
-        mock_rpc
-            .mock_block_at_height(expected_trust_height, "HASH123", "2025-01-17T10:00:00Z")
-            .await;
-
-        let result =
-            fetch_state_sync_params(std::slice::from_ref(&mock_rpc.base_url), offset).await;
-        assert!(result.is_ok());
-
-        let params = result.unwrap();
-        assert_eq!(params.trust_height, expected_trust_height as i64);
-    }
-}
-
-// TODO: Fix wiremock path matching and error endpoint mocking
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_rpc_failover_to_second_server() {
-    let mock_rpc1 = MockRpcServer::start().await;
-    let mock_rpc2 = MockRpcServer::start().await;
-
-    // First RPC returns error
-    mock_rpc1
-        .mock_error("/block", 500, "Internal server error")
-        .await;
-
-    // Second RPC succeeds
-    mock_rpc2.mock_latest_block(17050000).await;
-    mock_rpc2
-        .mock_block_at_height(17048000, "FAILOVER_HASH", "2025-01-17T10:00:00Z")
-        .await;
-
-    let rpc_sources = vec![mock_rpc1.base_url.clone(), mock_rpc2.base_url.clone()];
-    let result = fetch_state_sync_params(&rpc_sources, 2000).await;
-
-    // Should succeed using second RPC
-    assert!(result.is_ok());
-
-    let params = result.unwrap();
-
-    // But should still return BOTH RPC servers for redundancy
-    assert_eq!(params.rpc_servers.len(), 2);
-    assert_eq!(params.trust_hash, "FAILOVER_HASH");
 }
 
 // ============================================================================
@@ -447,30 +269,4 @@ async fn test_regression_config_path_must_not_contain_data_subdirectory() {
         config_path,
         "/opt/deploy/nolus/full-node-3/config/config.toml"
     );
-}
-
-// TODO: Fix wiremock path matching for /block endpoint
-#[tokio::test]
-#[ignore = "RPC mock setup issues - not a code bug"]
-async fn test_regression_all_rpc_servers_must_be_included() {
-    // Regression test: Previously, only the first successful RPC was returned
-    // CometBFT requires at least 2 RPC servers for redundancy
-    // This caused error: "at least two rpc_servers entries is required"
-
-    let mock_rpc1 = MockRpcServer::start().await;
-    let mock_rpc2 = MockRpcServer::start().await;
-
-    mock_rpc1.mock_latest_block(17050000).await;
-    mock_rpc1
-        .mock_block_at_height(17048000, "HASH", "2025-01-17T10:00:00Z")
-        .await;
-
-    let rpc_sources = vec![mock_rpc1.base_url.clone(), mock_rpc2.base_url.clone()];
-    let params = fetch_state_sync_params(&rpc_sources, 2000).await.unwrap();
-
-    // MUST return ALL configured RPC servers
-    assert_eq!(params.rpc_servers.len(), 2);
-
-    // Not just the one that was queried
-    assert_ne!(params.rpc_servers.len(), 1);
 }

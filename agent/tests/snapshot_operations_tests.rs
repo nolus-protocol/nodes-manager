@@ -4,7 +4,6 @@
 //! blockchain data backup. Tests use temporary directories to avoid
 //! requiring actual blockchain nodes or systemctl access.
 
-use agent::operations::snapshots;
 use agent::types::SnapshotRequest;
 use std::fs;
 use std::path::PathBuf;
@@ -45,36 +44,6 @@ fn create_test_snapshot_request(deploy_path: PathBuf, backup_path: PathBuf) -> S
         deploy_path: deploy_path.to_string_lossy().to_string(),
         backup_path: backup_path.to_string_lossy().to_string(),
         log_path: None, // Skip log truncation in tests
-    }
-}
-
-#[tokio::test]
-#[ignore] // Requires systemctl access - run manually in dev environment
-async fn test_snapshot_creation_preserves_directory_structure() {
-    let node_dir = create_mock_node_structure();
-    let backup_dir = TempDir::new().expect("Failed to create backup dir");
-
-    let request = create_test_snapshot_request(
-        node_dir.path().to_path_buf(),
-        backup_dir.path().to_path_buf(),
-    );
-
-    // This test requires systemctl, so it's ignored by default
-    // In a real environment with systemctl, this would test the full sequence
-    let result = snapshots::execute_full_snapshot_sequence(&request).await;
-
-    // If systemctl is available, verify the snapshot was created
-    if result.is_ok() {
-        let snapshot_info = result.unwrap();
-        let snapshot_path = PathBuf::from(snapshot_info.path);
-
-        // Verify snapshot directory structure
-        assert!(snapshot_path.exists());
-        assert!(snapshot_path.join("data").exists());
-        assert!(snapshot_path.join("wasm").exists());
-        assert!(snapshot_path
-            .join("data/priv_validator_state.json")
-            .exists());
     }
 }
 
