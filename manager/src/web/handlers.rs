@@ -638,31 +638,29 @@ pub async fn execute_manual_restore_from_latest(
         node_name
     );
 
-    match state
-        .snapshot_service
-        .restore_from_snapshot(&node_name)
-        .await
-    {
-        Ok(snapshot_info) => {
-            info!(
-                "Manual restore completed successfully for {}: {}",
-                node_name, snapshot_info.filename
-            );
-            Ok(Json(ApiResponse::success(json!({
-                "message": format!("Restore from latest snapshot completed for node {}", node_name),
-                "node_name": node_name,
-                "snapshot_filename": snapshot_info.filename,
-                "status": "completed"
-            }))))
+    // Spawn the operation in a background task to avoid HTTP timeout issues
+    let node_name_clone = node_name.clone();
+    let snapshot_service = state.snapshot_service.clone();
+    tokio::spawn(async move {
+        match snapshot_service.restore_from_snapshot(&node_name_clone).await {
+            Ok(snapshot_info) => {
+                info!(
+                    "Manual restore completed successfully for {}: {}",
+                    node_name_clone, snapshot_info.filename
+                );
+            }
+            Err(e) => {
+                error!("Failed to restore from snapshot for {}: {}", node_name_clone, e);
+            }
         }
-        Err(e) => {
-            error!("Failed to restore from snapshot for {}: {}", node_name, e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(e.to_string())),
-            ))
-        }
-    }
+    });
+
+    // Return immediately to client
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("Restore operation started for node {}. This will run in the background.", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
 // === STATE SYNC ENDPOINT ===
@@ -672,28 +670,26 @@ pub async fn execute_manual_state_sync(
 ) -> ApiResult<Value> {
     info!("Manual state sync requested for: {}", node_name);
 
-    // Execute state sync via StateSyncService
-    match state
-        .state_sync_service
-        .execute_state_sync(&node_name)
-        .await
-    {
-        Ok(_) => {
-            info!("State sync completed successfully for {}", node_name);
-            Ok(Json(ApiResponse::success(json!({
-                "message": format!("State sync completed for node {}", node_name),
-                "node_name": node_name,
-                "status": "completed"
-            }))))
+    // Spawn the operation in a background task to avoid HTTP timeout issues
+    let node_name_clone = node_name.clone();
+    let state_sync_service = state.state_sync_service.clone();
+    tokio::spawn(async move {
+        match state_sync_service.execute_state_sync(&node_name_clone).await {
+            Ok(_) => {
+                info!("State sync completed successfully for {}", node_name_clone);
+            }
+            Err(e) => {
+                error!("State sync failed for {}: {}", node_name_clone, e);
+            }
         }
-        Err(e) => {
-            error!("State sync failed for {}: {}", node_name, e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(e.to_string())),
-            ))
-        }
-    }
+    });
+
+    // Return immediately to client
+    Ok(Json(ApiResponse::success(json!({
+        "message": format!("State sync operation started for node {}. This will run in the background.", node_name),
+        "node_name": node_name,
+        "status": "started"
+    }))))
 }
 
 pub async fn check_auto_restore_triggers(
