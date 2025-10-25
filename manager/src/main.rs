@@ -26,7 +26,8 @@ use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
 use services::{
-    AlertService, HermesService, MaintenanceService, OperationExecutor, SnapshotService, StateSyncService,
+    AlertService, HermesService, MaintenanceService, OperationExecutor, SnapshotService,
+    StateSyncService,
 };
 use snapshot::SnapshotManager;
 

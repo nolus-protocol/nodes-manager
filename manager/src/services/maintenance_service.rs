@@ -19,11 +19,7 @@ impl MaintenanceService {
         alert_service: Arc<crate::services::AlertService>,
     ) -> Self {
         // Create OperationExecutor for delegating all operations
-        let operation_executor = Arc::new(OperationExecutor::new(
-            config,
-            database,
-            alert_service,
-        ));
+        let operation_executor = Arc::new(OperationExecutor::new(config, database, alert_service));
 
         Self {
             http_manager,
@@ -51,9 +47,10 @@ impl MaintenanceService {
                 async move {
                     match op_type.as_str() {
                         "pruning" => http_manager.execute_node_pruning(&target_name).await,
-                        "snapshot_creation" => {
-                            http_manager.create_node_snapshot(&target_name).await.map(|_| ())
-                        }
+                        "snapshot_creation" => http_manager
+                            .create_node_snapshot(&target_name)
+                            .await
+                            .map(|_| ()),
                         "node_restart" => http_manager.restart_node(&target_name).await,
                         _ => Err(anyhow::anyhow!("Unknown operation type: {}", op_type)),
                     }

@@ -17,7 +17,9 @@ use tokio::time::sleep;
 /// Helper to create a test OperationExecutor with all dependencies
 async fn setup_test_executor() -> (Arc<OperationExecutor>, Arc<Database>, Arc<AlertService>) {
     // Create test database
-    let db = Database::new(":memory:").await.expect("Failed to create test database");
+    let db = Database::new(":memory:")
+        .await
+        .expect("Failed to create test database");
     let database = Arc::new(db);
 
     // Create test config
@@ -104,7 +106,9 @@ async fn test_operation_failure_recorded_correctly() {
     let op_id = executor
         .execute_async("failing_operation", "test-node-1", || async {
             sleep(Duration::from_millis(100)).await;
-            Err(anyhow::anyhow!("Test error: operation failed intentionally"))
+            Err(anyhow::anyhow!(
+                "Test error: operation failed intentionally"
+            ))
         })
         .await
         .expect("Operation should start successfully");

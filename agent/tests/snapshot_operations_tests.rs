@@ -18,7 +18,7 @@ fn create_mock_node_structure() -> TempDir {
     // Create data directory with mock blockchain data
     let data_dir = deploy_path.join("data");
     fs::create_dir_all(&data_dir).expect("Failed to create data dir");
-    
+
     // Create mock blockchain files
     fs::write(data_dir.join("application.db"), b"mock blockchain data").unwrap();
     fs::write(data_dir.join("blockstore.db"), b"mock blockstore").unwrap();
@@ -37,10 +37,7 @@ fn create_mock_node_structure() -> TempDir {
 }
 
 /// Helper to create snapshot request for testing
-fn create_test_snapshot_request(
-    deploy_path: PathBuf,
-    backup_path: PathBuf,
-) -> SnapshotRequest {
+fn create_test_snapshot_request(deploy_path: PathBuf, backup_path: PathBuf) -> SnapshotRequest {
     SnapshotRequest {
         node_name: "test-node".to_string(),
         snapshot_name: "test-network_20250125_12345".to_string(),
@@ -104,7 +101,11 @@ fn test_snapshot_name_format() {
     let snapshot_name = "osmosis-1_20250125_17154420";
 
     let parts: Vec<&str> = snapshot_name.split('_').collect();
-    assert_eq!(parts.len(), 3, "Should have network, date, and block height");
+    assert_eq!(
+        parts.len(),
+        3,
+        "Should have network, date, and block height"
+    );
 
     let network = parts[0];
     let date = parts[1];
@@ -127,9 +128,7 @@ fn test_mock_node_structure_creation() {
     assert!(deploy_path.join("data").exists());
     assert!(deploy_path.join("data/application.db").exists());
     assert!(deploy_path.join("data/blockstore.db").exists());
-    assert!(deploy_path
-        .join("data/priv_validator_state.json")
-        .exists());
+    assert!(deploy_path.join("data/priv_validator_state.json").exists());
 
     // Verify wasm directory structure
     assert!(deploy_path.join("wasm").exists());

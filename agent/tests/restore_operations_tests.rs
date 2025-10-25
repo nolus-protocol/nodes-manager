@@ -17,7 +17,7 @@ fn create_mock_snapshot(snapshot_dir: &PathBuf) {
     fs::create_dir_all(&data_dir).expect("Failed to create data dir");
     fs::write(data_dir.join("application.db"), b"snapshot blockchain data").unwrap();
     fs::write(data_dir.join("blockstore.db"), b"snapshot blockstore").unwrap();
-    
+
     // Snapshot's validator state (this should be overwritten during restore)
     fs::write(
         data_dir.join("priv_validator_state.json"),
@@ -40,7 +40,7 @@ fn create_mock_running_node(deploy_path: &PathBuf) {
     fs::create_dir_all(&data_dir).expect("Failed to create data dir");
     fs::write(data_dir.join("application.db"), b"current blockchain data").unwrap();
     fs::write(data_dir.join("blockstore.db"), b"current blockstore").unwrap();
-    
+
     // Current validator state (THIS should be preserved during restore)
     fs::write(
         data_dir.join("priv_validator_state.json"),
@@ -114,16 +114,12 @@ fn test_validator_state_preservation_concept() {
     create_mock_snapshot(&snapshot_dir.path().to_path_buf());
 
     // Read current node's validator state (what should be preserved)
-    let current_validator_path = deploy_dir
-        .path()
-        .join("data/priv_validator_state.json");
+    let current_validator_path = deploy_dir.path().join("data/priv_validator_state.json");
     let current_state = fs::read_to_string(&current_validator_path).unwrap();
     let current_parsed: serde_json::Value = serde_json::from_str(&current_state).unwrap();
 
     // Read snapshot's validator state (what will be initially copied)
-    let snapshot_validator_path = snapshot_dir
-        .path()
-        .join("data/priv_validator_state.json");
+    let snapshot_validator_path = snapshot_dir.path().join("data/priv_validator_state.json");
     let snapshot_state = fs::read_to_string(&snapshot_validator_path).unwrap();
     let snapshot_parsed: serde_json::Value = serde_json::from_str(&snapshot_state).unwrap();
 
@@ -153,24 +149,28 @@ fn test_validator_state_higher_in_current_than_snapshot() {
     create_mock_snapshot(&snapshot_dir.path().to_path_buf());
 
     // Current validator state
-    let current_state = fs::read_to_string(
-        deploy_dir
-            .path()
-            .join("data/priv_validator_state.json"),
-    )
-    .unwrap();
+    let current_state =
+        fs::read_to_string(deploy_dir.path().join("data/priv_validator_state.json")).unwrap();
     let current: serde_json::Value = serde_json::from_str(&current_state).unwrap();
-    let current_height = current.get("height").unwrap().as_str().unwrap().parse::<u64>().unwrap();
+    let current_height = current
+        .get("height")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
 
     // Snapshot validator state
-    let snapshot_state = fs::read_to_string(
-        snapshot_dir
-            .path()
-            .join("data/priv_validator_state.json"),
-    )
-    .unwrap();
+    let snapshot_state =
+        fs::read_to_string(snapshot_dir.path().join("data/priv_validator_state.json")).unwrap();
     let snapshot: serde_json::Value = serde_json::from_str(&snapshot_state).unwrap();
-    let snapshot_height = snapshot.get("height").unwrap().as_str().unwrap().parse::<u64>().unwrap();
+    let snapshot_height = snapshot
+        .get("height")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
 
     // Current height should be higher (100 vs 50)
     // This is typical - node has continued syncing after snapshot was taken
@@ -214,12 +214,8 @@ fn test_directory_deletion_and_copy_concept() {
     create_mock_snapshot(&snapshot_dir.path().to_path_buf());
 
     // Backup current validator state
-    let current_validator = deploy_dir
-        .path()
-        .join("data/priv_validator_state.json");
-    let validator_backup_path = deploy_dir
-        .path()
-        .join("priv_validator_state_backup.json");
+    let current_validator = deploy_dir.path().join("data/priv_validator_state.json");
+    let validator_backup_path = deploy_dir.path().join("priv_validator_state_backup.json");
     fs::copy(&current_validator, &validator_backup_path).unwrap();
 
     // Delete current data and wasm (simulating restore step 7)
@@ -240,9 +236,7 @@ fn test_directory_deletion_and_copy_concept() {
     assert!(target_wasm.exists());
 
     // Restore backed up validator state (simulating restore step 10)
-    let restored_validator = deploy_dir
-        .path()
-        .join("data/priv_validator_state.json");
+    let restored_validator = deploy_dir.path().join("data/priv_validator_state.json");
     fs::copy(&validator_backup_path, &restored_validator).unwrap();
 
     // Read final validator state
@@ -297,7 +291,7 @@ fn test_snapshot_path_parsing() {
     let snapshot_path = "/home/backup/snapshots/osmosis-1_20250125_17154420";
 
     // Extract snapshot name from path
-    let snapshot_name = snapshot_path.split('/').last().unwrap();
+    let snapshot_name = snapshot_path.split('/').next_back().unwrap();
     assert_eq!(snapshot_name, "osmosis-1_20250125_17154420");
 
     // Parse components

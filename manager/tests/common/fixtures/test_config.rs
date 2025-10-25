@@ -238,7 +238,12 @@ pruning_enabled = {}
 snapshots_enabled = {}
 
 "#,
-            self.name, self.rpc_url, self.name, self.network, self.enable_pruning, self.enable_snapshots
+            self.name,
+            self.rpc_url,
+            self.name,
+            self.network,
+            self.enable_pruning,
+            self.enable_snapshots
         )
     }
 }

@@ -519,7 +519,12 @@ pub async fn create_snapshot(
         .execute_async("snapshot_creation", &node_name, move || {
             let http_manager = http_manager.clone();
             let node_name = node_name_clone.clone();
-            async move { http_manager.create_node_snapshot(&node_name).await.map(|_| ()) }
+            async move {
+                http_manager
+                    .create_node_snapshot(&node_name)
+                    .await
+                    .map(|_| ())
+            }
         })
         .await
     {
@@ -667,12 +672,20 @@ pub async fn execute_manual_restore_from_latest(
         .execute_async("snapshot_restore", &node_name, move || {
             let snapshot_service = snapshot_service.clone();
             let node_name = node_name_clone.clone();
-            async move { snapshot_service.restore_from_snapshot(&node_name).await.map(|_| ()) }
+            async move {
+                snapshot_service
+                    .restore_from_snapshot(&node_name)
+                    .await
+                    .map(|_| ())
+            }
         })
         .await
     {
         Ok(operation_id) => {
-            info!("Snapshot restore started for {}: {}", node_name, operation_id);
+            info!(
+                "Snapshot restore started for {}: {}",
+                node_name, operation_id
+            );
             Ok(Json(ApiResponse::success(json!({
                 "message": format!("Restore operation started for node {}", node_name),
                 "operation_id": operation_id,
