@@ -440,7 +440,7 @@ fn test_ui_required_elements_present() {
     // Verify required containers exist
     let required_ids = vec![
         "system-status",
-        "last-updated",
+        // "last-updated" - removed in UI enhancement (commit f787a8f)
         "total-components",
         "healthy-components",
         "components-breakdown",
