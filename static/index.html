@@ -278,16 +278,14 @@
 
         /* Table Styles */
         .table-container {
-            overflow-x: auto;
-            min-width: 100%;
-            -webkit-overflow-scrolling: touch;
+            width: 100%;
         }
 
         .infrastructure-table {
             width: 100%;
-            min-width: 1200px;
             border-collapse: collapse;
             font-size: 0.875rem;
+            table-layout: fixed;
         }
 
         .infrastructure-table thead th {
@@ -1060,11 +1058,6 @@
         }
 
         /* Utility Classes */
-        #last-updated {
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            font-weight: 400;
-        }
     </style>
 </head>
 <body>
@@ -1077,24 +1070,6 @@
                 <div class="status-indicator healthy" id="system-status">
                     <div class="status-dot"></div>
                     <span>All Systems Operational</span>
-                </div>
-                <div id="last-updated">Last updated: Never</div>
-                
-                <!-- Notification Bell -->
-                <div style="position: relative;">
-                    <button class="notification-bell" onclick="app.toggleNotifications()" title="Notifications">
-                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/>
-                        </svg>
-                        <span class="notification-badge" id="notification-badge" style="display: none;">0</span>
-                    </button>
-                    <div class="notification-dropdown" id="notification-dropdown">
-                        <div id="notification-list">
-                            <div class="empty-state" style="padding: 2rem;">
-                                <div class="empty-state-subtitle">No new notifications</div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
                 
                 <!-- Dark Mode Toggle -->
@@ -1323,17 +1298,17 @@
                     refreshInterval: null,
                     operationsRefreshInterval: null,
                     darkMode: false,
-                    nodeFilter: 'all',
+                    nodeFilter: localStorage.getItem('nodeFilter') || 'all',
                     searchTerms: {
-                        nodes: '',
-                        hermes: '',
-                        etl: ''
+                        nodes: localStorage.getItem('searchNodes') || '',
+                        hermes: localStorage.getItem('searchHermes') || '',
+                        etl: localStorage.getItem('searchEtl') || ''
                     },
                     collapsedPanels: new Set(),
                     sorting: {
-                        nodes: { column: 'next', direction: 'asc' },
-                        hermes: { column: 'next', direction: 'asc' },
-                        etl: { column: 'name', direction: 'asc' }
+                        nodes: JSON.parse(localStorage.getItem('sortNodes') || '{"column":"next","direction":"asc"}'),
+                        hermes: JSON.parse(localStorage.getItem('sortHermes') || '{"column":"next","direction":"asc"}'),
+                        etl: JSON.parse(localStorage.getItem('sortEtl') || '{"column":"name","direction":"asc"}')
                     }
                 },
                 originalData: {
@@ -1359,7 +1334,6 @@
 
             function cacheDOMElements() {
                 dom.systemStatus = document.getElementById('system-status');
-                dom.lastUpdated = document.getElementById('last-updated');
                 dom.totalComponents = document.getElementById('total-components');
                 dom.healthyComponents = document.getElementById('healthy-components');
                 dom.componentsBreakdown = document.getElementById('components-breakdown');
@@ -1564,11 +1538,9 @@
                 },
 
                 scheduleItem(label, schedule, enabled = true) {
+                    // Don't show disabled items at all
                     if (!enabled) {
-                        return `<div class="schedule-item">
-                            <div class="schedule-label">${label}</div>
-                            <div class="schedule-empty">Disabled</div>
-                        </div>`;
+                        return '';
                     }
                     return `<div class="schedule-item">
                         <div class="schedule-label">${label}</div>
@@ -1577,11 +1549,9 @@
                 },
 
                 nextRunItem(label, schedule, enabled = true) {
+                    // Don't show disabled items at all
                     if (!enabled) {
-                        return `<div class="next-run-item">
-                            <div class="next-run-label">${label}</div>
-                            <div class="next-run-empty">Disabled</div>
-                        </div>`;
+                        return '';
                     }
                     return `<div class="next-run-item">
                         <div class="next-run-label">${label}</div>
@@ -2084,10 +2054,6 @@
                     }, CONFIG.ALERT_DURATION);
                 },
 
-                updateLastUpdated() {
-                    dom.lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-                },
-
                 confirm(title, message) {
                     return window.confirm(`${title}\n\n${message}`);
                 }
@@ -2137,12 +2103,31 @@
                         await api.loadConfigs();
                         await api.loadHealthData();
                         
-                        renderers.renderNodes(state.data.nodes);
-                        renderers.renderHermes(state.data.hermes);
-                        renderers.renderEtl(state.data.etl);
+                        // Store original data before filtering
+                        state.originalData.nodes = state.data.nodes;
+                        state.originalData.hermes = state.data.hermes;
+                        state.originalData.etl = state.data.etl;
+                        
+                        // Restore search input values from localStorage
+                        const nodesSearch = document.getElementById('nodes-search');
+                        const hermesSearch = document.getElementById('hermes-search');
+                        const etlSearch = document.getElementById('etl-search');
+                        
+                        if (nodesSearch) nodesSearch.value = state.ui.searchTerms.nodes;
+                        if (hermesSearch) hermesSearch.value = state.ui.searchTerms.hermes;
+                        if (etlSearch) etlSearch.value = state.ui.searchTerms.etl;
+                        
+                        // Restore filter button state
+                        document.querySelectorAll('#nodes-panel .filter-btn').forEach(btn => {
+                            btn.classList.toggle('active', btn.dataset.filter === state.ui.nodeFilter);
+                        });
+                        
+                        // Apply saved filters
+                        this.applyNodeFilters();
+                        this.filterHermes();
+                        this.filterEtl();
                         
                         metrics.update();
-                        ui.updateLastUpdated();
                     } catch (error) {
                         console.error('Failed to load data:', error);
                         ui.showAlert('Failed to load data: ' + error.message, 'error');
@@ -2469,10 +2454,11 @@
 
 
                 // ============================================================
-                // NEW: FILTERS & SEARCH
+                // NEW: FILTERS & SEARCH (Enhanced with state persistence)
                 // ============================================================
                 setNodeFilter(filter) {
                     state.ui.nodeFilter = filter;
+                    localStorage.setItem('nodeFilter', filter);
                     
                     // Update button states
                     document.querySelectorAll('#nodes-panel .filter-btn').forEach(btn => {
@@ -2483,7 +2469,9 @@
                 },
 
                 filterNodes() {
-                    state.ui.searchTerms.nodes = document.getElementById('nodes-search').value.toLowerCase();
+                    const searchValue = document.getElementById('nodes-search').value.toLowerCase();
+                    state.ui.searchTerms.nodes = searchValue;
+                    localStorage.setItem('searchNodes', searchValue);
                     this.applyNodeFilters();
                 },
 
@@ -2492,7 +2480,7 @@
                         state.originalData.nodes = state.data.nodes;
                     }
                     
-                    let filtered = state.originalData.nodes;
+                    let filtered = [...state.originalData.nodes];
                     
                     // Apply status filter
                     if (state.ui.nodeFilter !== 'all') {
@@ -2506,12 +2494,16 @@
                         });
                     }
                     
-                    // Apply search
+                    // Apply search (enhanced to search network and RPC as well)
                     if (state.ui.searchTerms.nodes) {
-                        filtered = filtered.filter(node => 
-                            node.node_name.toLowerCase().includes(state.ui.searchTerms.nodes) ||
-                            node.server_host.toLowerCase().includes(state.ui.searchTerms.nodes)
-                        );
+                        filtered = filtered.filter(node => {
+                            const searchTerm = state.ui.searchTerms.nodes;
+                            const config = state.configs.nodes[node.node_name] || {};
+                            return node.node_name.toLowerCase().includes(searchTerm) ||
+                                   node.server_host.toLowerCase().includes(searchTerm) ||
+                                   (config.network && config.network.toLowerCase().includes(searchTerm)) ||
+                                   (node.rpc_url && node.rpc_url.toLowerCase().includes(searchTerm));
+                        });
                     }
                     
                     state.data.nodes = filtered;
@@ -2526,6 +2518,7 @@
                         sorting.column = column;
                         sorting.direction = 'asc';
                     }
+                    localStorage.setItem('sortNodes', JSON.stringify(sorting));
                     renderers.renderNodes(state.data.nodes);
                 },
 
@@ -2537,6 +2530,7 @@
                         sorting.column = column;
                         sorting.direction = 'asc';
                     }
+                    localStorage.setItem('sortHermes', JSON.stringify(sorting));
                     renderers.renderHermes(state.data.hermes);
                 },
 
@@ -2548,19 +2542,22 @@
                         sorting.column = column;
                         sorting.direction = 'asc';
                     }
+                    localStorage.setItem('sortEtl', JSON.stringify(sorting));
                     renderers.renderEtl(state.data.etl);
                 },
 
                 filterHermes() {
-                    state.ui.searchTerms.hermes = document.getElementById('hermes-search').value.toLowerCase();
+                    const searchValue = document.getElementById('hermes-search').value.toLowerCase();
+                    state.ui.searchTerms.hermes = searchValue;
+                    localStorage.setItem('searchHermes', searchValue);
                     
                     if (!state.originalData.hermes) {
                         state.originalData.hermes = state.data.hermes;
                     }
                     
                     const filtered = state.originalData.hermes.filter(hermes =>
-                        hermes.name.toLowerCase().includes(state.ui.searchTerms.hermes) ||
-                        hermes.server_host.toLowerCase().includes(state.ui.searchTerms.hermes)
+                        hermes.name.toLowerCase().includes(searchValue) ||
+                        hermes.server_host.toLowerCase().includes(searchValue)
                     );
                     
                     state.data.hermes = filtered;
@@ -2568,15 +2565,21 @@
                 },
 
                 filterEtl() {
-                    state.ui.searchTerms.etl = document.getElementById('etl-search').value.toLowerCase();
+                    const searchValue = document.getElementById('etl-search').value.toLowerCase();
+                    state.ui.searchTerms.etl = searchValue;
+                    localStorage.setItem('searchEtl', searchValue);
                     
                     if (!state.originalData.etl) {
                         state.originalData.etl = state.data.etl;
                     }
                     
-                    const filtered = state.originalData.etl.filter(etl =>
-                        etl.service_name.toLowerCase().includes(state.ui.searchTerms.etl)
-                    );
+                    const filtered = state.originalData.etl.filter(etl => {
+                        const config = state.configs.etl[etl.service_name] || {};
+                        return etl.service_name.toLowerCase().includes(searchValue) ||
+                               etl.server_host.toLowerCase().includes(searchValue) ||
+                               (config.description && config.description.toLowerCase().includes(searchValue)) ||
+                               (etl.service_url && etl.service_url.toLowerCase().includes(searchValue));
+                    });
                     
                     state.data.etl = filtered;
                     renderers.renderEtl(filtered);
