@@ -86,202 +86,118 @@ impl MaintenanceService {
             error!("Failed to send start alert: {}", e);
         }
 
-        match operation_type {
-            "pruning" => {
-                match self.http_manager.execute_node_pruning(target_name).await {
-                    Ok(_) => {
-                        self.update_operation_status(&operation_id, "completed", None)
-                            .await?;
+        // Spawn operation in background to avoid HTTP timeout issues
+        let operation_id_clone = operation_id.clone();
+        let target_name_owned = target_name.to_string();
+        let operation_type_owned = operation_type.to_string();
+        let http_manager = self.http_manager.clone();
+        let database = self.database.clone();
+        let alert_service = self.alert_service.clone();
+        let server_host_clone = server_host.clone();
 
-                        // Send success notification
-                        if let Err(e) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Info,
-                                target_name,
-                                &server_host,
-                                format!("Pruning completed successfully for {}", target_name),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "pruning",
-                                    "status": "completed"
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send completion alert: {}", e);
-                        }
+        tokio::spawn(async move {
+            let result = match operation_type_owned.as_str() {
+                "pruning" => http_manager.execute_node_pruning(&target_name_owned).await,
+                "snapshot_creation" => http_manager.create_node_snapshot(&target_name_owned).await.map(|_| ()),
+                "node_restart" => http_manager.restart_node(&target_name_owned).await,
+                _ => Err(anyhow::anyhow!("Unknown operation type: {}", operation_type_owned)),
+            };
 
-                        Ok(operation_id.clone())
+            match result {
+                Ok(_) => {
+                    // Update database status
+                    if let Err(e) = Self::update_operation_status_static(
+                        &database,
+                        &operation_id_clone,
+                        "completed",
+                        None,
+                    )
+                    .await
+                    {
+                        error!("Failed to update operation status: {}", e);
                     }
-                    Err(e) => {
-                        self.update_operation_status(&operation_id, "failed", Some(e.to_string()))
-                            .await?;
 
-                        // Send failure notification
-                        if let Err(alert_err) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Critical,
-                                target_name,
-                                &server_host,
-                                format!("Pruning failed for {}: {}", target_name, e),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "pruning",
-                                    "status": "failed",
-                                    "error_message": e.to_string()
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send failure alert: {}", alert_err);
-                        }
-
-                        Err(e)
+                    // Send success notification
+                    if let Err(e) = alert_service
+                        .send_immediate_alert(
+                            AlertType::Maintenance,
+                            AlertSeverity::Info,
+                            &target_name_owned,
+                            &server_host_clone,
+                            format!(
+                                "{} completed successfully for {}",
+                                operation_type_owned, target_name_owned
+                            ),
+                            Some(json!({
+                                "operation_id": operation_id_clone,
+                                "operation_type": operation_type_owned,
+                                "status": "completed"
+                            })),
+                        )
+                        .await
+                    {
+                        error!("Failed to send completion alert: {}", e);
                     }
+
+                    info!("{} completed successfully for {}", operation_type_owned, target_name_owned);
+                }
+                Err(e) => {
+                    // Update database status
+                    if let Err(update_err) = Self::update_operation_status_static(
+                        &database,
+                        &operation_id_clone,
+                        "failed",
+                        Some(e.to_string()),
+                    )
+                    .await
+                    {
+                        error!("Failed to update operation status: {}", update_err);
+                    }
+
+                    // Send failure notification
+                    if let Err(alert_err) = alert_service
+                        .send_immediate_alert(
+                            AlertType::Maintenance,
+                            AlertSeverity::Critical,
+                            &target_name_owned,
+                            &server_host_clone,
+                            format!("{} failed for {}: {}", operation_type_owned, target_name_owned, e),
+                            Some(json!({
+                                "operation_id": operation_id_clone,
+                                "operation_type": operation_type_owned,
+                                "status": "failed",
+                                "error_message": e.to_string()
+                            })),
+                        )
+                        .await
+                    {
+                        error!("Failed to send failure alert: {}", alert_err);
+                    }
+
+                    error!("{} failed for {}: {}", operation_type_owned, target_name_owned, e);
                 }
             }
-            "snapshot_creation" => {
-                match self.http_manager.create_node_snapshot(target_name).await {
-                    Ok(_) => {
-                        self.update_operation_status(&operation_id, "completed", None)
-                            .await?;
+        });
 
-                        // Send success notification
-                        if let Err(e) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Info,
-                                target_name,
-                                &server_host,
-                                format!(
-                                    "Snapshot creation completed successfully for {}",
-                                    target_name
-                                ),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "snapshot_creation",
-                                    "status": "completed"
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send completion alert: {}", e);
-                        }
-
-                        Ok(operation_id.clone())
-                    }
-                    Err(e) => {
-                        self.update_operation_status(&operation_id, "failed", Some(e.to_string()))
-                            .await?;
-
-                        // Send failure notification
-                        if let Err(alert_err) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Critical,
-                                target_name,
-                                &server_host,
-                                format!("Snapshot creation failed for {}: {}", target_name, e),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "snapshot_creation",
-                                    "status": "failed",
-                                    "error_message": e.to_string()
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send failure alert: {}", alert_err);
-                        }
-
-                        Err(e)
-                    }
-                }
-            }
-            "node_restart" => {
-                match self.http_manager.restart_node(target_name).await {
-                    Ok(_) => {
-                        self.update_operation_status(&operation_id, "completed", None)
-                            .await?;
-
-                        // Send success notification
-                        if let Err(e) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Info,
-                                target_name,
-                                &server_host,
-                                format!("Node restart completed successfully for {}", target_name),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "node_restart",
-                                    "status": "completed"
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send completion alert: {}", e);
-                        }
-
-                        Ok(operation_id.clone())
-                    }
-                    Err(e) => {
-                        self.update_operation_status(&operation_id, "failed", Some(e.to_string()))
-                            .await?;
-
-                        // Send failure notification
-                        if let Err(alert_err) = self
-                            .alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Critical,
-                                target_name,
-                                &server_host,
-                                format!("Node restart failed for {}: {}", target_name, e),
-                                Some(json!({
-                                    "operation_id": operation_id,
-                                    "operation_type": "node_restart",
-                                    "status": "failed",
-                                    "error_message": e.to_string()
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send failure alert: {}", alert_err);
-                        }
-
-                        Err(e)
-                    }
-                }
-            }
-            _ => Err(anyhow::anyhow!(
-                "Unknown operation type: {}",
-                operation_type
-            )),
-        }
+        // Return immediately with operation ID
+        Ok(operation_id)
     }
 
-    async fn update_operation_status(
-        &self,
+    // Static version for use in spawned tasks
+    async fn update_operation_status_static(
+        database: &Arc<Database>,
         operation_id: &str,
         status: &str,
         error_message: Option<String>,
     ) -> Result<()> {
-        let operations = self.database.get_maintenance_operations(Some(100)).await?;
+        let operations = database.get_maintenance_operations(Some(100)).await?;
 
         if let Some(mut operation) = operations.into_iter().find(|op| op.id == operation_id) {
             operation.status = status.to_string();
             operation.completed_at = Some(Utc::now());
             operation.error_message = error_message;
 
-            self.database
+            database
                 .store_maintenance_operation(&operation)
                 .await?;
         }
