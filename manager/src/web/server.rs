@@ -4,7 +4,7 @@ use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
-use crate::services::{HermesService, MaintenanceService, SnapshotService, StateSyncService};
+use crate::services::{HermesService, MaintenanceService, OperationExecutor, SnapshotService, StateSyncService};
 use crate::snapshot::SnapshotManager;
 use crate::web::{handlers, AppState};
 use anyhow::Result;
@@ -26,6 +26,7 @@ pub async fn start_web_server(
     config_manager: Arc<ConfigManager>,
     snapshot_manager: Arc<SnapshotManager>,
     operation_tracker: Arc<SimpleOperationTracker>,
+    operation_executor: Arc<OperationExecutor>,
     hermes_service: Arc<HermesService>,
     maintenance_service: Arc<MaintenanceService>,
     snapshot_service_v2: Arc<SnapshotService>,
@@ -39,6 +40,7 @@ pub async fn start_web_server(
         config_manager,
         snapshot_manager,
         operation_tracker,
+        operation_executor,
         hermes_service,
         maintenance_service,
         snapshot_service_v2,

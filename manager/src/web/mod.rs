@@ -12,7 +12,7 @@ use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
-use crate::services::{HermesService, MaintenanceService, SnapshotService, StateSyncService};
+use crate::services::{HermesService, MaintenanceService, OperationExecutor, SnapshotService, StateSyncService};
 use crate::snapshot::SnapshotManager;
 
 // Application state shared across all handlers
@@ -20,6 +20,7 @@ use crate::snapshot::SnapshotManager;
 pub struct AppState {
     pub config: Arc<Config>,
     // Business logic services with AlertService integration
+    pub operation_executor: Arc<OperationExecutor>,
     pub hermes_service: Arc<HermesService>,
     pub maintenance_service: Arc<MaintenanceService>,
     pub snapshot_service: Arc<SnapshotService>,
@@ -39,6 +40,7 @@ impl AppState {
         _config_manager: Arc<ConfigManager>,
         _snapshot_manager: Arc<SnapshotManager>,
         _operation_tracker: Arc<SimpleOperationTracker>,
+        operation_executor: Arc<OperationExecutor>,
         hermes_service: Arc<HermesService>,
         maintenance_service: Arc<MaintenanceService>,
         snapshot_service: Arc<SnapshotService>,
@@ -46,6 +48,7 @@ impl AppState {
     ) -> Self {
         Self {
             config,
+            operation_executor,
             hermes_service,
             maintenance_service,
             snapshot_service,

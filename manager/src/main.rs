@@ -26,7 +26,7 @@ use maintenance_tracker::MaintenanceTracker;
 use operation_tracker::SimpleOperationTracker;
 use scheduler::MaintenanceScheduler;
 use services::{
-    AlertService, HermesService, MaintenanceService, SnapshotService, StateSyncService,
+    AlertService, HermesService, MaintenanceService, OperationExecutor, SnapshotService, StateSyncService,
 };
 use snapshot::SnapshotManager;
 
@@ -211,6 +211,13 @@ async fn main() -> Result<()> {
     }
 
     // Initialize business logic services with AlertService integration
+    let operation_executor = Arc::new(OperationExecutor::new(
+        config.clone(),
+        database.clone(),
+        alert_service.clone(),
+    ));
+    info!("OperationExecutor initialized with generic async operation support");
+
     let hermes_service = Arc::new(HermesService::new(
         config.clone(),
         http_manager.clone(),
@@ -263,6 +270,7 @@ async fn main() -> Result<()> {
         Arc::new(config_manager),
         snapshot_manager,
         operation_tracker,
+        operation_executor,
         hermes_service,
         maintenance_service,
         snapshot_service_v2,

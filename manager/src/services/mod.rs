@@ -8,6 +8,7 @@
 //! # Services
 //!
 //! - **AlertService**: Centralized webhook-based alerting with progressive rate limiting
+//! - **OperationExecutor**: Generic background operation executor with tracking and alerting
 //! - **MaintenanceService**: Orchestrates maintenance operations (pruning, snapshots, etc.)
 //! - **HermesService**: Manages Hermes relayer instances
 //! - **HealthService**: Health monitoring and status queries
@@ -22,11 +23,13 @@
 pub mod alert_service;
 pub mod hermes_service;
 pub mod maintenance_service;
+pub mod operation_executor;
 pub mod snapshot_service;
 pub mod state_sync_service;
 
 pub use alert_service::AlertService;
 pub use hermes_service::HermesService;
 pub use maintenance_service::MaintenanceService;
+pub use operation_executor::OperationExecutor;
 pub use snapshot_service::SnapshotService;
 pub use state_sync_service::StateSyncService;

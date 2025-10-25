@@ -399,16 +399,23 @@ pub async fn get_all_etl_configs(State(state): State<AppState>) -> ApiResult<Val
 
 // === OPERATION ENDPOINTS WITH OPERATION TRACKING ===
 
-// Manual node restart via MaintenanceService
+// Manual node restart via OperationExecutor
 pub async fn execute_manual_node_restart(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Manual node restart requested for: {}", node_name);
 
+    let node_name_clone = node_name.clone();
+    let http_manager = state.http_agent_manager.clone();
+
     match state
-        .maintenance_service
-        .execute_immediate_operation("node_restart", &node_name)
+        .operation_executor
+        .execute_async("node_restart", &node_name, move || {
+            let http_manager = http_manager.clone();
+            let node_name = node_name_clone.clone();
+            async move { http_manager.restart_node(&node_name).await }
+        })
         .await
     {
         Ok(operation_id) => {
@@ -457,16 +464,23 @@ pub async fn execute_manual_hermes_restart(
     }
 }
 
-// Manual node pruning via MaintenanceService
+// Manual node pruning via OperationExecutor
 pub async fn execute_manual_node_pruning(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Manual node pruning requested for: {}", node_name);
 
+    let node_name_clone = node_name.clone();
+    let http_manager = state.http_agent_manager.clone();
+
     match state
-        .maintenance_service
-        .execute_immediate_operation("pruning", &node_name)
+        .operation_executor
+        .execute_async("pruning", &node_name, move || {
+            let http_manager = http_manager.clone();
+            let node_name = node_name_clone.clone();
+            async move { http_manager.execute_node_pruning(&node_name).await }
+        })
         .await
     {
         Ok(operation_id) => {
@@ -490,16 +504,23 @@ pub async fn execute_manual_node_pruning(
 
 // === SNAPSHOT MANAGEMENT ENDPOINTS ===
 
-// Manual snapshot creation via MaintenanceService
+// Manual snapshot creation via OperationExecutor
 pub async fn create_snapshot(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<Value> {
     info!("Snapshot creation requested for: {}", node_name);
 
+    let node_name_clone = node_name.clone();
+    let http_manager = state.http_agent_manager.clone();
+
     match state
-        .maintenance_service
-        .execute_immediate_operation("snapshot_creation", &node_name)
+        .operation_executor
+        .execute_async("snapshot_creation", &node_name, move || {
+            let http_manager = http_manager.clone();
+            let node_name = node_name_clone.clone();
+            async move { http_manager.create_node_snapshot(&node_name).await.map(|_| ()) }
+        })
         .await
     {
         Ok(operation_id) => {
@@ -628,7 +649,7 @@ pub async fn cleanup_old_snapshots(
 
 // === NEW: MANUAL RESTORE ENDPOINTS ===
 
-// Manual restore via SnapshotService
+// Manual restore via OperationExecutor
 pub async fn execute_manual_restore_from_latest(
     Path(node_name): Path<String>,
     State(state): State<AppState>,
@@ -638,29 +659,35 @@ pub async fn execute_manual_restore_from_latest(
         node_name
     );
 
-    // Spawn the operation in a background task to avoid HTTP timeout issues
     let node_name_clone = node_name.clone();
     let snapshot_service = state.snapshot_service.clone();
-    tokio::spawn(async move {
-        match snapshot_service.restore_from_snapshot(&node_name_clone).await {
-            Ok(snapshot_info) => {
-                info!(
-                    "Manual restore completed successfully for {}: {}",
-                    node_name_clone, snapshot_info.filename
-                );
-            }
-            Err(e) => {
-                error!("Failed to restore from snapshot for {}: {}", node_name_clone, e);
-            }
-        }
-    });
 
-    // Return immediately to client
-    Ok(Json(ApiResponse::success(json!({
-        "message": format!("Restore operation started for node {}. This will run in the background.", node_name),
-        "node_name": node_name,
-        "status": "started"
-    }))))
+    match state
+        .operation_executor
+        .execute_async("snapshot_restore", &node_name, move || {
+            let snapshot_service = snapshot_service.clone();
+            let node_name = node_name_clone.clone();
+            async move { snapshot_service.restore_from_snapshot(&node_name).await.map(|_| ()) }
+        })
+        .await
+    {
+        Ok(operation_id) => {
+            info!("Snapshot restore started for {}: {}", node_name, operation_id);
+            Ok(Json(ApiResponse::success(json!({
+                "message": format!("Restore operation started for node {}", node_name),
+                "operation_id": operation_id,
+                "node_name": node_name,
+                "status": "started"
+            }))))
+        }
+        Err(e) => {
+            error!("Failed to start restore for {}: {}", node_name, e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
+        }
+    }
 }
 
 // === STATE SYNC ENDPOINT ===
@@ -670,26 +697,35 @@ pub async fn execute_manual_state_sync(
 ) -> ApiResult<Value> {
     info!("Manual state sync requested for: {}", node_name);
 
-    // Spawn the operation in a background task to avoid HTTP timeout issues
     let node_name_clone = node_name.clone();
     let state_sync_service = state.state_sync_service.clone();
-    tokio::spawn(async move {
-        match state_sync_service.execute_state_sync(&node_name_clone).await {
-            Ok(_) => {
-                info!("State sync completed successfully for {}", node_name_clone);
-            }
-            Err(e) => {
-                error!("State sync failed for {}: {}", node_name_clone, e);
-            }
-        }
-    });
 
-    // Return immediately to client
-    Ok(Json(ApiResponse::success(json!({
-        "message": format!("State sync operation started for node {}. This will run in the background.", node_name),
-        "node_name": node_name,
-        "status": "started"
-    }))))
+    match state
+        .operation_executor
+        .execute_async("state_sync", &node_name, move || {
+            let state_sync_service = state_sync_service.clone();
+            let node_name = node_name_clone.clone();
+            async move { state_sync_service.execute_state_sync(&node_name).await }
+        })
+        .await
+    {
+        Ok(operation_id) => {
+            info!("State sync started for {}: {}", node_name, operation_id);
+            Ok(Json(ApiResponse::success(json!({
+                "message": format!("State sync operation started for node {}", node_name),
+                "operation_id": operation_id,
+                "node_name": node_name,
+                "status": "started"
+            }))))
+        }
+        Err(e) => {
+            error!("Failed to start state sync for {}: {}", node_name, e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
+        }
+    }
 }
 
 pub async fn check_auto_restore_triggers(
