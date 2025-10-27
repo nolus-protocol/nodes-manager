@@ -411,7 +411,7 @@ pub async fn execute_manual_node_restart(
 
     match state
         .operation_executor
-        .execute_async("node_restart", &node_name, move || {
+        .execute_async("node_restart", &node_name, false, move || {
             let http_manager = http_manager.clone();
             let node_name = node_name_clone.clone();
             async move { http_manager.restart_node(&node_name).await }
@@ -476,7 +476,7 @@ pub async fn execute_manual_node_pruning(
 
     match state
         .operation_executor
-        .execute_async("pruning", &node_name, move || {
+        .execute_async("pruning", &node_name, false, move || {
             let http_manager = http_manager.clone();
             let node_name = node_name_clone.clone();
             async move { http_manager.execute_node_pruning(&node_name).await }
@@ -516,7 +516,7 @@ pub async fn create_snapshot(
 
     match state
         .operation_executor
-        .execute_async("snapshot_creation", &node_name, move || {
+        .execute_async("snapshot_creation", &node_name, false, move || {
             let http_manager = http_manager.clone();
             let node_name = node_name_clone.clone();
             async move {
@@ -669,7 +669,7 @@ pub async fn execute_manual_restore_from_latest(
 
     match state
         .operation_executor
-        .execute_async("snapshot_restore", &node_name, move || {
+        .execute_async("snapshot_restore", &node_name, false, move || {
             let snapshot_service = snapshot_service.clone();
             let node_name = node_name_clone.clone();
             async move {
@@ -715,7 +715,7 @@ pub async fn execute_manual_state_sync(
 
     match state
         .operation_executor
-        .execute_async("state_sync", &node_name, move || {
+        .execute_async("state_sync", &node_name, false, move || {
             let state_sync_service = state_sync_service.clone();
             let node_name = node_name_clone.clone();
             async move { state_sync_service.execute_state_sync(&node_name).await }

@@ -38,15 +38,21 @@ impl OperationExecutor {
     /// # Arguments
     /// * `operation_type` - Type of operation (e.g., "pruning", "snapshot_creation", "state_sync")
     /// * `target_name` - Name of the target node/service
+    /// * `is_scheduled` - Whether this is a scheduled operation (true) or manual API call (false)
     /// * `operation_fn` - Closure that returns a Future executing the actual operation
     ///
     /// # Returns
     /// * `Ok(operation_id)` - Unique ID for tracking the operation
     /// * `Err(...)` - If operation failed to start (validation, database errors, etc.)
+    ///
+    /// # Alerting Behavior
+    /// * Manual operations (is_scheduled=false): No alerts sent (user-initiated)
+    /// * Scheduled operations (is_scheduled=true): Only alert on FAILURE (Critical severity)
     pub async fn execute_async<F, Fut>(
         &self,
         operation_type: &str,
         target_name: &str,
+        is_scheduled: bool,
         operation_fn: F,
     ) -> Result<String>
     where
@@ -89,28 +95,8 @@ impl OperationExecutor {
             .store_maintenance_operation(&operation_record)
             .await?;
 
-        // Send start alert
-        if let Err(e) = self
-            .alert_service
-            .send_immediate_alert(
-                AlertType::Maintenance,
-                AlertSeverity::Info,
-                target_name,
-                &server_host,
-                format!(
-                    "Manual {} operation started for {}",
-                    operation_type, target_name
-                ),
-                Some(json!({
-                    "operation_id": operation_id,
-                    "operation_type": operation_type,
-                    "status": "started"
-                })),
-            )
-            .await
-        {
-            error!("Failed to send start alert: {}", e);
-        }
+        // No start/success alerts for any operations (scheduled or manual)
+        // Only alert on FAILURE for scheduled operations
 
         // Clone resources for background task
         let operation_id_clone = operation_id.clone();
@@ -138,27 +124,7 @@ impl OperationExecutor {
                         error!("Failed to update operation status: {}", e);
                     }
 
-                    // Send success alert
-                    if let Err(e) = alert_service
-                        .send_immediate_alert(
-                            AlertType::Maintenance,
-                            AlertSeverity::Info,
-                            &target_name_owned,
-                            &server_host_clone,
-                            format!(
-                                "{} completed successfully for {}",
-                                operation_type_owned, target_name_owned
-                            ),
-                            Some(json!({
-                                "operation_id": operation_id_clone,
-                                "operation_type": operation_type_owned,
-                                "status": "completed"
-                            })),
-                        )
-                        .await
-                    {
-                        error!("Failed to send completion alert: {}", e);
-                    }
+                    // No success alerts - operations completing successfully is routine
 
                     info!(
                         "{} completed successfully for {} (operation_id: {})",
@@ -178,27 +144,30 @@ impl OperationExecutor {
                         error!("Failed to update operation status: {}", update_err);
                     }
 
-                    // Send failure alert
-                    if let Err(alert_err) = alert_service
-                        .send_immediate_alert(
-                            AlertType::Maintenance,
-                            AlertSeverity::Critical,
-                            &target_name_owned,
-                            &server_host_clone,
-                            format!(
-                                "{} failed for {}: {}",
-                                operation_type_owned, target_name_owned, e
-                            ),
-                            Some(json!({
-                                "operation_id": operation_id_clone,
-                                "operation_type": operation_type_owned,
-                                "status": "failed",
-                                "error_message": e.to_string()
-                            })),
-                        )
-                        .await
-                    {
-                        error!("Failed to send failure alert: {}", alert_err);
+                    // Only send failure alerts for SCHEDULED operations
+                    if is_scheduled {
+                        if let Err(alert_err) = alert_service
+                            .send_immediate_alert(
+                                AlertType::Maintenance,
+                                AlertSeverity::Critical,
+                                &target_name_owned,
+                                &server_host_clone,
+                                format!(
+                                    "Scheduled {} failed for {}: {}",
+                                    operation_type_owned, target_name_owned, e
+                                ),
+                                Some(json!({
+                                    "operation_id": operation_id_clone,
+                                    "operation_type": operation_type_owned,
+                                    "status": "failed",
+                                    "error_message": e.to_string(),
+                                    "scheduled": true
+                                })),
+                            )
+                            .await
+                        {
+                            error!("Failed to send failure alert: {}", alert_err);
+                        }
                     }
 
                     error!(

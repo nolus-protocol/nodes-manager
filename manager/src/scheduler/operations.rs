@@ -166,9 +166,9 @@ impl MaintenanceScheduler {
             Box::pin(async move {
                 info!("🔧 Executing scheduled pruning for {}", node_name);
 
-                // Use MaintenanceService which includes AlertService integration
+                // Use MaintenanceService for scheduled operations
                 match maintenance_service
-                    .execute_immediate_operation("pruning", &node_name)
+                    .execute_immediate_operation("pruning", &node_name, true)
                     .await
                 {
                     Ok(operation_id) => {
@@ -207,9 +207,9 @@ impl MaintenanceScheduler {
             Box::pin(async move {
                 info!("📸 Executing scheduled snapshot for {}", node_name);
 
-                // Use MaintenanceService which includes AlertService integration
+                // Use MaintenanceService for scheduled operations
                 match maintenance_service
-                    .execute_immediate_operation("snapshot_creation", &node_name)
+                    .execute_immediate_operation("snapshot_creation", &node_name, true)
                     .await
                 {
                     Ok(operation_id) => {
