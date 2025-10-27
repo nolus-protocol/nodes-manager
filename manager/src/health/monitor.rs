@@ -704,7 +704,12 @@ impl HealthMonitor {
                 error!("Auto-restore failed for {}: {}", node_name, e);
                 // Alert: auto-restore failed
                 self.alert_service
-                    .alert_auto_restore_failed(node_name, &server_host, &e.to_string(), trigger_words)
+                    .alert_auto_restore_failed(
+                        node_name,
+                        &server_host,
+                        &e.to_string(),
+                        trigger_words,
+                    )
                     .await?;
                 Err(e)
             }
@@ -1065,7 +1070,13 @@ impl HealthMonitor {
                     info!("Log patterns detected for {}, sending alert", node_name);
                     // Alert: log pattern match
                     self.alert_service
-                        .alert_log_pattern_match(node_name, server_host, log_path, &output, patterns)
+                        .alert_log_pattern_match(
+                            node_name,
+                            server_host,
+                            log_path,
+                            &output,
+                            patterns,
+                        )
                         .await?;
                 } else {
                     debug!("No log patterns found for {}", node_name);

@@ -271,7 +271,10 @@ impl AlertService {
             AlertSeverity::Critical,
             target_name,
             server_host,
-            format!("Scheduled {} failed for {}: {}", operation_type, target_name, error),
+            format!(
+                "Scheduled {} failed for {}: {}",
+                operation_type, target_name, error
+            ),
             Some(serde_json::json!({
                 "operation_type": operation_type,
                 "error_message": error,
@@ -356,7 +359,10 @@ impl AlertService {
             AlertSeverity::Warning,
             node_name,
             server_host,
-            format!("Auto-restore STARTED for {} due to corruption indicators", node_name),
+            format!(
+                "Auto-restore STARTED for {} due to corruption indicators",
+                node_name
+            ),
             Some(serde_json::json!({
                 "trigger_words": trigger_words,
                 "status": "starting"
@@ -378,7 +384,10 @@ impl AlertService {
             AlertSeverity::Info,
             node_name,
             server_host,
-            format!("Auto-restore COMPLETED for {} - node should be syncing from restored state", node_name),
+            format!(
+                "Auto-restore COMPLETED for {} - node should be syncing from restored state",
+                node_name
+            ),
             Some(serde_json::json!({
                 "trigger_words": trigger_words,
                 "status": "completed",
@@ -401,7 +410,10 @@ impl AlertService {
             AlertSeverity::Critical,
             node_name,
             server_host,
-            format!("CRITICAL: Auto-restore failed for {} - manual intervention required", node_name),
+            format!(
+                "CRITICAL: Auto-restore failed for {} - manual intervention required",
+                node_name
+            ),
             Some(serde_json::json!({
                 "error_message": error,
                 "trigger_words": trigger_words

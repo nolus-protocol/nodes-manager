@@ -88,7 +88,11 @@ impl SnapshotManager {
             Err(e) => {
                 if let Err(alert_err) = self
                     .alert_service
-                    .alert_snapshot_restore_failed(node_name, &node_config.server_host, &e.to_string())
+                    .alert_snapshot_restore_failed(
+                        node_name,
+                        &node_config.server_host,
+                        &e.to_string(),
+                    )
                     .await
                 {
                     warn!("Failed to send error notification: {}", alert_err);
