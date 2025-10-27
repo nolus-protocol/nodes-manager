@@ -394,9 +394,12 @@ impl HealthMonitor {
             "last_check": status.last_check.to_rfc3339()
         }));
 
+        // Use consistent naming with etl: prefix for alert tracking
+        let alert_node_name = format!("etl:{}", status.service_name);
+
         self.alert_service
             .send_progressive_alert(
-                &status.service_name,
+                &alert_node_name,
                 &status.server_host,
                 status.is_healthy,
                 status.error_message.clone(),
@@ -458,6 +461,17 @@ impl HealthMonitor {
         // Skip alerts for maintenance nodes
         if status.in_maintenance {
             return Ok(());
+        }
+
+        // Reset auto-restore checked state when node becomes healthy
+        if status.is_healthy {
+            let mut checked_states = self.auto_restore_checked_states.lock().await;
+            if checked_states.remove(&status.node_name).is_some() {
+                debug!(
+                    "Cleared auto-restore checked state for {} (node is now healthy)",
+                    status.node_name
+                );
+            }
         }
 
         let details = Some(serde_json::json!({
