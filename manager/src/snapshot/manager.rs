@@ -83,9 +83,21 @@ impl SnapshotManager {
                     node_name, snapshot_info.filename
                 );
 
-                // No success alerts - only failures need attention
+                // Alert: Snapshot restore completed
+                if let Err(e) = self
+                    .alert_service
+                    .alert_snapshot_restore_completed(
+                        node_name,
+                        &node_config.server_host,
+                        &snapshot_info.filename,
+                    )
+                    .await
+                {
+                    warn!("Failed to send snapshot restore completion alert: {}", e);
+                }
             }
             Err(e) => {
+                // Alert: Snapshot restore failed
                 if let Err(alert_err) = self
                     .alert_service
                     .alert_snapshot_restore_failed(

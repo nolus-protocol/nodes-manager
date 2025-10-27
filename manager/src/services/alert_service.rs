@@ -246,45 +246,118 @@ impl AlertService {
     }
 
     // =========================================================================
-    // HIGH-LEVEL ALERT METHODS - Business Logic Layer
+    // HIGH-LEVEL ALERT METHODS - Complete Event Stream
     // =========================================================================
-    // These methods encapsulate alerting decisions so services don't need to
-    // know alert types, severities, or when to send alerts.
+    // These methods emit ALL events from the system. The Manager is a complete
+    // observable event stream - filtering happens downstream in n8n, NOT here.
+    //
+    // Design principle: Manager emits everything, n8n decides what to forward.
 
-    /// Alert for maintenance operation failure (pruning, snapshot creation, restart, state sync)
-    /// Only sends alerts for SCHEDULED operations (not manual API calls)
+    // --- Maintenance Operations (pruning, snapshot creation, node restart) ---
+
+    /// Alert when maintenance operation starts
+    pub async fn alert_operation_started(
+        &self,
+        operation_type: &str,
+        target_name: &str,
+        server_host: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Info,
+            target_name,
+            server_host,
+            format!("{} started for {}", operation_type, target_name),
+            Some(serde_json::json!({
+                "operation_type": operation_type,
+                "status": "started"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when maintenance operation completes successfully
+    pub async fn alert_operation_completed(
+        &self,
+        operation_type: &str,
+        target_name: &str,
+        server_host: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Info,
+            target_name,
+            server_host,
+            format!(
+                "{} completed successfully for {}",
+                operation_type, target_name
+            ),
+            Some(serde_json::json!({
+                "operation_type": operation_type,
+                "status": "completed"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when maintenance operation fails
     pub async fn alert_operation_failed(
         &self,
         operation_type: &str,
         target_name: &str,
         server_host: &str,
         error: &str,
-        is_scheduled: bool,
     ) -> Result<()> {
-        // Only alert for scheduled operations
-        if !is_scheduled {
-            return Ok(());
-        }
-
         self.send_immediate_alert(
             AlertType::Maintenance,
             AlertSeverity::Critical,
             target_name,
             server_host,
-            format!(
-                "Scheduled {} failed for {}: {}",
-                operation_type, target_name, error
-            ),
+            format!("{} failed for {}: {}", operation_type, target_name, error),
             Some(serde_json::json!({
                 "operation_type": operation_type,
-                "error_message": error,
-                "scheduled": true
+                "status": "failed",
+                "error_message": error
             })),
         )
         .await
     }
 
-    /// Alert for Hermes restart failure
+    // --- Hermes Operations ---
+
+    /// Alert when Hermes restart starts
+    pub async fn alert_hermes_started(&self, hermes_name: &str, server_host: &str) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Hermes,
+            AlertSeverity::Info,
+            hermes_name,
+            server_host,
+            format!("Hermes restart started for {}", hermes_name),
+            Some(serde_json::json!({
+                "operation_type": "hermes_restart",
+                "status": "started"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when Hermes restart completes successfully
+    pub async fn alert_hermes_completed(&self, hermes_name: &str, server_host: &str) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Hermes,
+            AlertSeverity::Info,
+            hermes_name,
+            server_host,
+            format!("Hermes restart completed successfully for {}", hermes_name),
+            Some(serde_json::json!({
+                "operation_type": "hermes_restart",
+                "status": "completed"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when Hermes restart fails
     pub async fn alert_hermes_failed(
         &self,
         hermes_name: &str,
@@ -299,13 +372,52 @@ impl AlertService {
             format!("Hermes restart failed for {}: {}", hermes_name, error),
             Some(serde_json::json!({
                 "operation_type": "hermes_restart",
+                "status": "failed",
                 "error_message": error
             })),
         )
         .await
     }
 
-    /// Alert for state sync failure
+    // --- State Sync Operations ---
+
+    /// Alert when state sync starts
+    pub async fn alert_state_sync_started(&self, node_name: &str, server_host: &str) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Info,
+            node_name,
+            server_host,
+            format!("State sync started for {}", node_name),
+            Some(serde_json::json!({
+                "operation_type": "state_sync",
+                "status": "started"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when state sync completes successfully
+    pub async fn alert_state_sync_completed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Info,
+            node_name,
+            server_host,
+            format!("State sync completed successfully for {}", node_name),
+            Some(serde_json::json!({
+                "operation_type": "state_sync",
+                "status": "completed"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when state sync fails
     pub async fn alert_state_sync_failed(
         &self,
         node_name: &str,
@@ -320,13 +432,38 @@ impl AlertService {
             format!("State sync failed for {}: {}", node_name, error),
             Some(serde_json::json!({
                 "operation_type": "state_sync",
+                "status": "failed",
                 "error_message": error
             })),
         )
         .await
     }
 
-    /// Alert for snapshot restore failure
+    // --- Snapshot Restore Operations ---
+
+    /// Alert when snapshot restore completes successfully
+    pub async fn alert_snapshot_restore_completed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        snapshot_filename: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Snapshot,
+            AlertSeverity::Info,
+            node_name,
+            server_host,
+            format!("Snapshot restored successfully for {}", node_name),
+            Some(serde_json::json!({
+                "operation_type": "snapshot_restore",
+                "status": "completed",
+                "snapshot_filename": snapshot_filename
+            })),
+        )
+        .await
+    }
+
+    /// Alert when snapshot restore fails
     pub async fn alert_snapshot_restore_failed(
         &self,
         node_name: &str,
@@ -341,6 +478,7 @@ impl AlertService {
             format!("Snapshot restore failed for {}: {}", node_name, error),
             Some(serde_json::json!({
                 "operation_type": "snapshot_restore",
+                "status": "failed",
                 "error_message": error
             })),
         )

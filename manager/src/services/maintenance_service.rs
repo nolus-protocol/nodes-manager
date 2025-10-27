@@ -33,7 +33,6 @@ impl MaintenanceService {
         &self,
         operation_type: &str,
         target_name: &str,
-        is_scheduled: bool,
     ) -> Result<String> {
         let http_manager = self.http_manager.clone();
         let target_name_clone = target_name.to_string();
@@ -41,7 +40,7 @@ impl MaintenanceService {
 
         // Delegate to OperationExecutor with appropriate operation
         self.operation_executor
-            .execute_async(operation_type, target_name, is_scheduled, move || {
+            .execute_async(operation_type, target_name, move || {
                 let http_manager = http_manager.clone();
                 let target_name = target_name_clone.clone();
                 let op_type = operation_type_owned.clone();

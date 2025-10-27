@@ -59,7 +59,7 @@ async fn test_operation_completes_in_background() {
 
     // Execute a slow operation
     let op_id = executor
-        .execute_async("test_operation", "test-node-1", false, || async {
+        .execute_async("test_operation", "test-node-1", || async {
             sleep(Duration::from_secs(2)).await;
             Ok(())
         })
@@ -104,7 +104,7 @@ async fn test_operation_failure_recorded_correctly() {
 
     // Execute an operation that fails
     let op_id = executor
-        .execute_async("failing_operation", "test-node-1", false, || async {
+        .execute_async("failing_operation", "test-node-1", || async {
             sleep(Duration::from_millis(100)).await;
             Err(anyhow::anyhow!(
                 "Test error: operation failed intentionally"
@@ -141,7 +141,7 @@ async fn test_multiple_concurrent_operations_execute_independently() {
 
     // Start three operations on different nodes simultaneously
     let op1 = executor
-        .execute_async("operation1", "node-1", false, || async {
+        .execute_async("operation1", "node-1", || async {
             sleep(Duration::from_millis(200)).await;
             Ok(())
         })
@@ -149,7 +149,7 @@ async fn test_multiple_concurrent_operations_execute_independently() {
         .expect("Op 1 should start");
 
     let op2 = executor
-        .execute_async("operation2", "node-2", false, || async {
+        .execute_async("operation2", "node-2", || async {
             sleep(Duration::from_millis(300)).await;
             Ok(())
         })
@@ -157,7 +157,7 @@ async fn test_multiple_concurrent_operations_execute_independently() {
         .expect("Op 2 should start");
 
     let op3 = executor
-        .execute_async("operation3", "node-3", false, || async {
+        .execute_async("operation3", "node-3", || async {
             sleep(Duration::from_millis(100)).await;
             Ok(())
         })
@@ -200,9 +200,7 @@ async fn test_operation_id_uniqueness() {
     let mut operation_ids = Vec::new();
     for i in 0..10 {
         let op_id = executor
-            .execute_async("test_op", &format!("node-{}", i), false, || async {
-                Ok(())
-            })
+            .execute_async("test_op", &format!("node-{}", i), || async { Ok(()) })
             .await
             .expect("Operation should start");
         operation_ids.push(op_id);
@@ -228,7 +226,7 @@ async fn test_operation_records_correct_metadata() {
     let target_name = "production-node";
 
     executor
-        .execute_async(operation_type, target_name, false, || async {
+        .execute_async(operation_type, target_name, || async {
             sleep(Duration::from_millis(100)).await;
             Ok(())
         })
@@ -257,7 +255,7 @@ async fn test_operation_with_very_fast_completion() {
 
     // Operation that completes immediately
     let op_id = executor
-        .execute_async("instant_operation", "test-node", false, || async { Ok(()) })
+        .execute_async("instant_operation", "test-node", || async { Ok(()) })
         .await
         .expect("Operation should start");
 
@@ -281,12 +279,9 @@ async fn test_error_message_preserved_in_database() {
     let error_msg_clone = error_msg.clone();
 
     executor
-        .execute_async(
-            "network_operation",
-            "test-node",
-            false,
-            move || async move { Err(anyhow::anyhow!("{}", error_msg_clone)) },
-        )
+        .execute_async("network_operation", "test-node", move || async move {
+            Err(anyhow::anyhow!("{}", error_msg_clone))
+        })
         .await
         .expect("Operation should start");
 
@@ -314,24 +309,24 @@ async fn test_mixed_success_and_failure_operations() {
 
     // Start mix of successful and failing operations
     executor
-        .execute_async("success_op_1", "node-1", false, || async { Ok(()) })
+        .execute_async("success_op_1", "node-1", || async { Ok(()) })
         .await
         .expect("Op should start");
 
     executor
-        .execute_async("fail_op_1", "node-2", false, || async {
+        .execute_async("fail_op_1", "node-2", || async {
             Err(anyhow::anyhow!("Error 1"))
         })
         .await
         .expect("Op should start");
 
     executor
-        .execute_async("success_op_2", "node-3", false, || async { Ok(()) })
+        .execute_async("success_op_2", "node-3", || async { Ok(()) })
         .await
         .expect("Op should start");
 
     executor
-        .execute_async("fail_op_2", "node-4", false, || async {
+        .execute_async("fail_op_2", "node-4", || async {
             Err(anyhow::anyhow!("Error 2"))
         })
         .await
@@ -358,17 +353,17 @@ async fn test_operations_with_same_type_different_targets() {
 
     // Start same operation type on different targets
     let op1 = executor
-        .execute_async("pruning", "node-1", false, || async { Ok(()) })
+        .execute_async("pruning", "node-1", || async { Ok(()) })
         .await
         .expect("Op 1 should start");
 
     let op2 = executor
-        .execute_async("pruning", "node-2", false, || async { Ok(()) })
+        .execute_async("pruning", "node-2", || async { Ok(()) })
         .await
         .expect("Op 2 should start");
 
     let op3 = executor
-        .execute_async("pruning", "node-3", false, || async { Ok(()) })
+        .execute_async("pruning", "node-3", || async { Ok(()) })
         .await
         .expect("Op 3 should start");
 

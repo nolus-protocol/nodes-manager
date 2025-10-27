@@ -34,18 +34,35 @@ impl HermesService {
 
         info!("Restarting Hermes instance: {}", hermes_name);
 
-        // No start/success alerts - only failures need attention
+        // Alert: Hermes restart started
+        if let Err(e) = self
+            .alert_service
+            .alert_hermes_started(hermes_name, &hermes_config.server_host)
+            .await
+        {
+            error!("Failed to send Hermes start alert: {}", e);
+        }
 
         // Execute restart
         match self.http_manager.restart_hermes(hermes_config).await {
             Ok(_) => {
                 info!("Hermes restart completed successfully for {}", hermes_name);
+
+                // Alert: Hermes restart completed
+                if let Err(e) = self
+                    .alert_service
+                    .alert_hermes_completed(hermes_name, &hermes_config.server_host)
+                    .await
+                {
+                    error!("Failed to send Hermes completion alert: {}", e);
+                }
+
                 Ok(format!("Hermes {} restarted successfully", hermes_name))
             }
             Err(e) => {
                 error!("Hermes restart failed for {}: {}", hermes_name, e);
 
-                // Alert for Hermes failure
+                // Alert: Hermes restart failed
                 if let Err(alert_err) = self
                     .alert_service
                     .alert_hermes_failed(hermes_name, &hermes_config.server_host, &e.to_string())

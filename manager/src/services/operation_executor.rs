@@ -37,7 +37,6 @@ impl OperationExecutor {
     /// # Arguments
     /// * `operation_type` - Type of operation (e.g., "pruning", "snapshot_creation", "state_sync")
     /// * `target_name` - Name of the target node/service
-    /// * `is_scheduled` - Whether this is a scheduled operation (true) or manual API call (false)
     /// * `operation_fn` - Closure that returns a Future executing the actual operation
     ///
     /// # Returns
@@ -45,13 +44,12 @@ impl OperationExecutor {
     /// * `Err(...)` - If operation failed to start (validation, database errors, etc.)
     ///
     /// # Alerting Behavior
-    /// * Manual operations (is_scheduled=false): No alerts sent (user-initiated)
-    /// * Scheduled operations (is_scheduled=true): Only alert on FAILURE (Critical severity)
+    /// Emits ALL events (start, success, failure) - complete event stream.
+    /// Filtering happens downstream in n8n, NOT here.
     pub async fn execute_async<F, Fut>(
         &self,
         operation_type: &str,
         target_name: &str,
-        is_scheduled: bool,
         operation_fn: F,
     ) -> Result<String>
     where
@@ -94,8 +92,14 @@ impl OperationExecutor {
             .store_maintenance_operation(&operation_record)
             .await?;
 
-        // No start/success alerts for any operations (scheduled or manual)
-        // Only alert on FAILURE for scheduled operations
+        // Alert: operation started
+        if let Err(e) = self
+            .alert_service
+            .alert_operation_started(operation_type, target_name, &server_host)
+            .await
+        {
+            error!("Failed to send start alert: {}", e);
+        }
 
         // Clone resources for background task
         let operation_id_clone = operation_id.clone();
@@ -123,7 +127,17 @@ impl OperationExecutor {
                         error!("Failed to update operation status: {}", e);
                     }
 
-                    // No success alerts - operations completing successfully is routine
+                    // Alert: operation completed successfully
+                    if let Err(e) = alert_service
+                        .alert_operation_completed(
+                            &operation_type_owned,
+                            &target_name_owned,
+                            &server_host_clone,
+                        )
+                        .await
+                    {
+                        error!("Failed to send completion alert: {}", e);
+                    }
 
                     info!(
                         "{} completed successfully for {} (operation_id: {})",
@@ -143,14 +157,13 @@ impl OperationExecutor {
                         error!("Failed to update operation status: {}", update_err);
                     }
 
-                    // Alert for operation failure (AlertService decides whether to send based on is_scheduled)
+                    // Alert: operation failed
                     if let Err(alert_err) = alert_service
                         .alert_operation_failed(
                             &operation_type_owned,
                             &target_name_owned,
                             &server_host_clone,
                             &e.to_string(),
-                            is_scheduled,
                         )
                         .await
                     {

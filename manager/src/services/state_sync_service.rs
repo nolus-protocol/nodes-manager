@@ -44,18 +44,35 @@ impl StateSyncService {
 
         info!("Starting state sync for {}", node_name);
 
-        // No start/success alerts - only failures need attention
+        // Alert: State sync started
+        if let Err(e) = self
+            .alert_service
+            .alert_state_sync_started(node_name, server_host)
+            .await
+        {
+            error!("Failed to send state sync start alert: {}", e);
+        }
 
         // Execute state sync via HTTP agent manager
         match self.http_manager.execute_state_sync(node_name).await {
             Ok(_) => {
                 info!("State sync completed successfully for {}", node_name);
+
+                // Alert: State sync completed
+                if let Err(e) = self
+                    .alert_service
+                    .alert_state_sync_completed(node_name, server_host)
+                    .await
+                {
+                    error!("Failed to send state sync completion alert: {}", e);
+                }
+
                 Ok(())
             }
             Err(e) => {
                 error!("State sync failed for {}: {}", node_name, e);
 
-                // Alert for state sync failure
+                // Alert: State sync failed
                 if let Err(alert_err) = self
                     .alert_service
                     .alert_state_sync_failed(node_name, server_host, &e.to_string())
