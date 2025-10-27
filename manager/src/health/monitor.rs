@@ -2,7 +2,7 @@
 use crate::config::{Config, EtlConfig, NodeConfig, ServerConfig};
 use crate::database::{Database, HealthRecord};
 use crate::maintenance_tracker::MaintenanceTracker;
-use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
+use crate::services::alert_service::AlertService;
 use crate::snapshot::SnapshotManager;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -618,20 +618,9 @@ impl HealthMonitor {
                     "Auto-restore trigger words found in {} log file: {}",
                     node_name, log_file
                 );
+                // execute_auto_restore handles all alerting internally
                 if let Err(e) = self.execute_auto_restore(node_name, trigger_words).await {
                     error!("Auto-restore failed for {}: {}", node_name, e);
-                    // Send failure alert using AlertService
-                    self.alert_service.send_immediate_alert(
-                        AlertType::AutoRestore,
-                        AlertSeverity::Critical,
-                        node_name,
-                        server_host,
-                        format!("CRITICAL: Auto-restore failed for {} - manual intervention required", node_name),
-                        Some(serde_json::json!({
-                            "error_message": e.to_string(),
-                            "trigger_words": trigger_words
-                        })),
-                    ).await?;
                 } else {
                     info!("Auto-restore completed successfully for {}", node_name);
                 }
@@ -685,26 +674,13 @@ impl HealthMonitor {
             cooldown.restore_count += 1;
         }
 
-        // Send starting notification
+        // Alert: auto-restore started
         let server_host = self
             .get_server_for_node(node_name)
             .await
             .unwrap_or_else(|| "unknown".to_string());
         self.alert_service
-            .send_immediate_alert(
-                AlertType::AutoRestore,
-                AlertSeverity::Warning,
-                node_name,
-                &server_host,
-                format!(
-                    "Auto-restore STARTED for {} due to corruption indicators",
-                    node_name
-                ),
-                Some(serde_json::json!({
-                    "trigger_words": trigger_words,
-                    "status": "starting"
-                })),
-            )
+            .alert_auto_restore_started(node_name, &server_host, trigger_words)
             .await?;
 
         match self.snapshot_manager.restore_from_snapshot(node_name).await {
@@ -713,22 +689,23 @@ impl HealthMonitor {
                     "Auto-restore completed for {} using snapshot: {}",
                     node_name, snapshot_info.filename
                 );
-                self.alert_service.send_immediate_alert(
-                    AlertType::AutoRestore,
-                    AlertSeverity::Info,
-                    node_name,
-                    &server_host,
-                    format!("Auto-restore COMPLETED for {} - node should be syncing from restored state", node_name),
-                    Some(serde_json::json!({
-                        "trigger_words": trigger_words,
-                        "status": "completed",
-                        "snapshot_filename": snapshot_info.filename
-                    })),
-                ).await?;
+                // Alert: auto-restore completed
+                self.alert_service
+                    .alert_auto_restore_completed(
+                        node_name,
+                        &server_host,
+                        &snapshot_info.filename,
+                        trigger_words,
+                    )
+                    .await?;
                 Ok(())
             }
             Err(e) => {
                 error!("Auto-restore failed for {}: {}", node_name, e);
+                // Alert: auto-restore failed
+                self.alert_service
+                    .alert_auto_restore_failed(node_name, &server_host, &e.to_string(), trigger_words)
+                    .await?;
                 Err(e)
             }
         }
@@ -1086,20 +1063,9 @@ impl HealthMonitor {
             Ok(output) => {
                 if !output.trim().is_empty() {
                     info!("Log patterns detected for {}, sending alert", node_name);
-                    // Send log pattern alert using AlertService
+                    // Alert: log pattern match
                     self.alert_service
-                        .send_immediate_alert(
-                            AlertType::LogPattern,
-                            AlertSeverity::Warning,
-                            node_name,
-                            server_host,
-                            "Log pattern match detected".to_string(),
-                            Some(serde_json::json!({
-                                "log_path": log_path,
-                                "log_output": output,
-                                "patterns": patterns
-                            })),
-                        )
+                        .alert_log_pattern_match(node_name, server_host, log_path, &output, patterns)
                         .await?;
                 } else {
                     debug!("No log patterns found for {}", node_name);

@@ -245,6 +245,195 @@ impl AlertService {
         self.send_webhook(&payload).await
     }
 
+    // =========================================================================
+    // HIGH-LEVEL ALERT METHODS - Business Logic Layer
+    // =========================================================================
+    // These methods encapsulate alerting decisions so services don't need to
+    // know alert types, severities, or when to send alerts.
+
+    /// Alert for maintenance operation failure (pruning, snapshot creation, restart, state sync)
+    /// Only sends alerts for SCHEDULED operations (not manual API calls)
+    pub async fn alert_operation_failed(
+        &self,
+        operation_type: &str,
+        target_name: &str,
+        server_host: &str,
+        error: &str,
+        is_scheduled: bool,
+    ) -> Result<()> {
+        // Only alert for scheduled operations
+        if !is_scheduled {
+            return Ok(());
+        }
+
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Critical,
+            target_name,
+            server_host,
+            format!("Scheduled {} failed for {}: {}", operation_type, target_name, error),
+            Some(serde_json::json!({
+                "operation_type": operation_type,
+                "error_message": error,
+                "scheduled": true
+            })),
+        )
+        .await
+    }
+
+    /// Alert for Hermes restart failure
+    pub async fn alert_hermes_failed(
+        &self,
+        hermes_name: &str,
+        server_host: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Hermes,
+            AlertSeverity::Critical,
+            hermes_name,
+            server_host,
+            format!("Hermes restart failed for {}: {}", hermes_name, error),
+            Some(serde_json::json!({
+                "operation_type": "hermes_restart",
+                "error_message": error
+            })),
+        )
+        .await
+    }
+
+    /// Alert for state sync failure
+    pub async fn alert_state_sync_failed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Maintenance,
+            AlertSeverity::Critical,
+            node_name,
+            server_host,
+            format!("State sync failed for {}: {}", node_name, error),
+            Some(serde_json::json!({
+                "operation_type": "state_sync",
+                "error_message": error
+            })),
+        )
+        .await
+    }
+
+    /// Alert for snapshot restore failure
+    pub async fn alert_snapshot_restore_failed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::Snapshot,
+            AlertSeverity::Critical,
+            node_name,
+            server_host,
+            format!("Snapshot restore failed for {}: {}", node_name, error),
+            Some(serde_json::json!({
+                "operation_type": "snapshot_restore",
+                "error_message": error
+            })),
+        )
+        .await
+    }
+
+    /// Alert when auto-restore starts
+    pub async fn alert_auto_restore_started(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        trigger_words: &[String],
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::AutoRestore,
+            AlertSeverity::Warning,
+            node_name,
+            server_host,
+            format!("Auto-restore STARTED for {} due to corruption indicators", node_name),
+            Some(serde_json::json!({
+                "trigger_words": trigger_words,
+                "status": "starting"
+            })),
+        )
+        .await
+    }
+
+    /// Alert when auto-restore completes successfully
+    pub async fn alert_auto_restore_completed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        snapshot_filename: &str,
+        trigger_words: &[String],
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::AutoRestore,
+            AlertSeverity::Info,
+            node_name,
+            server_host,
+            format!("Auto-restore COMPLETED for {} - node should be syncing from restored state", node_name),
+            Some(serde_json::json!({
+                "trigger_words": trigger_words,
+                "status": "completed",
+                "snapshot_filename": snapshot_filename
+            })),
+        )
+        .await
+    }
+
+    /// Alert when auto-restore fails (requires manual intervention)
+    pub async fn alert_auto_restore_failed(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        error: &str,
+        trigger_words: &[String],
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::AutoRestore,
+            AlertSeverity::Critical,
+            node_name,
+            server_host,
+            format!("CRITICAL: Auto-restore failed for {} - manual intervention required", node_name),
+            Some(serde_json::json!({
+                "error_message": error,
+                "trigger_words": trigger_words
+            })),
+        )
+        .await
+    }
+
+    /// Alert for log pattern matches (per-node monitoring)
+    pub async fn alert_log_pattern_match(
+        &self,
+        node_name: &str,
+        server_host: &str,
+        log_path: &str,
+        log_output: &str,
+        patterns: &[String],
+    ) -> Result<()> {
+        self.send_immediate_alert(
+            AlertType::LogPattern,
+            AlertSeverity::Warning,
+            node_name,
+            server_host,
+            "Log pattern match detected".to_string(),
+            Some(serde_json::json!({
+                "log_path": log_path,
+                "log_output": log_output,
+                "patterns": patterns
+            })),
+        )
+        .await
+    }
+
     /// Send recovery alerts when services recover from failure
     async fn send_recovery_alert_if_needed(
         &self,

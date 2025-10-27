@@ -4,10 +4,9 @@
 //
 use crate::config::Config;
 use crate::database::{Database, MaintenanceOperation};
-use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
+use crate::services::alert_service::AlertService;
 use anyhow::Result;
 use chrono::Utc;
-use serde_json::json;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -144,30 +143,18 @@ impl OperationExecutor {
                         error!("Failed to update operation status: {}", update_err);
                     }
 
-                    // Only send failure alerts for SCHEDULED operations
-                    if is_scheduled {
-                        if let Err(alert_err) = alert_service
-                            .send_immediate_alert(
-                                AlertType::Maintenance,
-                                AlertSeverity::Critical,
-                                &target_name_owned,
-                                &server_host_clone,
-                                format!(
-                                    "Scheduled {} failed for {}: {}",
-                                    operation_type_owned, target_name_owned, e
-                                ),
-                                Some(json!({
-                                    "operation_id": operation_id_clone,
-                                    "operation_type": operation_type_owned,
-                                    "status": "failed",
-                                    "error_message": e.to_string(),
-                                    "scheduled": true
-                                })),
-                            )
-                            .await
-                        {
-                            error!("Failed to send failure alert: {}", alert_err);
-                        }
+                    // Alert for operation failure (AlertService decides whether to send based on is_scheduled)
+                    if let Err(alert_err) = alert_service
+                        .alert_operation_failed(
+                            &operation_type_owned,
+                            &target_name_owned,
+                            &server_host_clone,
+                            &e.to_string(),
+                            is_scheduled,
+                        )
+                        .await
+                    {
+                        error!("Failed to send failure alert: {}", alert_err);
                     }
 
                     error!(

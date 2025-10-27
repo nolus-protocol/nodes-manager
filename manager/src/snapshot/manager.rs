@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::{Config, NodeConfig};
 use crate::http::HttpAgentManager;
 use crate::maintenance_tracker::MaintenanceTracker;
-use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
+use crate::services::alert_service::AlertService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotInfo {
@@ -83,48 +83,12 @@ impl SnapshotManager {
                     node_name, snapshot_info.filename
                 );
 
-                // Send completion alert
-                if let Err(e) = self
-                    .alert_service
-                    .send_immediate_alert(
-                        AlertType::Snapshot,
-                        AlertSeverity::Info,
-                        node_name,
-                        &node_config.server_host,
-                        format!(
-                            "Network snapshot restored successfully for {}: {}",
-                            node_name, snapshot_info.filename
-                        ),
-                        Some(serde_json::json!({
-                            "operation_type": "snapshot_restore",
-                            "operation_status": "completed",
-                            "snapshot_filename": snapshot_info.filename,
-                            "network": snapshot_info.network,
-                            "connection_type": "http_agent"
-                        })),
-                    )
-                    .await
-                {
-                    warn!("Failed to send completion notification: {}", e);
-                }
+                // No success alerts - only failures need attention
             }
             Err(e) => {
                 if let Err(alert_err) = self
                     .alert_service
-                    .send_immediate_alert(
-                        AlertType::Snapshot,
-                        AlertSeverity::Critical,
-                        node_name,
-                        &node_config.server_host,
-                        format!("Snapshot restore failed for {}: {}", node_name, e),
-                        Some(serde_json::json!({
-                            "operation_type": "snapshot_restore",
-                            "operation_status": "failed",
-                            "error_message": e.to_string(),
-                            "network": node_config.network,
-                            "connection_type": "http_agent"
-                        })),
-                    )
+                    .alert_snapshot_restore_failed(node_name, &node_config.server_host, &e.to_string())
                     .await
                 {
                     warn!("Failed to send error notification: {}", alert_err);

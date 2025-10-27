@@ -1,9 +1,8 @@
 // File: manager/src/services/state_sync_service.rs
 use crate::config::Config;
 use crate::http::HttpAgentManager;
-use crate::services::alert_service::{AlertService, AlertSeverity, AlertType};
+use crate::services::alert_service::AlertService;
 use anyhow::Result;
-use serde_json::json;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -45,69 +44,21 @@ impl StateSyncService {
 
         info!("Starting state sync for {}", node_name);
 
-        // Send start alert
-        if let Err(e) = self
-            .alert_service
-            .send_immediate_alert(
-                AlertType::Maintenance,
-                AlertSeverity::Info,
-                node_name,
-                server_host,
-                format!("State sync started for {}", node_name),
-                Some(json!({
-                    "operation_type": "state_sync",
-                    "status": "started"
-                })),
-            )
-            .await
-        {
-            error!("Failed to send state sync start alert: {}", e);
-        }
+        // No start/success alerts - only failures need attention
 
         // Execute state sync via HTTP agent manager
         match self.http_manager.execute_state_sync(node_name).await {
             Ok(_) => {
                 info!("State sync completed successfully for {}", node_name);
-
-                // Send success alert
-                if let Err(e) = self
-                    .alert_service
-                    .send_immediate_alert(
-                        AlertType::Maintenance,
-                        AlertSeverity::Info,
-                        node_name,
-                        server_host,
-                        format!("State sync completed successfully for {}", node_name),
-                        Some(json!({
-                            "operation_type": "state_sync",
-                            "status": "completed"
-                        })),
-                    )
-                    .await
-                {
-                    error!("Failed to send state sync completion alert: {}", e);
-                }
-
                 Ok(())
             }
             Err(e) => {
                 error!("State sync failed for {}: {}", node_name, e);
 
-                // Send failure alert
+                // Alert for state sync failure
                 if let Err(alert_err) = self
                     .alert_service
-                    .send_immediate_alert(
-                        AlertType::Maintenance,
-                        AlertSeverity::Critical,
-                        node_name,
-                        server_host,
-                        format!("State sync failed for {}: {}", node_name, e),
-                        Some(json!({
-                            "operation_type": "state_sync",
-                            "status": "failed",
-                            "error_message": e.to_string()
-                        })),
-                    )
+                    .alert_state_sync_failed(node_name, server_host, &e.to_string())
                     .await
                 {
                     error!("Failed to send state sync failure alert: {}", alert_err);
