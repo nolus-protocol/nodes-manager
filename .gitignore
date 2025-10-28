@@ -158,6 +158,8 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+dist-ui/
+ui/dist/
 
 # Python (if using any Python tools)
 **pycache**/

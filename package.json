@@ -1,0 +1,38 @@
+{
+  "name": "nodes-manager",
+  "version": "1.0.0",
+  "description": "[![Tests](https://github.com/nolus-protocol/nodes-manager/actions/workflows/test.yml/badge.svg)](https://github.com/nolus-protocol/nodes-manager/actions/workflows/test.yml) [![Release](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml/badge.svg)](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:check": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nolus-protocol/nodes-manager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/nolus-protocol/nodes-manager/issues"
+  },
+  "homepage": "https://github.com/nolus-protocol/nodes-manager#readme",
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vue-tsc": "^3.1.2"
+  },
+  "dependencies": {
+    "vue": "^3.5.22",
+    "web-components": "github:nolus-protocol/web-components"
+  }
+}
