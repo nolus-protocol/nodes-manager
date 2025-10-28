@@ -73,6 +73,8 @@ async fn start_custom_server(state: AppState) -> Result<()> {
 
 fn create_router(state: AppState) -> Router {
     Router::new()
+        // === ROOT ROUTE ===
+        .route("/", get(handlers::serve_index))
         // === HEALTH MONITORING ROUTES ===
         .route("/api/health/nodes", get(handlers::get_all_nodes_health))
         .route(
@@ -172,11 +174,8 @@ fn create_router(state: AppState) -> Router {
             "/api/maintenance/schedule",
             get(handlers::get_maintenance_schedule),
         )
-        // === STATIC FILES & SPA FALLBACK ===
-        // Serve Vue.js built assets
-        .nest_service("/assets", ServeDir::new("dist-ui/assets"))
-        // Fallback: serve index.html for all non-API routes (SPA support)
-        .fallback(handlers::serve_spa_fallback)
+        // === STATIC FILES ===
+        .nest_service("/static", ServeDir::new("static"))
         // Add middleware
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

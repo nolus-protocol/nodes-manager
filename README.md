@@ -4,21 +4,7 @@
 [![Release](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml/badge.svg)](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a modern Vue 3 web interface with Nolus components.
-
-## Web Interface
-
-The project includes a modern **Vue 3 + TypeScript** web interface built with the official Nolus web-components library, providing:
-
-- **Real-time Dashboard**: Live metrics for all nodes, relayers, and ETL services
-- **Node Management**: Monitor blockchain nodes with status, block height, and network info
-- **Action Controls**: One-click restart, prune, snapshot, restore, and state sync operations
-- **Hermes Monitoring**: Track relayer status and uptime with quick restart controls
-- **ETL Health**: Monitor custom services with response time tracking
-- **Search & Filter**: Quickly find components across your infrastructure
-- **Toast Notifications**: Real-time feedback for all operations
-
-See [ui/README.md](ui/README.md) for detailed frontend documentation.
+A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a centralized web interface.
 
 ## Features
 
@@ -139,16 +125,11 @@ See [ui/README.md](ui/README.md) for detailed frontend documentation.
 
 ### Prerequisites
 
-**Backend:**
 - Rust 1.70+
 - `cosmos-pruner` tool installed on target servers
 - HTTP agent access to all blockchain servers
 - SQLite3
 - `lz4` compression tool installed on target servers (for snapshots)
-
-**Frontend (for UI):**
-- Node.js 18+ (for building the Vue 3 UI)
-- npm or yarn
 
 ### Build & Setup
 
@@ -157,17 +138,11 @@ See [ui/README.md](ui/README.md) for detailed frontend documentation.
 git clone https://github.com/nolus-protocol/nodes-manager.git
 cd nodes-manager
 
-# Install frontend dependencies
-npm install
-
-# Build the Vue 3 UI
-npm run build
-
-# Build backend (release version)
+# Build release version
 cargo build --release
 
 # Create required directories
-mkdir -p data config
+mkdir -p data static config
 
 # Set up configuration files
 # Create your configuration files based on the examples below

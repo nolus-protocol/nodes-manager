@@ -2,7 +2,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Json,
+    response::{Html, Json},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -892,23 +892,6 @@ pub async fn get_maintenance_schedule(State(_state): State<AppState>) -> ApiResu
 
 // === STATIC FILE HANDLER ===
 
-// SPA fallback handler - serves index.html for client-side routing
-pub async fn serve_spa_fallback() -> axum::response::Html<String> {
-    use tokio::fs;
-    // Try to read the index.html file at runtime
-    let content = fs::read_to_string("dist-ui/index.html")
-        .await
-        .unwrap_or_else(|_| {
-            // Fallback to a simple error page if the file doesn't exist
-            r#"<!DOCTYPE html>
-<html>
-<head><title>Nodes Manager</title></head>
-<body>
-    <h1>Nodes Manager</h1>
-    <p>Please build the frontend: <code>npm run build</code></p>
-</body>
-</html>"#
-                .to_string()
-        });
-    axum::response::Html(content)
+pub async fn serve_index() -> Html<&'static str> {
+    Html(include_str!("../../../static/index.html"))
 }
