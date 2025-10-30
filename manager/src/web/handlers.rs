@@ -150,65 +150,83 @@ async fn convert_etl_health_to_summary(
 }
 
 // NOTE: Hermes health is not persisted to database, so we use a timeout-based approach
+// CHANGED: Now runs checks in parallel for better performance
 async fn get_hermes_instances(
     state: &AppState,
     use_timeout: bool,
 ) -> Result<Vec<HermesInstance>, anyhow::Error> {
-    let mut instances = Vec::new();
     let timeout_duration = if use_timeout {
         Duration::from_secs(2) // Fast timeout for cached mode
     } else {
         Duration::from_secs(10) // Normal timeout for refresh mode
     };
 
+    // CHANGED: Spawn parallel tasks instead of sequential loop
+    let mut tasks = Vec::new();
+
     for (hermes_name, hermes_config) in &state.config.hermes {
-        let status = match timeout(
-            timeout_duration,
-            state
-                .http_agent_manager
-                .check_service_status(&hermes_config.server_host, &hermes_config.service_name),
-        )
-        .await
-        {
-            Ok(Ok(service_status)) => format!("{:?}", service_status),
-            Ok(Err(_)) => "Unknown".to_string(),
-            Err(_) => "Timeout".to_string(),
-        };
+        let hermes_name = hermes_name.clone();
+        let hermes_config = hermes_config.clone();
+        let http_manager = state.http_agent_manager.clone();
 
-        let uptime_formatted = match timeout(
-            timeout_duration,
-            state
-                .http_agent_manager
-                .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name),
-        )
-        .await
-        {
-            Ok(Ok(Some(uptime))) => {
-                let total_seconds = uptime.as_secs();
-                let hours = total_seconds / 3600;
-                let minutes = (total_seconds % 3600) / 60;
-                let seconds = total_seconds % 60;
+        let task = tokio::spawn(async move {
+            let status = match timeout(
+                timeout_duration,
+                http_manager
+                    .check_service_status(&hermes_config.server_host, &hermes_config.service_name),
+            )
+            .await
+            {
+                Ok(Ok(service_status)) => format!("{:?}", service_status),
+                Ok(Err(_)) => "Unknown".to_string(),
+                Err(_) => "Timeout".to_string(),
+            };
 
-                if hours > 0 {
-                    Some(format!("{}h {}m {}s", hours, minutes, seconds))
-                } else if minutes > 0 {
-                    Some(format!("{}m {}s", minutes, seconds))
-                } else {
-                    Some(format!("{}s", seconds))
+            let uptime_formatted = match timeout(
+                timeout_duration,
+                http_manager
+                    .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name),
+            )
+            .await
+            {
+                Ok(Ok(Some(uptime))) => {
+                    let total_seconds = uptime.as_secs();
+                    let hours = total_seconds / 3600;
+                    let minutes = (total_seconds % 3600) / 60;
+                    let seconds = total_seconds % 60;
+
+                    if hours > 0 {
+                        Some(format!("{}h {}m {}s", hours, minutes, seconds))
+                    } else if minutes > 0 {
+                        Some(format!("{}m {}s", minutes, seconds))
+                    } else {
+                        Some(format!("{}s", seconds))
+                    }
                 }
-            }
-            _ => Some("Unknown".to_string()),
-        };
+                _ => Some("Unknown".to_string()),
+            };
 
-        instances.push(HermesInstance {
-            name: hermes_name.clone(),
-            server_host: hermes_config.server_host.clone(),
-            service_name: hermes_config.service_name.clone(),
-            status,
-            uptime_formatted,
-            dependent_nodes: hermes_config.dependent_nodes.clone().unwrap_or_default(),
-            in_maintenance: false,
+            HermesInstance {
+                name: hermes_name,
+                server_host: hermes_config.server_host,
+                service_name: hermes_config.service_name,
+                status,
+                uptime_formatted,
+                dependent_nodes: hermes_config.dependent_nodes.unwrap_or_default(),
+                in_maintenance: false,
+            }
         });
+
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete in parallel
+    let mut instances = Vec::new();
+    for task in tasks {
+        match task.await {
+            Ok(instance) => instances.push(instance),
+            Err(e) => error!("Hermes health check task failed: {}", e),
+        }
     }
 
     Ok(instances)
