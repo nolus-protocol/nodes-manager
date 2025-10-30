@@ -78,10 +78,18 @@ fn create_router(state: AppState) -> Router {
         // === HEALTH MONITORING ROUTES ===
         .route("/api/health/nodes", get(handlers::get_all_nodes_health))
         .route(
+            "/api/health/nodes/refresh",
+            post(handlers::refresh_all_nodes_health),
+        )
+        .route(
             "/api/health/nodes/{node_name}",
             get(handlers::get_node_health),
         )
         .route("/api/health/hermes", get(handlers::get_all_hermes_health))
+        .route(
+            "/api/health/hermes/refresh",
+            post(handlers::refresh_all_hermes_health),
+        )
         .route(
             "/api/health/hermes/{hermes_name}",
             get(handlers::get_hermes_health),

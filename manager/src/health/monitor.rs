@@ -944,6 +944,52 @@ impl HealthMonitor {
         }
     }
 
+    // NEW: Get all nodes health from cached database records (fast)
+    pub async fn get_all_nodes_health_cached(&self) -> Result<Vec<HealthStatus>> {
+        let mut health_statuses = Vec::new();
+
+        for (node_name, node_config) in &self.config.nodes {
+            if !node_config.enabled {
+                continue;
+            }
+
+            match self.get_node_health(node_name).await {
+                Ok(Some(status)) => health_statuses.push(status),
+                Ok(None) => {
+                    // No cached data available - return empty status
+                    debug!("No cached health data for {}", node_name);
+                }
+                Err(e) => {
+                    error!("Failed to get cached health for {}: {}", node_name, e);
+                }
+            }
+        }
+
+        Ok(health_statuses)
+    }
+
+    // NEW: Get all ETL services health from cached database records (fast)
+    pub async fn get_all_etl_health_cached(&self) -> Result<Vec<EtlHealthStatus>> {
+        let mut etl_statuses = Vec::new();
+
+        for service_name in self.config.etl.keys() {
+            match self.get_etl_service_health(service_name).await {
+                Ok(Some(status)) => etl_statuses.push(status),
+                Ok(None) => {
+                    debug!("No cached health data for ETL service {}", service_name);
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to get cached ETL health for {}: {}",
+                        service_name, e
+                    );
+                }
+            }
+        }
+
+        Ok(etl_statuses)
+    }
+
     async fn store_health_record(&self, status: &HealthStatus) -> Result<()> {
         let record = HealthRecord {
             node_name: status.node_name.clone(),

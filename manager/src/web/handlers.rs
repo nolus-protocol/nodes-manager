@@ -7,6 +7,8 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::{error, info};
 
 use crate::operation_tracker::OperationStatus;
@@ -147,25 +149,41 @@ async fn convert_etl_health_to_summary(
     }
 }
 
-async fn get_hermes_instances(state: &AppState) -> Result<Vec<HermesInstance>, anyhow::Error> {
+// NOTE: Hermes health is not persisted to database, so we use a timeout-based approach
+async fn get_hermes_instances(
+    state: &AppState,
+    use_timeout: bool,
+) -> Result<Vec<HermesInstance>, anyhow::Error> {
     let mut instances = Vec::new();
+    let timeout_duration = if use_timeout {
+        Duration::from_secs(2) // Fast timeout for cached mode
+    } else {
+        Duration::from_secs(10) // Normal timeout for refresh mode
+    };
 
     for (hermes_name, hermes_config) in &state.config.hermes {
-        let status = match state
-            .http_agent_manager
-            .check_service_status(&hermes_config.server_host, &hermes_config.service_name)
-            .await
+        let status = match timeout(
+            timeout_duration,
+            state
+                .http_agent_manager
+                .check_service_status(&hermes_config.server_host, &hermes_config.service_name),
+        )
+        .await
         {
-            Ok(service_status) => format!("{:?}", service_status),
-            Err(_) => "Unknown".to_string(),
+            Ok(Ok(service_status)) => format!("{:?}", service_status),
+            Ok(Err(_)) => "Unknown".to_string(),
+            Err(_) => "Timeout".to_string(),
         };
 
-        let uptime_formatted = match state
-            .http_agent_manager
-            .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name)
-            .await
+        let uptime_formatted = match timeout(
+            timeout_duration,
+            state
+                .http_agent_manager
+                .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name),
+        )
+        .await
         {
-            Ok(Some(uptime)) => {
+            Ok(Ok(Some(uptime))) => {
                 let total_seconds = uptime.as_secs();
                 let hours = total_seconds / 3600;
                 let minutes = (total_seconds % 3600) / 60;
@@ -198,10 +216,40 @@ async fn get_hermes_instances(state: &AppState) -> Result<Vec<HermesInstance>, a
 
 // === HEALTH MONITORING ENDPOINTS ===
 
+// CHANGED: Now returns cached data from database for instant response
 pub async fn get_all_nodes_health(
     Query(query): Query<IncludeDisabledQuery>,
     State(state): State<AppState>,
 ) -> ApiResult<Vec<NodeHealthSummary>> {
+    match state.health_monitor.get_all_nodes_health_cached().await {
+        Ok(health_statuses) => {
+            let mut summaries = Vec::new();
+
+            for health in health_statuses {
+                if query.include_disabled || health.enabled {
+                    let summary = convert_health_to_summary(&health, &state.config).await;
+                    summaries.push(summary);
+                }
+            }
+
+            Ok(Json(ApiResponse::success(summaries)))
+        }
+        Err(e) => {
+            error!("Failed to get all nodes health (cached): {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
+        }
+    }
+}
+
+// NEW: Triggers fresh health checks for all nodes (for refresh button)
+pub async fn refresh_all_nodes_health(
+    Query(query): Query<IncludeDisabledQuery>,
+    State(state): State<AppState>,
+) -> ApiResult<Vec<NodeHealthSummary>> {
+    info!("Manual refresh requested for all nodes health");
     match state.health_monitor.check_all_nodes().await {
         Ok(health_statuses) => {
             let mut summaries = Vec::new();
@@ -216,7 +264,7 @@ pub async fn get_all_nodes_health(
             Ok(Json(ApiResponse::success(summaries)))
         }
         Err(e) => {
-            error!("Failed to get all nodes health: {}", e);
+            error!("Failed to refresh all nodes health: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiResponse::error(e.to_string())),
@@ -248,13 +296,31 @@ pub async fn get_node_health(
     }
 }
 
+// CHANGED: Now uses fast timeout for cached-like behavior
 pub async fn get_all_hermes_health(
     State(state): State<AppState>,
 ) -> ApiResult<Vec<HermesInstance>> {
-    match get_hermes_instances(&state).await {
+    match get_hermes_instances(&state, true).await {
         Ok(hermes_instances) => Ok(Json(ApiResponse::success(hermes_instances))),
         Err(e) => {
             error!("Failed to get all hermes health: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string())),
+            ))
+        }
+    }
+}
+
+// NEW: Triggers fresh hermes checks with longer timeout (for refresh button)
+pub async fn refresh_all_hermes_health(
+    State(state): State<AppState>,
+) -> ApiResult<Vec<HermesInstance>> {
+    info!("Manual refresh requested for all hermes instances");
+    match get_hermes_instances(&state, false).await {
+        Ok(hermes_instances) => Ok(Json(ApiResponse::success(hermes_instances))),
+        Err(e) => {
+            error!("Failed to refresh all hermes health: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiResponse::error(e.to_string())),
@@ -267,7 +333,7 @@ pub async fn get_hermes_health(
     Path(hermes_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<HermesInstance> {
-    match get_hermes_instances(&state).await {
+    match get_hermes_instances(&state, true).await {
         Ok(instances) => {
             if let Some(instance) = instances.into_iter().find(|i| i.name == hermes_name) {
                 Ok(Json(ApiResponse::success(instance)))
@@ -293,11 +359,12 @@ pub async fn get_hermes_health(
 
 // === NEW: ETL SERVICE HEALTH ENDPOINTS ===
 
+// CHANGED: Now returns cached data from database for instant response
 pub async fn get_all_etl_health(
     Query(query): Query<IncludeDisabledQuery>,
     State(state): State<AppState>,
 ) -> ApiResult<Vec<EtlServiceSummary>> {
-    match state.health_monitor.check_all_etl_services().await {
+    match state.health_monitor.get_all_etl_health_cached().await {
         Ok(etl_statuses) => {
             let mut summaries = Vec::new();
 
@@ -311,7 +378,7 @@ pub async fn get_all_etl_health(
             Ok(Json(ApiResponse::success(summaries)))
         }
         Err(e) => {
-            error!("Failed to get all ETL services health: {}", e);
+            error!("Failed to get all ETL services health (cached): {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiResponse::error(e.to_string())),
