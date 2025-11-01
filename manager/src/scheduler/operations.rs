@@ -1,6 +1,6 @@
 // File: manager/src/scheduler/operations.rs
 use crate::config::Config;
-use crate::services::{HermesService, MaintenanceService};
+use crate::services::{HermesService, MaintenanceService, StateSyncService};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::sync::Arc;
@@ -11,6 +11,7 @@ pub struct MaintenanceScheduler {
     config: Arc<Config>,
     maintenance_service: Arc<MaintenanceService>,
     hermes_service: Arc<HermesService>,
+    state_sync_service: Arc<StateSyncService>,
     scheduler: JobScheduler,
 }
 
@@ -19,6 +20,7 @@ impl MaintenanceScheduler {
         config: Arc<Config>,
         maintenance_service: Arc<MaintenanceService>,
         hermes_service: Arc<HermesService>,
+        state_sync_service: Arc<StateSyncService>,
     ) -> Result<Self> {
         let scheduler = JobScheduler::new()
             .await
@@ -28,6 +30,7 @@ impl MaintenanceScheduler {
             config,
             maintenance_service,
             hermes_service,
+            state_sync_service,
             scheduler,
         })
     }
@@ -132,6 +135,35 @@ impl MaintenanceScheduler {
                             hermes_name, e, schedule
                         );
                     }
+                }
+            }
+        }
+
+        // Schedule state sync operations
+        for (node_name, node_config) in &self.config.nodes {
+            if let Some(schedule) = &node_config.state_sync_schedule {
+                if node_config.state_sync_enabled.unwrap_or(false) {
+                    info!(
+                        "Attempting to schedule state sync for {}: '{}'",
+                        node_name, schedule
+                    );
+                    match self
+                        .schedule_state_sync_job(node_name.clone(), schedule.clone())
+                        .await
+                    {
+                        Ok(_) => {
+                            scheduled_count += 1;
+                            info!("✓ Scheduled state sync for {}: {}", node_name, schedule);
+                        }
+                        Err(e) => {
+                            error!(
+                                "✗ Failed to schedule state sync for {}: {} (schedule: {})",
+                                node_name, e, schedule
+                            );
+                        }
+                    }
+                } else {
+                    info!("State sync disabled for {}, skipping schedule", node_name);
                 }
             }
         }
@@ -262,6 +294,41 @@ impl MaintenanceScheduler {
                             "✗ Scheduled Hermes restart failed for {}: {}",
                             hermes_name, e
                         );
+                    }
+                }
+            })
+        })
+        .map_err(|e| anyhow!("Failed to create cron job: {}", e))?;
+
+        self.scheduler
+            .add(job)
+            .await
+            .map_err(|e| anyhow!("Failed to add job to scheduler: {}", e))?;
+
+        Ok(())
+    }
+
+    async fn schedule_state_sync_job(&self, node_name: String, schedule: String) -> Result<()> {
+        self.validate_6_field_cron(&schedule)
+            .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
+
+        let state_sync_service = self.state_sync_service.clone();
+        let node_name_clone = node_name.clone();
+
+        let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
+            let state_sync_service = state_sync_service.clone();
+            let node_name = node_name_clone.clone();
+
+            Box::pin(async move {
+                info!("🔄 Executing scheduled state sync for {}", node_name);
+
+                // Use StateSyncService which includes AlertService integration
+                match state_sync_service.execute_state_sync(&node_name).await {
+                    Ok(_) => {
+                        info!("✓ Scheduled state sync completed for {}", node_name);
+                    }
+                    Err(e) => {
+                        error!("✗ Scheduled state sync failed for {}: {}", node_name, e);
                     }
                 }
             })

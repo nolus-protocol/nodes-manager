@@ -253,6 +253,7 @@ async fn main() -> Result<()> {
             config.clone(),
             maintenance_service.clone(),
             hermes_service.clone(),
+            state_sync_service.clone(),
         )
         .await?,
     );
