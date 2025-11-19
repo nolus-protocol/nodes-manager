@@ -999,9 +999,8 @@ impl HealthMonitor {
     async fn fetch_solana_health(&self, rpc_url: &str) -> Result<String> {
         let request_body = serde_json::json!({
             "jsonrpc": "2.0",
-            "method": "getHealth",
-            "params": [],
-            "id": Uuid::new_v4().to_string()
+            "id": 1,
+            "method": "getHealth"
         });
 
         let response = timeout(
@@ -1043,9 +1042,8 @@ impl HealthMonitor {
     async fn fetch_solana_slot(&self, rpc_url: &str) -> Result<i64> {
         let request_body = serde_json::json!({
             "jsonrpc": "2.0",
-            "method": "getSlot",
-            "params": [],
-            "id": Uuid::new_v4().to_string()
+            "id": 1,
+            "method": "getSlot"
         });
 
         let response = timeout(
