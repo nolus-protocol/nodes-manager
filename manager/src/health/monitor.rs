@@ -757,7 +757,12 @@ impl HealthMonitor {
         node_config: &NodeConfig,
     ) -> Result<HealthStatus> {
         // Route to Solana-specific health check if network is Solana
-        if node_config.network.starts_with("solana") {
+        // Check for: solana-*, mainnet-beta, testnet, devnet
+        let network_lower = node_config.network.to_lowercase();
+        if network_lower.starts_with("solana")
+            || network_lower == "mainnet-beta"
+            || network_lower == "testnet"
+            || network_lower == "devnet" {
             return self.check_solana_node_health(node_name, node_config).await;
         }
 
