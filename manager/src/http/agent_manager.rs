@@ -756,6 +756,7 @@ impl HttpAgentManager {
             n if n.starts_with("neutron") => "neutrond".to_string(),
             n if n.starts_with("rila") => "rila".to_string(),
             n if n.starts_with("cosmos") => "gaiad".to_string(),
+            n if n.starts_with("solana") => "agave-validator".to_string(),
             _ => format!("{}d", network.split('-').next().unwrap_or(network)),
         }
     }

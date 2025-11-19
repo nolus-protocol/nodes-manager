@@ -163,34 +163,68 @@ impl ConfigManager {
     }
 
     /// Fetch network ID from RPC /status endpoint
-    /// Returns the network field from the response (e.g., "pirin-1", "osmosis-1")
+    /// Returns the network field from the response (e.g., "pirin-1", "osmosis-1", "solana-mainnet", "solana-testnet", "solana-devnet")
     async fn fetch_network_from_rpc(rpc_url: &str) -> Result<String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()?;
 
+        // First try Cosmos SDK format (GET /status)
         let status_url = format!("{}/status", rpc_url);
+        let response = client.get(&status_url).send().await;
+
+        if let Ok(response) = response {
+            if response.status().is_success() {
+                if let Ok(json) = response.json::<Value>().await {
+                    // Extract network from Cosmos response: result.node_info.network
+                    if let Some(network) = json["result"]["node_info"]["network"].as_str() {
+                        return Ok(network.to_string());
+                    }
+                }
+            }
+        }
+
+        // If Cosmos format failed, try Solana JSON-RPC format
+        // Use getVersion to detect cluster type
+        let solana_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getVersion",
+            "params": [],
+            "id": 1
+        });
+
         let response = client
-            .get(&status_url)
+            .post(rpc_url)
+            .json(&solana_request)
             .send()
             .await
-            .map_err(|e| anyhow!("Failed to fetch RPC status from {}: {}", status_url, e))?;
+            .map_err(|e| anyhow!("Failed to fetch Solana RPC version from {}: {}", rpc_url, e))?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("RPC status returned HTTP {}", response.status()));
+            return Err(anyhow!("Solana RPC returned HTTP {}", response.status()));
         }
 
         let json: Value = response
             .json()
             .await
-            .map_err(|e| anyhow!("Failed to parse RPC status response: {}", e))?;
+            .map_err(|e| anyhow!("Failed to parse Solana RPC response: {}", e))?;
 
-        // Extract network from response: result.node_info.network
-        let network = json["result"]["node_info"]["network"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Network field not found in RPC response"))?
-            .to_string();
+        // If we got a valid Solana response, try to determine the cluster
+        if json.get("result").is_some() {
+            // Try to detect cluster from RPC URL patterns
+            let network = if rpc_url.contains("mainnet") {
+                "solana-mainnet".to_string()
+            } else if rpc_url.contains("testnet") {
+                "solana-testnet".to_string()
+            } else if rpc_url.contains("devnet") {
+                "solana-devnet".to_string()
+            } else {
+                // Default to mainnet if we can't determine
+                "solana-mainnet".to_string()
+            };
+            return Ok(network);
+        }
 
-        Ok(network)
+        Err(anyhow!("Could not detect network type from RPC"))
     }
 }

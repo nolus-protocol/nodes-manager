@@ -88,6 +88,23 @@ pub struct RpcError {
     pub message: String,
 }
 
+// Solana-specific RPC response structures
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolanaRpcResponse {
+    pub jsonrpc: String,
+    pub id: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<RpcError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolanaVersionInfo {
+    #[serde(rename = "solana-core")]
+    pub solana_core: String,
+    #[serde(rename = "feature-set", default)]
+    pub feature_set: Option<u32>,
+}
+
 // Auto-restore cooldown tracking
 #[derive(Debug, Clone)]
 struct AutoRestoreCooldown {
@@ -739,6 +756,12 @@ impl HealthMonitor {
         node_name: &str,
         node_config: &NodeConfig,
     ) -> Result<HealthStatus> {
+        // Route to Solana-specific health check if network is Solana
+        if node_config.network.starts_with("solana") {
+            return self.check_solana_node_health(node_name, node_config).await;
+        }
+
+        // Cosmos SDK node health check (default)
         let mut status = HealthStatus {
             node_name: node_name.to_string(),
             rpc_url: node_config.rpc_url.clone(),
@@ -907,6 +930,156 @@ impl HealthMonitor {
             .map_err(|e| anyhow!("Failed to parse JSON response: {}", e))?;
 
         Ok(rpc_response)
+    }
+
+    // Solana-specific health check
+    pub async fn check_solana_node_health(
+        &self,
+        node_name: &str,
+        node_config: &NodeConfig,
+    ) -> Result<HealthStatus> {
+        let mut status = HealthStatus {
+            node_name: node_name.to_string(),
+            rpc_url: node_config.rpc_url.clone(),
+            is_healthy: false,
+            error_message: None,
+            last_check: Utc::now(),
+            block_height: None,
+            is_syncing: None,
+            is_catching_up: false,
+            validator_address: None,
+            network: node_config.network.clone(),
+            server_host: node_config.server_host.clone(),
+            enabled: node_config.enabled,
+            in_maintenance: false,
+        };
+
+        // Try to get health status and slot number in parallel
+        let health_result = self.fetch_solana_health(&node_config.rpc_url).await;
+        let slot_result = self.fetch_solana_slot(&node_config.rpc_url).await;
+
+        match (health_result, slot_result) {
+            (Ok(_), Ok(current_slot)) => {
+                // Both health and slot succeeded
+                status.block_height = Some(current_slot);
+
+                // Check slot progression (similar to block progression for Cosmos)
+                let slot_progression_healthy = self
+                    .check_block_progression(node_name, current_slot)
+                    .await;
+
+                // Solana's getHealth returns "ok" if healthy, so we combine with slot progression
+                status.is_healthy = slot_progression_healthy;
+                status.is_syncing = Some(!slot_progression_healthy);
+                status.is_catching_up = !slot_progression_healthy;
+
+                if !status.is_healthy {
+                    status.error_message = Some("Slot height not progressing".to_string());
+                }
+            }
+            (Ok(_), Err(slot_err)) => {
+                // Health OK but slot fetch failed
+                status.error_message = Some(format!("Failed to get slot: {}", slot_err));
+            }
+            (Err(health_err), Ok(current_slot)) => {
+                // Health check failed but got slot
+                status.block_height = Some(current_slot);
+                status.error_message = Some(format!("Health check failed: {}", health_err));
+            }
+            (Err(health_err), Err(_)) => {
+                // Both failed
+                status.error_message = Some(format!("Health check failed: {}", health_err));
+            }
+        }
+
+        Ok(status)
+    }
+
+    // Fetch Solana health status via getHealth RPC method
+    async fn fetch_solana_health(&self, rpc_url: &str) -> Result<String> {
+        let request_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getHealth",
+            "params": [],
+            "id": Uuid::new_v4().to_string()
+        });
+
+        let response = timeout(
+            Duration::from_secs(self.config.rpc_timeout_seconds),
+            self.client.post(rpc_url).json(&request_body).send(),
+        )
+        .await
+        .map_err(|_| anyhow!("Solana RPC request timeout"))?
+        .map_err(|e| anyhow!("Solana HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "HTTP error {}: {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            ));
+        }
+
+        let rpc_response: SolanaRpcResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Failed to parse Solana JSON response: {}", e))?;
+
+        if let Some(error) = rpc_response.error {
+            return Err(anyhow!("Solana RPC Error: {}", error.message));
+        }
+
+        // getHealth returns "ok" string on success
+        if let Some(result) = rpc_response.result {
+            if result.is_string() && result.as_str() == Some("ok") {
+                return Ok("ok".to_string());
+            }
+        }
+
+        Err(anyhow!("Unexpected Solana health response format"))
+    }
+
+    // Fetch Solana current slot via getSlot RPC method
+    async fn fetch_solana_slot(&self, rpc_url: &str) -> Result<i64> {
+        let request_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getSlot",
+            "params": [],
+            "id": Uuid::new_v4().to_string()
+        });
+
+        let response = timeout(
+            Duration::from_secs(self.config.rpc_timeout_seconds),
+            self.client.post(rpc_url).json(&request_body).send(),
+        )
+        .await
+        .map_err(|_| anyhow!("Solana slot request timeout"))?
+        .map_err(|e| anyhow!("Solana slot HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "HTTP error {}: {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            ));
+        }
+
+        let rpc_response: SolanaRpcResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Failed to parse Solana slot JSON response: {}", e))?;
+
+        if let Some(error) = rpc_response.error {
+            return Err(anyhow!("Solana RPC Error: {}", error.message));
+        }
+
+        if let Some(result) = rpc_response.result {
+            if let Some(slot) = result.as_u64() {
+                return Ok(slot as i64);
+            }
+        }
+
+        Err(anyhow!("Unexpected Solana slot response format"))
     }
 
     pub async fn get_node_health(&self, node_name: &str) -> Result<Option<HealthStatus>> {
