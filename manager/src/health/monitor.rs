@@ -93,7 +93,7 @@ pub struct RpcError {
 pub struct SolanaRpcResponse {
     pub jsonrpc: String,
     #[serde(default)]
-    pub id: serde_json::Value,  // Can be string or number
+    pub id: serde_json::Value, // Can be string or number
     pub result: Option<serde_json::Value>,
     pub error: Option<RpcError>,
 }
@@ -763,7 +763,8 @@ impl HealthMonitor {
         if network_lower.starts_with("solana")
             || network_lower == "mainnet-beta"
             || network_lower == "testnet"
-            || network_lower == "devnet" {
+            || network_lower == "devnet"
+        {
             return self.check_solana_node_health(node_name, node_config).await;
         }
 
@@ -970,9 +971,8 @@ impl HealthMonitor {
                 status.block_height = Some(current_slot);
 
                 // Check slot progression (similar to block progression for Cosmos)
-                let slot_progression_healthy = self
-                    .check_block_progression(node_name, current_slot)
-                    .await;
+                let slot_progression_healthy =
+                    self.check_block_progression(node_name, current_slot).await;
 
                 // Solana's getHealth returns "ok" if healthy, so we combine with slot progression
                 status.is_healthy = slot_progression_healthy;
