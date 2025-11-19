@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
             check_count += 1;
 
             // Log periodic health check status for debugging
-            if check_count % 10 == 0 {
+            if check_count.is_multiple_of(10) {
                 info!(
                     "Health monitoring cycle #{} - Alert service enabled: {}",
                     check_count,

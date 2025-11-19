@@ -98,14 +98,6 @@ pub struct SolanaRpcResponse {
     pub error: Option<RpcError>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SolanaVersionInfo {
-    #[serde(rename = "solana-core")]
-    pub solana_core: String,
-    #[serde(rename = "feature-set", default)]
-    pub feature_set: Option<u32>,
-}
-
 // Auto-restore cooldown tracking
 #[derive(Debug, Clone)]
 struct AutoRestoreCooldown {
