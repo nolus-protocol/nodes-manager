@@ -262,6 +262,7 @@ impl StateSyncManager {
             n if n.starts_with("neutron") => "neutrond".to_string(),
             n if n.starts_with("rila") => "rila".to_string(),
             n if n.starts_with("cosmos") => "gaiad".to_string(),
+            n if n.starts_with("solana") => "agave-validator".to_string(),
             _ => {
                 // Default: try to extract daemon name from network
                 format!("{}d", network.split('-').next().unwrap_or(network))
