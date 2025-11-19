@@ -92,7 +92,8 @@ pub struct RpcError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolanaRpcResponse {
     pub jsonrpc: String,
-    pub id: String,
+    #[serde(default)]
+    pub id: serde_json::Value,  // Can be string or number
     pub result: Option<serde_json::Value>,
     pub error: Option<RpcError>,
 }
