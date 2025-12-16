@@ -252,6 +252,7 @@ async fn main() -> Result<()> {
         MaintenanceScheduler::new(
             config.clone(),
             maintenance_service.clone(),
+            snapshot_service_v2.clone(),
             hermes_service.clone(),
             state_sync_service.clone(),
         )

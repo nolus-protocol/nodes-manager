@@ -1,6 +1,6 @@
 // File: manager/src/scheduler/operations.rs
 use crate::config::Config;
-use crate::services::{HermesService, MaintenanceService, StateSyncService};
+use crate::services::{HermesService, MaintenanceService, SnapshotService, StateSyncService};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use tracing::{error, info, instrument, warn};
 pub struct MaintenanceScheduler {
     config: Arc<Config>,
     maintenance_service: Arc<MaintenanceService>,
+    snapshot_service: Arc<SnapshotService>,
     hermes_service: Arc<HermesService>,
     state_sync_service: Arc<StateSyncService>,
     scheduler: JobScheduler,
@@ -19,6 +20,7 @@ impl MaintenanceScheduler {
     pub async fn new(
         config: Arc<Config>,
         maintenance_service: Arc<MaintenanceService>,
+        snapshot_service: Arc<SnapshotService>,
         hermes_service: Arc<HermesService>,
         state_sync_service: Arc<StateSyncService>,
     ) -> Result<Self> {
@@ -29,6 +31,7 @@ impl MaintenanceScheduler {
         Ok(Self {
             config,
             maintenance_service,
+            snapshot_service,
             hermes_service,
             state_sync_service,
             scheduler,
@@ -230,11 +233,22 @@ impl MaintenanceScheduler {
             .map_err(|e| anyhow!("Invalid 6-field cron schedule '{}': {}", schedule, e))?;
 
         let maintenance_service = self.maintenance_service.clone();
+        let snapshot_service = self.snapshot_service.clone();
         let node_name_clone = node_name.clone();
+
+        // Get the retention count from config (if configured)
+        let retention_count = self
+            .config
+            .nodes
+            .get(&node_name)
+            .and_then(|c| c.snapshot_retention_count)
+            .map(|c| c as u32);
 
         let job = Job::new_async_tz(schedule.as_str(), Utc, move |_uuid, _scheduler| {
             let maintenance_service = maintenance_service.clone();
+            let snapshot_service = snapshot_service.clone();
             let node_name = node_name_clone.clone();
+            let retention_count = retention_count;
 
             Box::pin(async move {
                 info!("📸 Executing scheduled snapshot for {}", node_name);
@@ -249,6 +263,40 @@ impl MaintenanceScheduler {
                             "✓ Scheduled snapshot completed for {} (operation_id: {})",
                             node_name, operation_id
                         );
+
+                        // Clean up old snapshots if retention_count is configured
+                        if let Some(retention) = retention_count {
+                            info!(
+                                "🧹 Running snapshot cleanup for {} (keeping {} most recent)",
+                                node_name, retention
+                            );
+                            match snapshot_service
+                                .cleanup_old_snapshots(&node_name, retention)
+                                .await
+                            {
+                                Ok(result) => {
+                                    if let Some(deleted) = result.get("deleted_count").and_then(|v| v.as_u64()) {
+                                        if deleted > 0 {
+                                            info!(
+                                                "✓ Snapshot cleanup completed for {}: deleted {} old snapshots",
+                                                node_name, deleted
+                                            );
+                                        } else {
+                                            info!(
+                                                "✓ Snapshot cleanup completed for {}: no old snapshots to delete",
+                                                node_name
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "✗ Snapshot cleanup failed for {}: {}",
+                                        node_name, e
+                                    );
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("✗ Scheduled snapshot failed for {}: {}", node_name, e);
