@@ -9,7 +9,7 @@ import {
   cn,
 } from '@kostovster/ui';
 import { 
-  Activity, 
+  History, 
   Scissors, 
   Camera, 
   RotateCcw, 
@@ -59,7 +59,7 @@ export function ActivityFeed({ activities, isLoading = false, maxHeight = '400px
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Activity className="h-5 w-5" />
+              <History className="h-5 w-5" />
               Recent Activity
             </CardTitle>
           </div>
@@ -87,7 +87,7 @@ export function ActivityFeed({ activities, isLoading = false, maxHeight = '400px
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Activity className="h-5 w-5" />
+            <History className="h-5 w-5" />
             Recent Activity
           </CardTitle>
           <Badge variant="secondary" className="text-xs">
@@ -98,7 +98,7 @@ export function ActivityFeed({ activities, isLoading = false, maxHeight = '400px
       <CardContent>
         {activities.length === 0 ? (
           <div className="py-8 text-center text-muted-foreground">
-            <Activity className="h-10 w-10 mx-auto mb-3 opacity-50" />
+            <History className="h-10 w-10 mx-auto mb-3 opacity-50" />
             <p className="font-medium">No recent activity</p>
             <p className="text-sm">Operations will appear here when executed</p>
           </div>
@@ -106,7 +106,7 @@ export function ActivityFeed({ activities, isLoading = false, maxHeight = '400px
           <ScrollArea style={{ height: maxHeight }}>
             <div className="space-y-1 pr-4">
               {activities.map((activity) => {
-                const OperationIcon = operationIcons[activity.operation_type] || Activity;
+                const OperationIcon = operationIcons[activity.operation_type] || Clock;
                 const status = statusConfig[activity.status] || statusConfig.pending;
                 const StatusIcon = status.icon;
 
