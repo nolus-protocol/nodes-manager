@@ -248,7 +248,7 @@ export function ServicesPage({
                 <p className="text-sm">Try adjusting your search or filter</p>
               </div>
             ) : (
-              <ScrollArea className="h-[500px]">
+              <ScrollArea className="h-125">
                 <Table>
                   <TableHeader>
                     <TableRow>

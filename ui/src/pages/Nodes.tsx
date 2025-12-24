@@ -192,7 +192,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                 <p className="text-sm">Try adjusting your search or filter</p>
               </div>
             ) : (
-              <ScrollArea className="h-[600px]">
+              <ScrollArea className="h-150">
                 <Table>
                   <TableHeader>
                     <TableRow>
