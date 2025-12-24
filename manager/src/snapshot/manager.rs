@@ -145,11 +145,17 @@ impl SnapshotManager {
             anyhow::anyhow!("No snapshot backup path configured for node {}", node_name)
         })?;
 
-        // FIXED: Enhanced listing command with better error handling
+        // List snapshot directories with their corresponding .tar.lz4 file sizes
+        // Format: directory_path lz4_size timestamp
         let list_cmd = format!(
             "find '{}' -maxdepth 1 -type d -name '{}_*' 2>/dev/null | while read dir; do \
              if [ -d \"$dir\" ]; then \
-               stat -c '%n %s %Y' \"$dir\" 2>/dev/null || echo \"$dir 0 0\"; \
+               lz4_file=\"$dir.tar.lz4\"; \
+               if [ -f \"$lz4_file\" ]; then \
+                 stat -c '%Y' \"$dir\" 2>/dev/null | xargs -I{{}} echo \"$dir $(stat -c '%s' \"$lz4_file\" 2>/dev/null || echo 0) {{}}\"; \
+               else \
+                 stat -c '%n 0 %Y' \"$dir\" 2>/dev/null || echo \"$dir 0 0\"; \
+               fi; \
              fi; \
              done | sort -k3 -nr",
             backup_path, node_config.network

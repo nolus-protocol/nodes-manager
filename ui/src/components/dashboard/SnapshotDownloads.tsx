@@ -23,6 +23,8 @@ interface SnapshotInfo {
   file_size_bytes?: number;
 }
 
+const SNAPSHOT_BASE_URL = 'https://snapshots.nolus.network/backup/snapshots';
+
 interface SnapshotDownloadsProps {
   nodeNames: string[];
   isLoading?: boolean;
@@ -159,14 +161,14 @@ export function SnapshotDownloads({ nodeNames, isLoading = false }: SnapshotDown
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{snapshot.network}</span>
-                    {snapshot.file_size_bytes && (
+                    {snapshot.file_size_bytes && snapshot.file_size_bytes > 0 && (
                       <Badge variant="outline" className="text-xs">
                         {formatBytes(snapshot.file_size_bytes)}
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground truncate mt-0.5">
-                    {snapshot.filename}
+                    {snapshot.filename}.tar.lz4
                   </p>
                 </div>
                 <Tooltip>
@@ -175,15 +177,16 @@ export function SnapshotDownloads({ nodeNames, isLoading = false }: SnapshotDown
                       variant="outline"
                       size="icon"
                       onClick={() => {
-                        navigator.clipboard.writeText(snapshot.snapshot_path);
-                        toast.success('Path copied to clipboard');
+                        const downloadUrl = `${SNAPSHOT_BASE_URL}/${snapshot.filename}.tar.lz4`;
+                        navigator.clipboard.writeText(downloadUrl);
+                        toast.success('Download URL copied to clipboard');
                       }}
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Copy snapshot path</p>
+                    <p>Copy download URL</p>
                   </TooltipContent>
                 </Tooltip>
               </div>

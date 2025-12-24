@@ -1,11 +1,12 @@
 import { useMemo, useState, useEffect } from 'react';
 import { TooltipProvider } from '@kostovster/ui';
-import { Boxes, CheckCircle2, Server } from 'lucide-react';
+import { Boxes, Server, Activity, Layers } from 'lucide-react';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ActivityFeed, ActivityItem } from '@/components/dashboard/ActivityFeed';
 import { UpcomingSchedule } from '@/components/dashboard/UpcomingSchedule';
 import { SnapshotStats } from '@/components/dashboard/SnapshotStats';
 import { SnapshotDownloads } from '@/components/dashboard/SnapshotDownloads';
+import { IssuesPanel } from '@/components/dashboard/IssuesPanel';
 import { fetchActiveOperations } from '@/api/client';
 import type { NodeHealth, NodeConfig, HermesHealth, EtlHealth } from '@/types';
 
@@ -15,9 +16,11 @@ interface DashboardProps {
   hermes: HermesHealth[];
   etl: EtlHealth[];
   isLoading?: boolean;
+  onNavigateToNodes?: () => void;
+  onNavigateToServices?: () => void;
 }
 
-export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }: DashboardProps) {
+export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false, onNavigateToNodes, onNavigateToServices }: DashboardProps) {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [activitiesLoading, setActivitiesLoading] = useState(true);
 
@@ -65,11 +68,10 @@ export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }
       (e) => e.status.toLowerCase() === 'healthy'
     ).length;
 
-    const totalComponents = totalNodes + totalHermes + totalEtl;
-    const healthyComponents = healthyNodes + runningHermes + healthyEtl;
-    const healthPercentage = totalComponents > 0 
-      ? Math.round((healthyComponents / totalComponents) * 100) 
-      : 0;
+    // Services = Hermes + ETL only (not nodes)
+    const totalServices = totalHermes + totalEtl;
+    const healthyServices = runningHermes + healthyEtl;
+    const serviceIssues = totalServices - healthyServices;
 
     const uniqueServers = new Set([
       ...nodes.map((n) => n.server_host),
@@ -77,23 +79,40 @@ export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }
       ...etl.map((e) => e.server_host),
     ]).size;
 
+    // Unique networks
+    const uniqueNetworks = new Set(nodes.map((n) => n.network)).size;
+
     return {
       totalNodes,
       healthyNodes,
       unhealthyNodes,
-      totalComponents,
-      healthyComponents,
-      healthPercentage,
+      totalServices,
+      healthyServices,
+      serviceIssues,
       uniqueServers,
+      uniqueNetworks,
     };
   }, [nodes, hermes, etl]);
+
+  // Active operations count
+  const activeOperationsCount = useMemo(() => {
+    return activities.filter((a) => a.status === 'in_progress').length;
+  }, [activities]);
 
   const nodeNames = useMemo(() => nodes.map((n) => n.node_name), [nodes]);
 
   return (
     <TooltipProvider>
       <div className="space-y-8">
-
+        {/* Issues Panel - Shows when there are problems */}
+        <IssuesPanel
+          nodes={nodes}
+          hermes={hermes}
+          etl={etl}
+          isLoading={isLoading}
+          onNavigateToNodes={onNavigateToNodes}
+          onNavigateToServices={onNavigateToServices}
+        />
 
         {/* Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -107,26 +126,27 @@ export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }
             isLoading={isLoading}
           />
           <MetricCard
-            title="All Services"
-            value={`${metrics.healthyComponents} healthy`}
-            subtitle={`${metrics.totalComponents - metrics.healthyComponents} issues`}
-            icon={<CheckCircle2 className="h-5 w-5" />}
-            tooltip="Nodes, Hermes relayers, and ETL services"
-            variant={metrics.totalComponents - metrics.healthyComponents === 0 ? 'success' : 'warning'}
+            title="Services"
+            value={metrics.totalServices}
+            subtitle={`${metrics.healthyServices} healthy, ${metrics.serviceIssues} issues`}
+            icon={<Layers className="h-5 w-5" />}
+            tooltip="Hermes relayers and ETL services"
+            variant={metrics.serviceIssues === 0 ? 'success' : 'warning'}
             isLoading={isLoading}
           />
           <MetricCard
-            title="Hermes Relayers"
-            value={hermes.length}
-            subtitle={`${hermes.filter(h => h.status.toLowerCase().includes('running')).length} running`}
-            icon={<Server className="h-5 w-5" />}
-            tooltip="IBC relayer services"
-            isLoading={isLoading}
+            title="Active Operations"
+            value={activeOperationsCount}
+            subtitle={activeOperationsCount === 0 ? 'No operations running' : 'Operations in progress'}
+            icon={<Activity className="h-5 w-5" />}
+            tooltip="Ongoing maintenance operations (pruning, snapshots, etc.)"
+            variant={activeOperationsCount > 0 ? 'warning' : 'default'}
+            isLoading={isLoading || activitiesLoading}
           />
           <MetricCard
             title="Active Servers"
             value={metrics.uniqueServers}
-            subtitle="Hosting infrastructure"
+            subtitle={`${metrics.uniqueNetworks} networks`}
             icon={<Server className="h-5 w-5" />}
             tooltip="Unique servers running nodes and services"
             isLoading={isLoading}

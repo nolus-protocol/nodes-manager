@@ -44,33 +44,40 @@ export function SnapshotStats({ nodeNames, isLoading = false }: SnapshotStatsPro
       }
 
       try {
-        // Fetch stats for ALL nodes and aggregate
-        const allStats = await Promise.all(
-          nodeNames.map(async (name) => {
-            try {
-              const response = await fetch(`/api/snapshots/${name}/stats`);
-              if (!response.ok) return null;
-              const data = await response.json();
-              return data.success ? data.data : null;
-            } catch {
-              return null;
-            }
-          })
-        );
+        // Fetch stats for ALL nodes - but deduplicate by network since snapshots are network-based
+        const seenNetworks = new Set<string>();
+        const uniqueStats: SnapshotStatsData[] = [];
 
-        const validStats = allStats.filter(Boolean);
-        
-        if (validStats.length > 0) {
+        for (const name of nodeNames) {
+          try {
+            const response = await fetch(`/api/snapshots/${name}/stats`);
+            if (!response.ok) continue;
+            const data = await response.json();
+            if (!data.success || !data.data) continue;
+            
+            // Check if we've already processed this network
+            const networks = Object.keys(data.data.by_network || {});
+            const primaryNetwork = networks[0];
+            if (primaryNetwork && !seenNetworks.has(primaryNetwork)) {
+              seenNetworks.add(primaryNetwork);
+              uniqueStats.push(data.data);
+            }
+          } catch {
+            // Skip failed requests
+          }
+        }
+
+        if (uniqueStats.length > 0) {
           const aggregated: SnapshotStatsData = {
-            total_snapshots: validStats.reduce((sum, s) => sum + (s.total_snapshots || 0), 0),
-            total_size_bytes: validStats.reduce((sum, s) => sum + (s.total_size_bytes || 0), 0),
+            total_snapshots: uniqueStats.reduce((sum, s) => sum + (s.total_snapshots || 0), 0),
+            total_size_bytes: uniqueStats.reduce((sum, s) => sum + (s.total_size_bytes || 0), 0),
             by_network: {},
           };
 
-          validStats.forEach((s) => {
+          uniqueStats.forEach((s) => {
             if (s.by_network) {
               Object.entries(s.by_network).forEach(([network, count]) => {
-                aggregated.by_network[network] = (aggregated.by_network[network] || 0) + (count as number);
+                aggregated.by_network[network] = count as number;
               });
             }
           });

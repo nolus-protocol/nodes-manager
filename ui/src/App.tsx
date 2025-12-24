@@ -217,6 +217,8 @@ function App() {
             hermes={hermesHealth}
             etl={etlHealth}
             isLoading={isRefreshing}
+            onNavigateToNodes={() => setCurrentPage('nodes')}
+            onNavigateToServices={() => setCurrentPage('services')}
           />
         );
     }

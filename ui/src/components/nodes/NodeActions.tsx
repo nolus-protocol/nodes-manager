@@ -7,6 +7,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from '@kostovster/ui';
 import { MoreHorizontal, Scissors, Camera, RotateCcw, RefreshCw, Play } from 'lucide-react';
 import { toast } from 'sonner';
@@ -104,12 +107,34 @@ export function NodeActions({ nodeName, config, onActionComplete }: NodeActionsP
   const hasAnyAction = config.pruning_enabled || config.snapshots_enabled || 
                        config.auto_restore_enabled || config.state_sync_enabled;
 
+  // Only restart available - show single icon button
   if (!hasAnyAction) {
     return (
-      <Button variant="outline" size="sm" onClick={() => setConfirmAction('restart')}>
-        <Play className="h-4 w-4 mr-1" />
-        Restart
-      </Button>
+      <>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon" onClick={() => setConfirmAction('restart')}>
+              <Play className="h-4 w-4" />
+              <span className="sr-only">Restart</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Restart Node</p>
+          </TooltipContent>
+        </Tooltip>
+
+        {confirmAction && (
+          <ConfirmDialog
+            open={!!confirmAction}
+            onOpenChange={(open) => !open && !isLoading && setConfirmAction(null)}
+            title={actionConfigs[confirmAction].title}
+            description={actionConfigs[confirmAction].description}
+            confirmText={isLoading ? 'Processing...' : actionConfigs[confirmAction].confirmText}
+            onConfirm={handleConfirm}
+            variant={actionConfigs[confirmAction].variant}
+          />
+        )}
+      </>
     );
   }
 
