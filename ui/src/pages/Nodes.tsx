@@ -19,6 +19,9 @@ import {
   TooltipProvider,
   Skeleton,
   ScrollArea,
+  Tabs,
+  TabsList,
+  TabsTrigger,
   cn,
 } from '@kostovster/ui';
 import { 
@@ -155,21 +158,18 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                   className="pl-9"
                 />
               </div>
-              <div className="flex gap-1 flex-wrap">
-                {filters.map(f => (
-                  <Button
-                    key={f.value}
-                    variant={filter === f.value ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setFilter(f.value)}
-                  >
-                    {f.label}
-                    <Badge variant="secondary" className="ml-1.5 text-xs">
-                      {f.count}
-                    </Badge>
-                  </Button>
-                ))}
-              </div>
+              <Tabs value={filter} onValueChange={(v) => setFilter(v as NodeFilter)}>
+                <TabsList>
+                  {filters.map(f => (
+                    <TabsTrigger key={f.value} value={f.value}>
+                      {f.label}
+                      <Badge variant="secondary" className="ml-1.5 text-xs">
+                        {f.count}
+                      </Badge>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
             </div>
           </CardHeader>
           <CardContent className="p-0">
