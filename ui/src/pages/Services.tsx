@@ -116,8 +116,8 @@ export function ServicesPage({
     if (search) {
       const searchLower = search.toLowerCase();
       result = result.filter(s => 
-        s.name.toLowerCase().includes(searchLower) ||
-        s.server.toLowerCase().includes(searchLower)
+        (s.name || '').toLowerCase().includes(searchLower) ||
+        (s.server || '').toLowerCase().includes(searchLower)
       );
     }
 
@@ -127,8 +127,8 @@ export function ServicesPage({
 
     // Sort by type then name
     result.sort((a, b) => {
-      if (a.type !== b.type) return a.type.localeCompare(b.type);
-      return a.name.localeCompare(b.name);
+      if (a.type !== b.type) return (a.type || '').localeCompare(b.type || '');
+      return (a.name || '').localeCompare(b.name || '');
     });
 
     return result;

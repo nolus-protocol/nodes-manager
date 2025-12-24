@@ -101,15 +101,15 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
     if (search) {
       const searchLower = search.toLowerCase();
       result = result.filter(node => 
-        node.node_name.toLowerCase().includes(searchLower) ||
-        node.server_host.toLowerCase().includes(searchLower) ||
-        node.network.toLowerCase().includes(searchLower)
+        (node.node_name || '').toLowerCase().includes(searchLower) ||
+        (node.server_host || '').toLowerCase().includes(searchLower) ||
+        (node.network || '').toLowerCase().includes(searchLower)
       );
     }
 
     if (filter !== 'all') {
       result = result.filter(node => {
-        const status = node.status.toLowerCase().replace(/\s+/g, '-');
+        const status = (node.status || '').toLowerCase().replace(/\s+/g, '-');
         return status === filter || 
           (filter === 'synced' && status === 'healthy') ||
           (filter === 'catching-up' && status === 'catchingup');
@@ -117,7 +117,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
     }
 
     // Sort by name
-    result.sort((a, b) => a.node_name.localeCompare(b.node_name));
+    result.sort((a, b) => (a.node_name || '').localeCompare(b.node_name || ''));
 
     return result;
   }, [nodes, search, filter]);
