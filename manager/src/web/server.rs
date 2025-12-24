@@ -183,7 +183,7 @@ fn create_router(state: AppState) -> Router {
             get(handlers::get_maintenance_schedule),
         )
         // === STATIC FILES ===
-        .nest_service("/assets", ServeDir::new("static/assets"))
+        .nest_service("/assets", ServeDir::new("ui/dist/assets"))
         // Add middleware
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

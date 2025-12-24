@@ -12,7 +12,7 @@ export default defineConfig({
   },
   base: '/',
   build: {
-    outDir: '../static',
+    outDir: 'dist',
     emptyOutDir: true,
   },
   server: {

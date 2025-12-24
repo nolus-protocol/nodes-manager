@@ -978,5 +978,5 @@ pub async fn get_maintenance_schedule(State(_state): State<AppState>) -> ApiResu
 // === STATIC FILE HANDLER ===
 
 pub async fn serve_index() -> Html<&'static str> {
-    Html(include_str!("../../../static/index.html"))
+    Html(include_str!("../../../ui/dist/index.html"))
 }
