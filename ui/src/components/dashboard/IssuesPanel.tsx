@@ -10,9 +10,6 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-  Alert,
-  AlertDescription,
-  AlertTitle,
   cn,
 } from '@kostovster/ui';
 import { 
@@ -194,13 +191,9 @@ export function IssuesPanel({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Alert className="border-green-500/50 bg-green-500/10">
-            <Activity className="h-4 w-4 text-green-500" />
-            <AlertTitle className="text-green-500">All Systems Operational</AlertTitle>
-            <AlertDescription className="text-muted-foreground">
-              No issues detected. All {nodes.length} nodes, {hermes.length} Hermes relayers, and {etl.length} ETL services are running normally.
-            </AlertDescription>
-          </Alert>
+          <p className="text-sm text-muted-foreground">
+            All Systems Operational. No issues detected. All {nodes.length} nodes, {hermes.length} Hermes relayers, and {etl.length} ETL services are running normally.
+          </p>
         </CardContent>
       </Card>
     );
