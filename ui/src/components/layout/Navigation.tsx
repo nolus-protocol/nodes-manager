@@ -33,7 +33,7 @@ const statusVariantMap: Record<string, 'default' | 'secondary' | 'destructive'> 
 export function Navigation({ systemStatus, statusMessage, currentPage, onPageChange }: NavigationProps) {
   return (
     <TooltipProvider>
-      <header className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur supports-backdrop-filter:bg-card/60">
+      <header className="border-b bg-card">
         <div className="max-w-7xl mx-auto px-8">
           <div className="flex h-16 items-center justify-between">
             {/* Logo and Navigation */}
