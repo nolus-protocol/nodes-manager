@@ -186,14 +186,6 @@ export function ServicesPage({
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-end">
-          <Button onClick={onRefresh} disabled={isLoading}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-
         {/* Services Table */}
         <Card>
           <CardHeader className="pb-4">
@@ -203,6 +195,9 @@ export function ServicesPage({
                 Services
                 <Badge variant="outline">{filteredServices.length}</Badge>
               </CardTitle>
+              <Button variant="outline" size="sm" onClick={onRefresh} disabled={isLoading}>
+                <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              </Button>
             </div>
             {/* Filters */}
             <div className="flex items-center gap-4 mt-4">
