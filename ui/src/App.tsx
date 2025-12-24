@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Skeleton } from '@kostovster/ui';
-import { PageLayout } from '@/components/layout/PageLayout';
+import { Navigation } from '@/components/layout/Navigation';
 import { Dashboard } from '@/pages/Dashboard';
 import { NodesPage } from '@/pages/Nodes';
 import { ServicesPage } from '@/pages/Services';
@@ -16,7 +15,14 @@ import type { NodeConfig, NodeHealth, HermesConfig, HermesHealth, EtlHealth } fr
 
 const REFRESH_INTERVAL = 30000;
 
-function AppContent() {
+type Page = 'dashboard' | 'nodes' | 'services';
+
+function App() {
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const saved = localStorage.getItem('currentPage') as Page;
+    return saved && ['dashboard', 'nodes', 'services'].includes(saved) ? saved : 'dashboard';
+  });
+
   const [nodeConfigs, setNodeConfigs] = useState<Record<string, NodeConfig>>({});
   const [hermesConfigs, setHermesConfigs] = useState<Record<string, HermesConfig>>({});
   
@@ -26,6 +32,10 @@ function AppContent() {
   
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('currentPage', currentPage);
+  }, [currentPage]);
 
   const loadAllData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setIsRefreshing(true);
@@ -115,15 +125,12 @@ function AppContent() {
           <div className="max-w-7xl mx-auto px-8">
             <div className="flex h-16 items-center justify-between">
               <div className="flex items-center gap-6">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-7 w-7 rounded" />
-                  <Skeleton className="h-6 w-20" />
-                </div>
+                <Skeleton className="h-7 w-7 rounded" />
                 <Skeleton className="h-6 w-px" />
                 <div className="flex gap-2">
-                  <Skeleton className="h-9 w-28 rounded-md" />
-                  <Skeleton className="h-9 w-20 rounded-md" />
-                  <Skeleton className="h-9 w-24 rounded-md" />
+                  <Skeleton className="h-8 w-24 rounded-md" />
+                  <Skeleton className="h-8 w-16 rounded-md" />
+                  <Skeleton className="h-8 w-20 rounded-md" />
                 </div>
               </div>
               <Skeleton className="h-5 w-16 rounded-full" />
@@ -132,12 +139,6 @@ function AppContent() {
         </header>
         
         <main className="max-w-7xl mx-auto px-8 py-8">
-          {/* Page title skeleton */}
-          <div className="mb-8">
-            <Skeleton className="h-8 w-40 mb-2" />
-            <Skeleton className="h-4 w-64" />
-          </div>
-          
           {/* Metrics grid skeleton */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[...Array(4)].map((_, i) => (
@@ -187,54 +188,52 @@ function AppContent() {
     );
   }
 
-  return (
-    <PageLayout systemStatus={systemStatus.status} statusMessage={systemStatus.message}>
-      <Routes>
-        <Route 
-          path="/" 
-          element={
-            <Dashboard 
-              nodes={nodeHealth}
-              nodeConfigs={nodeConfigs}
-              hermes={hermesHealth}
-              etl={etlHealth}
-              isLoading={isRefreshing}
-            />
-          } 
-        />
-        <Route 
-          path="/nodes" 
-          element={
-            <NodesPage 
-              nodes={nodeHealth}
-              configs={nodeConfigs}
-              onRefresh={handleRefresh}
-              isLoading={isRefreshing}
-            />
-          } 
-        />
-        <Route 
-          path="/services" 
-          element={
-            <ServicesPage 
-              hermes={hermesHealth}
-              hermesConfigs={hermesConfigs}
-              etl={etlHealth}
-              onRefresh={handleRefresh}
-              isLoading={isRefreshing}
-            />
-          } 
-        />
-      </Routes>
-    </PageLayout>
-  );
-}
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'nodes':
+        return (
+          <NodesPage 
+            nodes={nodeHealth}
+            configs={nodeConfigs}
+            onRefresh={handleRefresh}
+            isLoading={isRefreshing}
+          />
+        );
+      case 'services':
+        return (
+          <ServicesPage 
+            hermes={hermesHealth}
+            hermesConfigs={hermesConfigs}
+            etl={etlHealth}
+            onRefresh={handleRefresh}
+            isLoading={isRefreshing}
+          />
+        );
+      default:
+        return (
+          <Dashboard 
+            nodes={nodeHealth}
+            nodeConfigs={nodeConfigs}
+            hermes={hermesHealth}
+            etl={etlHealth}
+            isLoading={isRefreshing}
+          />
+        );
+    }
+  };
 
-function App() {
   return (
-    <BrowserRouter>
-      <AppContent />
-    </BrowserRouter>
+    <div className="min-h-screen bg-background">
+      <Navigation 
+        systemStatus={systemStatus.status} 
+        statusMessage={systemStatus.message}
+        currentPage={currentPage}
+        onPageChange={setCurrentPage}
+      />
+      <main className="max-w-7xl mx-auto px-8 py-8">
+        {renderPage()}
+      </main>
+    </div>
   );
 }
 

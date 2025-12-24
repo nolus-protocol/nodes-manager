@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Card,
   CardContent,
@@ -51,29 +51,9 @@ interface NodesPageProps {
 }
 
 export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: NodesPageProps) {
-  const [search, setSearch] = useState(() => localStorage.getItem('nodesSearch') || '');
-  const [filter, setFilter] = useState<NodeFilter>(() => 
-    (localStorage.getItem('nodesFilter') as NodeFilter) || 'all'
-  );
-  const [sort, setSort] = useState<SortConfig>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('nodesSort') || '{"column":"next","direction":"asc"}');
-    } catch {
-      return { column: 'next', direction: 'asc' };
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem('nodesSearch', search);
-  }, [search]);
-  
-  useEffect(() => {
-    localStorage.setItem('nodesFilter', filter);
-  }, [filter]);
-  
-  useEffect(() => {
-    localStorage.setItem('nodesSort', JSON.stringify(sort));
-  }, [sort]);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<NodeFilter>('all');
+  const [sort, setSort] = useState<SortConfig>({ column: 'next', direction: 'asc' });
 
   const filters: { value: NodeFilter; label: string; count: number }[] = useMemo(() => [
     { value: 'all', label: 'All', count: nodes.length },

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Card,
   CardContent,
@@ -55,41 +55,13 @@ export function ServicesPage({
   onRefresh, 
   isLoading = false 
 }: ServicesPageProps) {
-  const [hermesSearch, setHermesSearch] = useState(() => localStorage.getItem('hermesSearch') || '');
-  const [etlSearch, setEtlSearch] = useState(() => localStorage.getItem('etlSearch') || '');
-  const [hermesSort, setHermesSort] = useState<SortConfig>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('hermesSort') || '{"column":"name","direction":"asc"}');
-    } catch {
-      return { column: 'name', direction: 'asc' };
-    }
-  });
-  const [etlSort, setEtlSort] = useState<SortConfig>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('etlSort') || '{"column":"name","direction":"asc"}');
-    } catch {
-      return { column: 'name', direction: 'asc' };
-    }
-  });
+  const [hermesSearch, setHermesSearch] = useState('');
+  const [etlSearch, setEtlSearch] = useState('');
+  const [hermesSort, setHermesSort] = useState<SortConfig>({ column: 'name', direction: 'asc' });
+  const [etlSort, setEtlSort] = useState<SortConfig>({ column: 'name', direction: 'asc' });
   const [confirmRestart, setConfirmRestart] = useState<string | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
   const [refreshingEtl, setRefreshingEtl] = useState<string | null>(null);
-
-  useEffect(() => {
-    localStorage.setItem('hermesSearch', hermesSearch);
-  }, [hermesSearch]);
-  
-  useEffect(() => {
-    localStorage.setItem('etlSearch', etlSearch);
-  }, [etlSearch]);
-  
-  useEffect(() => {
-    localStorage.setItem('hermesSort', JSON.stringify(hermesSort));
-  }, [hermesSort]);
-  
-  useEffect(() => {
-    localStorage.setItem('etlSort', JSON.stringify(etlSort));
-  }, [etlSort]);
 
   // Hermes filtering and sorting
   const filteredHermes = useMemo(() => {
