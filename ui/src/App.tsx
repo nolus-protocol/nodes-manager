@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Skeleton } from '@kostovster/ui';
-import { Header } from '@/components/layout/Header';
-import { MetricsGrid } from '@/components/layout/MetricsGrid';
-import { NodesPanel } from '@/components/nodes/NodesPanel';
-import { HermesPanel } from '@/components/hermes/HermesPanel';
-import { EtlPanel } from '@/components/etl/EtlPanel';
+import { PageLayout } from '@/components/layout/PageLayout';
+import { Dashboard } from '@/pages/Dashboard';
+import { NodesPage } from '@/pages/Nodes';
+import { ServicesPage } from '@/pages/Services';
 import {
   fetchNodeConfigs,
   fetchHermesConfigs,
@@ -16,7 +16,7 @@ import type { NodeConfig, NodeHealth, HermesConfig, HermesHealth, EtlHealth } fr
 
 const REFRESH_INTERVAL = 30000;
 
-function App() {
+function AppContent() {
   const [nodeConfigs, setNodeConfigs] = useState<Record<string, NodeConfig>>({});
   const [hermesConfigs, setHermesConfigs] = useState<Record<string, HermesConfig>>({});
   
@@ -66,7 +66,7 @@ function App() {
     };
   }, [loadAllData]);
 
-  const metrics = useMemo(() => {
+  const systemStatus = useMemo(() => {
     const operationalNodes = nodeHealth.filter(n => {
       const status = n.status.toLowerCase();
       return status === 'synced' || status === 'catching up' || status === 'healthy';
@@ -84,44 +84,24 @@ function App() {
       n.status.toLowerCase() === 'maintenance'
     ).length;
 
-    const servers = new Set<string>();
-    [...nodeHealth, ...hermesHealth, ...etlHealth].forEach(item => {
-      if ('server_host' in item && item.server_host) {
-        servers.add(item.server_host);
-      }
-    });
-
     const total = nodeHealth.length + hermesHealth.length + etlHealth.length;
     const operational = operationalNodes + operationalHermes + operationalEtl;
     const healthPct = total > 0 ? Math.round((operational / total) * 100) : 0;
 
-    return {
-      totalComponents: total,
-      operationalComponents: operational,
-      nodesCount: nodeHealth.length,
-      hermesCount: hermesHealth.length,
-      etlCount: etlHealth.length,
-      serverCount: servers.size,
-      healthPercentage: healthPct,
-      maintenanceCount: maintenanceNodes,
-    };
-  }, [nodeHealth, hermesHealth, etlHealth]);
-
-  const systemStatus = useMemo(() => {
-    if (metrics.maintenanceCount > 0) {
+    if (maintenanceNodes > 0) {
       return {
-        status: 'maintenance' as const,
-        message: `${metrics.maintenanceCount} System${metrics.maintenanceCount === 1 ? '' : 's'} in Maintenance`,
+        status: 'degraded' as const,
+        message: `${maintenanceNodes} system${maintenanceNodes === 1 ? '' : 's'} in maintenance`,
       };
     }
-    if (metrics.healthPercentage === 100) {
-      return { status: 'healthy' as const, message: 'All Systems Operational' };
+    if (healthPct === 100) {
+      return { status: 'healthy' as const, message: 'All systems operational' };
     }
-    if (metrics.healthPercentage >= 80) {
-      return { status: 'warning' as const, message: 'Minor Issues Detected' };
+    if (healthPct >= 80) {
+      return { status: 'degraded' as const, message: 'Minor issues detected' };
     }
-    return { status: 'error' as const, message: 'System Issues Detected' };
-  }, [metrics]);
+    return { status: 'critical' as const, message: 'System issues detected' };
+  }, [nodeHealth, hermesHealth, etlHealth]);
 
   const handleRefresh = useCallback(() => {
     loadAllData(true);
@@ -131,51 +111,76 @@ function App() {
     return (
       <div className="min-h-screen bg-background">
         {/* Header skeleton */}
-        <header className="border-b bg-card">
-          <div className="max-w-7xl mx-auto px-8 py-6 flex justify-between items-center">
-            <div className="flex items-center gap-3">
-              <Skeleton className="h-6 w-6 rounded" />
-              <Skeleton className="h-6 w-50" />
-            </div>
-            <div className="flex items-center gap-4">
-              <Skeleton className="h-6 w-36 rounded-full" />
-              <Skeleton className="h-9 w-9 rounded" />
+        <header className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur">
+          <div className="max-w-7xl mx-auto px-8">
+            <div className="flex h-16 items-center justify-between">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-7 w-7 rounded" />
+                  <Skeleton className="h-6 w-20" />
+                </div>
+                <Skeleton className="h-6 w-px" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-9 w-28 rounded-md" />
+                  <Skeleton className="h-9 w-20 rounded-md" />
+                  <Skeleton className="h-9 w-24 rounded-md" />
+                </div>
+              </div>
+              <Skeleton className="h-5 w-16 rounded-full" />
             </div>
           </div>
         </header>
         
         <main className="max-w-7xl mx-auto px-8 py-8">
+          {/* Page title skeleton */}
+          <div className="mb-8">
+            <Skeleton className="h-8 w-40 mb-2" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+          
           {/* Metrics grid skeleton */}
-          <div className="grid grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[...Array(4)].map((_, i) => (
               <div key={i} className="border rounded-lg p-6 bg-card">
                 <div className="flex justify-between items-center mb-4">
-                  <Skeleton className="h-4 w-25" />
+                  <Skeleton className="h-3 w-24" />
                   <Skeleton className="h-5 w-5 rounded" />
                 </div>
-                <Skeleton className="h-8 w-15 mb-2" />
-                <Skeleton className="h-4 w-30" />
+                <Skeleton className="h-9 w-16 mb-2" />
+                <Skeleton className="h-4 w-32" />
               </div>
             ))}
           </div>
           
-          {/* Panels skeleton */}
-          <div className="space-y-6">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="border rounded-lg bg-card">
-                <div className="p-6 border-b bg-muted/50">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Skeleton className="h-5 w-5 rounded" />
-                      <Skeleton className="h-5 w-5 rounded" />
-                      <Skeleton className="h-6 w-36" />
-                      <Skeleton className="h-5 w-8 rounded-full" />
-                    </div>
-                    <Skeleton className="h-9 w-25 rounded" />
+          {/* Content skeleton */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              {[...Array(2)].map((_, i) => (
+                <div key={i} className="border rounded-lg bg-card p-6">
+                  <Skeleton className="h-6 w-40 mb-4" />
+                  <div className="space-y-3">
+                    {[...Array(4)].map((_, j) => (
+                      <div key={j} className="flex items-center gap-3">
+                        <Skeleton className="h-9 w-9 rounded-full" />
+                        <div className="flex-1">
+                          <Skeleton className="h-4 w-48 mb-1" />
+                          <Skeleton className="h-3 w-24" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            <div className="space-y-6">
+              {[...Array(2)].map((_, i) => (
+                <div key={i} className="border rounded-lg bg-card p-6">
+                  <Skeleton className="h-6 w-36 mb-4" />
+                  <Skeleton className="h-8 w-24 mb-2" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+              ))}
+            </div>
           </div>
         </main>
       </div>
@@ -183,45 +188,53 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header 
-        systemStatus={systemStatus.status} 
-        statusMessage={systemStatus.message} 
-      />
-      
-      <main className="max-w-7xl mx-auto px-8 py-8">
-        <MetricsGrid
-          totalComponents={metrics.totalComponents}
-          operationalComponents={metrics.operationalComponents}
-          nodesCount={metrics.nodesCount}
-          hermesCount={metrics.hermesCount}
-          etlCount={metrics.etlCount}
-          serverCount={metrics.serverCount}
+    <PageLayout systemStatus={systemStatus.status} statusMessage={systemStatus.message}>
+      <Routes>
+        <Route 
+          path="/" 
+          element={
+            <Dashboard 
+              nodes={nodeHealth}
+              nodeConfigs={nodeConfigs}
+              hermes={hermesHealth}
+              etl={etlHealth}
+              isLoading={isRefreshing}
+            />
+          } 
         />
-        
-        <div className="space-y-6">
-          <NodesPanel
-            nodes={nodeHealth}
-            configs={nodeConfigs}
-            onRefresh={handleRefresh}
-            isLoading={isRefreshing}
-          />
-          
-          <HermesPanel
-            instances={hermesHealth}
-            configs={hermesConfigs}
-            onRefresh={handleRefresh}
-            isLoading={isRefreshing}
-          />
-          
-          <EtlPanel
-            services={etlHealth}
-            onRefresh={handleRefresh}
-            isLoading={isRefreshing}
-          />
-        </div>
-      </main>
-    </div>
+        <Route 
+          path="/nodes" 
+          element={
+            <NodesPage 
+              nodes={nodeHealth}
+              configs={nodeConfigs}
+              onRefresh={handleRefresh}
+              isLoading={isRefreshing}
+            />
+          } 
+        />
+        <Route 
+          path="/services" 
+          element={
+            <ServicesPage 
+              hermes={hermesHealth}
+              hermesConfigs={hermesConfigs}
+              etl={etlHealth}
+              onRefresh={handleRefresh}
+              isLoading={isRefreshing}
+            />
+          } 
+        />
+      </Routes>
+    </PageLayout>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   );
 }
 

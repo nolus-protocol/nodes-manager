@@ -106,6 +106,24 @@ export async function refreshEtlService(serviceName: string): Promise<ApiRespons
 }
 
 // Active operations
-export async function fetchActiveOperations(): Promise<ApiResponse<unknown>> {
-  return fetchJSON<ApiResponse<unknown>>('/api/operations/active');
+export interface ActiveOperation {
+  id: string;
+  operation_type: string;
+  target_name: string;
+  status: 'in_progress' | 'completed' | 'failed';
+  started_at: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export async function fetchActiveOperations(): Promise<ActiveOperation[]> {
+  try {
+    const response = await fetchJSON<ApiResponse<{ operations?: ActiveOperation[] }>>('/api/operations/active');
+    if (response.success && response.data?.operations) {
+      return response.data.operations;
+    }
+    return [];
+  } catch {
+    return [];
+  }
 }
