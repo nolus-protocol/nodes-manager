@@ -19,6 +19,9 @@ import {
   TooltipProvider,
   Skeleton,
   ScrollArea,
+  Tabs,
+  TabsList,
+  TabsTrigger,
   cn,
 } from '@kostovster/ui';
 import { 
@@ -211,21 +214,18 @@ export function ServicesPage({
                   className="pl-9"
                 />
               </div>
-              <div className="flex gap-1">
-                {(['all', 'hermes', 'etl'] as const).map(type => (
-                  <Button
-                    key={type}
-                    variant={typeFilter === type ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTypeFilter(type)}
-                  >
-                    {type === 'all' ? 'All' : type === 'hermes' ? 'Hermes' : 'ETL'}
-                    <Badge variant="secondary" className="ml-1.5 text-xs">
-                      {counts[type]}
-                    </Badge>
-                  </Button>
-                ))}
-              </div>
+              <Tabs value={typeFilter} onValueChange={(v) => setTypeFilter(v as 'all' | 'hermes' | 'etl')}>
+                <TabsList>
+                  {(['all', 'hermes', 'etl'] as const).map(type => (
+                    <TabsTrigger key={type} value={type}>
+                      {type === 'all' ? 'All' : type === 'hermes' ? 'Hermes' : 'ETL'}
+                      <Badge variant="secondary" className="ml-1.5 text-xs">
+                        {counts[type]}
+                      </Badge>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
             </div>
           </CardHeader>
           <CardContent className="p-0">
