@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "@kostovster/ui/globals.css";
+
+@source "../node_modules/@kostovster/ui/dist";

@@ -153,11 +153,14 @@ cscope.po.out
 *.tar
 *.zip
 
-# Node.js (if using any JS tools)
+# Node.js / UI build
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# UI build output (generated from ui/ directory)
+/static/
 
 # Python (if using any Python tools)
 **pycache**/
