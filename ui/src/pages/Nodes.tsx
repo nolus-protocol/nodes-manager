@@ -178,13 +178,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
     <TooltipProvider>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Blockchain Nodes</h1>
-            <p className="text-muted-foreground">
-              Manage and monitor your blockchain infrastructure
-            </p>
-          </div>
+        <div className="flex items-center justify-end">
           <Button onClick={onRefresh} disabled={isLoading}>
             <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
             Refresh

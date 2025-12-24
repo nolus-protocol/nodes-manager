@@ -267,13 +267,7 @@ export function ServicesPage({
     <TooltipProvider>
       <div className="space-y-8">
         {/* Page Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Services</h1>
-            <p className="text-muted-foreground">
-              Monitor Hermes relayers and ETL services
-            </p>
-          </div>
+        <div className="flex items-center justify-end">
           <Button onClick={onRefresh} disabled={isLoading}>
             <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
             Refresh All

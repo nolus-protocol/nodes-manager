@@ -44,9 +44,9 @@ export function SnapshotStats({ nodeNames, isLoading = false }: SnapshotStatsPro
       }
 
       try {
-        // Fetch stats for all nodes and aggregate
+        // Fetch stats for ALL nodes and aggregate
         const allStats = await Promise.all(
-          nodeNames.slice(0, 5).map(async (name) => {
+          nodeNames.map(async (name) => {
             try {
               const response = await fetch(`/api/snapshots/${name}/stats`);
               if (!response.ok) return null;

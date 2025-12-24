@@ -1,11 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { TooltipProvider } from '@kostovster/ui';
-import { Boxes, CheckCircle2, AlertTriangle, Server } from 'lucide-react';
+import { Boxes, CheckCircle2, Server } from 'lucide-react';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ActivityFeed, ActivityItem } from '@/components/dashboard/ActivityFeed';
 import { UpcomingSchedule } from '@/components/dashboard/UpcomingSchedule';
 import { SnapshotStats } from '@/components/dashboard/SnapshotStats';
-import { QuickActions } from '@/components/dashboard/QuickActions';
+import { SnapshotDownloads } from '@/components/dashboard/SnapshotDownloads';
 import { fetchActiveOperations } from '@/api/client';
 import type { NodeHealth, NodeConfig, HermesHealth, EtlHealth } from '@/types';
 
@@ -93,40 +93,34 @@ export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }
   return (
     <TooltipProvider>
       <div className="space-y-8">
-        {/* Page Header */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Monitor your infrastructure at a glance
-          </p>
-        </div>
+
 
         {/* Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <MetricCard
-            title="Total Nodes"
+            title="Blockchain Nodes"
             value={metrics.totalNodes}
             subtitle={`${metrics.healthyNodes} healthy, ${metrics.unhealthyNodes} issues`}
             icon={<Boxes className="h-5 w-5" />}
             tooltip="Total blockchain nodes being monitored"
+            variant={metrics.unhealthyNodes === 0 ? 'success' : 'danger'}
             isLoading={isLoading}
           />
           <MetricCard
-            title="Healthy Components"
-            value={metrics.healthyComponents}
-            subtitle={`of ${metrics.totalComponents} total`}
+            title="All Services"
+            value={`${metrics.healthyComponents} healthy`}
+            subtitle={`${metrics.totalComponents - metrics.healthyComponents} issues`}
             icon={<CheckCircle2 className="h-5 w-5" />}
-            tooltip="Components running without issues"
-            variant={metrics.healthPercentage >= 90 ? 'success' : metrics.healthPercentage >= 70 ? 'warning' : 'danger'}
+            tooltip="Nodes, Hermes relayers, and ETL services"
+            variant={metrics.totalComponents - metrics.healthyComponents === 0 ? 'success' : 'warning'}
             isLoading={isLoading}
           />
           <MetricCard
-            title="System Health"
-            value={`${metrics.healthPercentage}%`}
-            subtitle="Overall uptime"
-            icon={<AlertTriangle className="h-5 w-5" />}
-            tooltip="Percentage of healthy components"
-            variant={metrics.healthPercentage >= 90 ? 'success' : metrics.healthPercentage >= 70 ? 'warning' : 'danger'}
+            title="Hermes Relayers"
+            value={hermes.length}
+            subtitle={`${hermes.filter(h => h.status.toLowerCase().includes('running')).length} running`}
+            icon={<Server className="h-5 w-5" />}
+            tooltip="IBC relayer services"
             isLoading={isLoading}
           />
           <MetricCard
@@ -161,7 +155,10 @@ export function Dashboard({ nodes, nodeConfigs, hermes, etl, isLoading = false }
               nodeNames={nodeNames} 
               isLoading={isLoading}
             />
-            <QuickActions />
+            <SnapshotDownloads 
+              nodeNames={nodeNames} 
+              isLoading={isLoading}
+            />
           </div>
         </div>
       </div>

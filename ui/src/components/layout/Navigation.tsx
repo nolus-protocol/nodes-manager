@@ -33,15 +33,14 @@ export function Navigation({ systemStatus, statusMessage }: NavigationProps) {
       <header className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
         <div className="max-w-7xl mx-auto px-8">
           <div className="flex h-16 items-center justify-between">
-            {/* Logo and Title */}
+            {/* Logo and Navigation */}
             <div className="flex items-center gap-6">
-              <NavLink to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+              <NavLink to="/" className="flex items-center hover:opacity-80 transition-opacity">
                 <img
                   src="https://nolus.io/favicon/favicon.svg"
                   alt="Nolus"
                   className="h-7 w-7"
                 />
-                <span className="text-xl font-semibold text-foreground">Nodes</span>
               </NavLink>
 
               <Separator orientation="vertical" className="h-6" />
@@ -54,10 +53,10 @@ export function Navigation({ systemStatus, statusMessage }: NavigationProps) {
                     to={to}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-                        'hover:bg-accent hover:text-accent-foreground',
+                        'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+                        'hover:text-foreground',
                         isActive
-                          ? 'bg-accent text-accent-foreground'
+                          ? 'bg-muted text-foreground'
                           : 'text-muted-foreground'
                       )
                     }
