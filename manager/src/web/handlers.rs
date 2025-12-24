@@ -107,6 +107,9 @@ async fn convert_health_to_summary(
         last_check: health.last_check.to_rfc3339(),
         error_message: health.error_message.clone(),
         server_host: health.server_host.clone(),
+        network: node_config
+            .map(|c| c.network.clone())
+            .unwrap_or_default(),
         maintenance_info,
         snapshot_enabled: node_config
             .map(|c| c.snapshots_enabled.unwrap_or(false))

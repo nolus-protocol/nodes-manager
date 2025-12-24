@@ -68,6 +68,7 @@ pub struct NodeHealthSummary {
     pub last_check: String,
     pub error_message: Option<String>,
     pub server_host: String,
+    pub network: String,
     pub maintenance_info: Option<MaintenanceInfo>,
     pub snapshot_enabled: bool,
     pub auto_restore_enabled: bool,
