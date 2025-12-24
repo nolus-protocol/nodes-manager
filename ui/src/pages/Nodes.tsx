@@ -24,15 +24,13 @@ import {
 import { 
   Boxes, 
   RefreshCw, 
-  Search, 
-  ArrowUpDown,
-  Filter,
+  Search,
+  Clock,
 } from 'lucide-react';
-import { ScheduleItem, NextRunItem } from '@/components/shared/CronDisplay';
 import { NodeActions } from '@/components/nodes/NodeActions';
 import { formatName, formatBlockHeight } from '@/lib/utils';
-import { getCronSortValue } from '@/lib/cron';
-import type { NodeHealth, NodeConfig, NodeFilter, SortConfig } from '@/types';
+import { getNextRun, formatNextRun } from '@/lib/cron';
+import type { NodeHealth, NodeConfig, NodeFilter } from '@/types';
 
 const nodeStatusConfig: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   synced: 'default',
@@ -50,10 +48,44 @@ interface NodesPageProps {
   isLoading?: boolean;
 }
 
+interface NextOperation {
+  type: string;
+  schedule: string;
+  nextRun: Date;
+}
+
+function getNextOperation(config: NodeConfig): NextOperation | null {
+  const operations: NextOperation[] = [];
+
+  if (config.pruning_enabled && config.pruning_schedule) {
+    const nextRun = getNextRun(config.pruning_schedule);
+    if (nextRun) {
+      operations.push({ type: 'Pruning', schedule: config.pruning_schedule, nextRun });
+    }
+  }
+  if (config.snapshots_enabled && config.snapshot_schedule) {
+    const nextRun = getNextRun(config.snapshot_schedule);
+    if (nextRun) {
+      operations.push({ type: 'Snapshot', schedule: config.snapshot_schedule, nextRun });
+    }
+  }
+  if (config.state_sync_enabled && config.state_sync_schedule) {
+    const nextRun = getNextRun(config.state_sync_schedule);
+    if (nextRun) {
+      operations.push({ type: 'State Sync', schedule: config.state_sync_schedule, nextRun });
+    }
+  }
+
+  if (operations.length === 0) return null;
+
+  // Return the soonest operation
+  operations.sort((a, b) => a.nextRun.getTime() - b.nextRun.getTime());
+  return operations[0];
+}
+
 export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: NodesPageProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<NodeFilter>('all');
-  const [sort, setSort] = useState<SortConfig>({ column: 'next', direction: 'asc' });
 
   const filters: { value: NodeFilter; label: string; count: number }[] = useMemo(() => [
     { value: 'all', label: 'All', count: nodes.length },
@@ -63,7 +95,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
     { value: 'maintenance', label: 'Maintenance', count: nodes.filter(n => n.status.toLowerCase() === 'maintenance').length },
   ], [nodes]);
 
-  const filteredAndSortedNodes = useMemo(() => {
+  const filteredNodes = useMemo(() => {
     let result = [...nodes];
 
     if (search) {
@@ -84,70 +116,11 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
       });
     }
 
-    result.sort((a, b) => {
-      const configA = configs[a.node_name] || {};
-      const configB = configs[b.node_name] || {};
-      
-      let comparison = 0;
-      
-      switch (sort.column) {
-        case 'name':
-          comparison = a.node_name.localeCompare(b.node_name);
-          break;
-        case 'status': {
-          const statusOrder: Record<string, number> = { 
-            'unhealthy': 0, 'maintenance': 1, 'catching up': 2, 'synced': 3, 'healthy': 3 
-          };
-          const statusA = statusOrder[a.status.toLowerCase()] ?? 4;
-          const statusB = statusOrder[b.status.toLowerCase()] ?? 4;
-          comparison = statusA - statusB;
-          break;
-        }
-        case 'next': {
-          const nextA = Math.min(
-            configA.pruning_enabled ? getCronSortValue(configA.pruning_schedule) : Infinity,
-            configA.snapshots_enabled ? getCronSortValue(configA.snapshot_schedule) : Infinity,
-            configA.state_sync_enabled ? getCronSortValue(configA.state_sync_schedule) : Infinity
-          );
-          const nextB = Math.min(
-            configB.pruning_enabled ? getCronSortValue(configB.pruning_schedule) : Infinity,
-            configB.snapshots_enabled ? getCronSortValue(configB.snapshot_schedule) : Infinity,
-            configB.state_sync_enabled ? getCronSortValue(configB.state_sync_schedule) : Infinity
-          );
-          comparison = nextA - nextB;
-          break;
-        }
-        default:
-          comparison = 0;
-      }
-      
-      return sort.direction === 'asc' ? comparison : -comparison;
-    });
+    // Sort by name
+    result.sort((a, b) => a.node_name.localeCompare(b.node_name));
 
     return result;
-  }, [nodes, configs, search, filter, sort]);
-
-  const handleSort = (column: string) => {
-    setSort(prev => ({
-      column,
-      direction: prev.column === column && prev.direction === 'asc' ? 'desc' : 'asc',
-    }));
-  };
-
-  const SortableHeader = ({ column, children }: { column: string; children: React.ReactNode }) => (
-    <TableHead 
-      className="cursor-pointer hover:bg-muted/50 transition-colors"
-      onClick={() => handleSort(column)}
-    >
-      <div className="flex items-center gap-1">
-        {children}
-        <ArrowUpDown className={cn(
-          "h-3 w-3 text-muted-foreground transition-opacity",
-          sort.column === column ? "opacity-100" : "opacity-0"
-        )} />
-      </div>
-    </TableHead>
-  );
+  }, [nodes, search, filter]);
 
   const getStatusVariant = (status: string) => {
     const key = status.toLowerCase().replace(/\s+/g, '');
@@ -157,7 +130,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        {/* Page Header */}
+        {/* Header */}
         <div className="flex items-center justify-end">
           <Button onClick={onRefresh} disabled={isLoading}>
             <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
@@ -165,12 +138,19 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
           </Button>
         </div>
 
-        {/* Filters Card */}
+        {/* Nodes Table */}
         <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              {/* Search */}
-              <div className="relative flex-1">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Boxes className="h-5 w-5" />
+                Nodes
+                <Badge variant="outline">{filteredNodes.length}</Badge>
+              </CardTitle>
+            </div>
+            {/* Filters */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-4">
+              <div className="relative flex-1 max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="text"
@@ -180,150 +160,110 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                   className="pl-9"
                 />
               </div>
-              
-              {/* Filter Buttons */}
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <div className="flex gap-1">
-                  {filters.map(f => (
-                    <Button
-                      key={f.value}
-                      variant={filter === f.value ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setFilter(f.value)}
-                      className="gap-1"
-                    >
-                      {f.label}
-                      <Badge variant="secondary" className="ml-1 text-xs px-1.5">
-                        {f.count}
-                      </Badge>
-                    </Button>
-                  ))}
-                </div>
+              <div className="flex gap-1 flex-wrap">
+                {filters.map(f => (
+                  <Button
+                    key={f.value}
+                    variant={filter === f.value ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilter(f.value)}
+                  >
+                    {f.label}
+                    <Badge variant="secondary" className="ml-1.5 text-xs">
+                      {f.count}
+                    </Badge>
+                  </Button>
+                ))}
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Nodes Table */}
-        <Card>
-          <CardHeader className="pb-0">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Boxes className="h-5 w-5" />
-                Nodes
-              </CardTitle>
-              <Badge variant="outline">
-                {filteredAndSortedNodes.length} of {nodes.length}
-              </Badge>
-            </div>
           </CardHeader>
-          <CardContent className="p-0 pt-4">
+          <CardContent className="p-0">
             {isLoading ? (
               <div className="p-6 space-y-4">
                 {[...Array(5)].map((_, i) => (
                   <div key={i} className="flex items-center gap-4">
-                    <Skeleton className="h-12 w-50" />
-                    <Skeleton className="h-8 w-25" />
-                    <Skeleton className="h-8 flex-1" />
-                    <Skeleton className="h-8 w-36" />
-                    <Skeleton className="h-8 w-10" />
+                    <Skeleton className="h-10 w-32" />
+                    <Skeleton className="h-5 w-20" />
+                    <Skeleton className="h-5 w-24" />
+                    <Skeleton className="h-5 flex-1" />
+                    <Skeleton className="h-8 w-8" />
                   </div>
                 ))}
               </div>
-            ) : filteredAndSortedNodes.length === 0 ? (
+            ) : filteredNodes.length === 0 ? (
               <div className="p-12 text-center text-muted-foreground">
                 <Boxes className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="font-medium text-lg">No nodes found</p>
-                <p className="text-sm">Try adjusting your search or filter criteria</p>
+                <p className="font-medium">No nodes found</p>
+                <p className="text-sm">Try adjusting your search or filter</p>
               </div>
             ) : (
               <ScrollArea className="h-[600px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <SortableHeader column="name">Node / Server</SortableHeader>
-                      <SortableHeader column="status">Status / Block</SortableHeader>
-                      <TableHead>Schedules</TableHead>
-                      <SortableHeader column="next">Next Run</SortableHeader>
-                      <TableHead className="w-20">Actions</TableHead>
+                      <TableHead>Node</TableHead>
+                      <TableHead>Network</TableHead>
+                      <TableHead>Server</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Block Height</TableHead>
+                      <TableHead>Next Operation</TableHead>
+                      <TableHead className="w-16">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredAndSortedNodes.map(node => {
+                    {filteredNodes.map(node => {
                       const config = configs[node.node_name] || {} as NodeConfig;
+                      const nextOp = getNextOperation(config);
+                      
                       return (
-                        <TableRow key={node.node_name} className="group">
+                        <TableRow key={node.node_name}>
                           <TableCell>
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-0.5">
                               <span className="font-medium">{formatName(node.node_name)}</span>
-                              <span className="text-xs text-muted-foreground">{node.server_host}</span>
-                              <div className="flex items-center gap-1.5">
-                                {config.auto_restore_enabled && (
-                                  <Badge variant="outline" className="text-xs">
-                                    Auto restore
-                                  </Badge>
-                                )}
-                                <Badge variant="secondary" className="text-xs">
-                                  {node.network}
+                              {config.auto_restore_enabled && (
+                                <Badge variant="outline" className="w-fit text-xs">
+                                  Auto restore
                                 </Badge>
-                              </div>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div className="flex flex-col gap-1.5">
-                              <Badge variant={getStatusVariant(node.status)}>
-                                {node.status}
-                              </Badge>
+                            <Badge variant="secondary" className="text-xs">
+                              {node.network}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm text-muted-foreground">{node.server_host}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusVariant(node.status)}>
+                              {node.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm font-mono">
+                              {formatBlockHeight(node.latest_block_height)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {nextOp ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <span className="text-xs text-muted-foreground cursor-help">
-                                    Block: {formatBlockHeight(node.latest_block_height)}
-                                  </span>
+                                  <div className="flex items-center gap-1.5 text-sm cursor-help">
+                                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <span>{nextOp.type}</span>
+                                    <span className="text-muted-foreground">
+                                      {formatNextRun(nextOp.schedule)}
+                                    </span>
+                                  </div>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  <p>Latest synced block height</p>
+                                  <p>Cron: {nextOp.schedule}</p>
                                 </TooltipContent>
                               </Tooltip>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-2">
-                              <ScheduleItem 
-                                label="Pruning" 
-                                schedule={config.pruning_schedule} 
-                                enabled={config.pruning_enabled}
-                              />
-                              <ScheduleItem 
-                                label="Snapshot" 
-                                schedule={config.snapshot_schedule} 
-                                enabled={config.snapshots_enabled}
-                              />
-                              <ScheduleItem 
-                                label="State Sync" 
-                                schedule={config.state_sync_schedule} 
-                                enabled={config.state_sync_enabled}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-2">
-                              <NextRunItem 
-                                label="Pruning" 
-                                schedule={config.pruning_schedule} 
-                                enabled={config.pruning_enabled}
-                              />
-                              <NextRunItem 
-                                label="Snapshot" 
-                                schedule={config.snapshot_schedule} 
-                                enabled={config.snapshots_enabled}
-                              />
-                              <NextRunItem 
-                                label="State Sync" 
-                                schedule={config.state_sync_schedule} 
-                                enabled={config.state_sync_enabled}
-                              />
-                            </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <NodeActions 
