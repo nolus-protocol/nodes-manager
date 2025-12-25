@@ -18,7 +18,6 @@ import {
   TooltipTrigger,
   TooltipProvider,
   Skeleton,
-  ScrollArea,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -203,29 +202,31 @@ export function ServicesPage({
               </Button>
             </div>
             {/* Filters */}
-            <div className="flex items-center gap-4 mt-4">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex flex-col gap-4 mt-4">
+              <div className="relative w-full sm:max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search services..."
+                  placeholder="Search..."
                   className="pl-9"
                 />
               </div>
-              <Tabs value={typeFilter} onValueChange={(v) => setTypeFilter(v as 'all' | 'hermes' | 'etl')}>
-                <TabsList>
-                  {(['all', 'hermes', 'etl'] as const).map(type => (
-                    <TabsTrigger key={type} value={type}>
-                      {type === 'all' ? 'All' : type === 'hermes' ? 'Hermes' : 'ETL'}
-                      <Badge variant="secondary" className="ml-1.5 text-xs">
-                        {counts[type]}
-                      </Badge>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
+              <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                <Tabs value={typeFilter} onValueChange={(v) => setTypeFilter(v as 'all' | 'hermes' | 'etl')}>
+                  <TabsList className="w-max">
+                    {(['all', 'hermes', 'etl'] as const).map(type => (
+                      <TabsTrigger key={type} value={type} className="text-xs sm:text-sm">
+                        {type === 'all' ? 'All' : type === 'hermes' ? 'Hermes' : 'ETL'}
+                        <Badge variant="secondary" className="ml-1 sm:ml-1.5 text-xs">
+                          {counts[type]}
+                        </Badge>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -248,16 +249,16 @@ export function ServicesPage({
                 <p className="text-sm">Try adjusting your search or filter</p>
               </div>
             ) : (
-              <ScrollArea className="h-125">
-                <Table>
+              <div className="overflow-x-auto">
+                <Table className="min-w-[600px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-12"></TableHead>
                       <TableHead>Name</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Server</TableHead>
+                      <TableHead className="hidden sm:table-cell">Type</TableHead>
+                      <TableHead className="hidden md:table-cell">Server</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Last Check</TableHead>
+                      <TableHead className="hidden sm:table-cell">Last Check</TableHead>
                       <TableHead className="w-16">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -270,12 +271,12 @@ export function ServicesPage({
                         <TableCell>
                           <span className="font-medium">{formatName(service.name)}</span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <Badge variant="outline" className="text-xs capitalize">
                             {service.type}
                           </Badge>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden md:table-cell">
                           <span className="text-sm text-muted-foreground">{service.server}</span>
                         </TableCell>
                         <TableCell>
@@ -290,7 +291,7 @@ export function ServicesPage({
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <span className="text-sm text-muted-foreground">
                             {formatTimeAgo(service.lastCheck)}
                           </span>
@@ -323,7 +324,7 @@ export function ServicesPage({
                     ))}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -85,7 +85,7 @@ function App() {
       <div className="min-h-screen bg-background">
         {/* Header skeleton */}
         <header className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur">
-          <div className="max-w-7xl mx-auto px-8">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex h-16 items-center justify-between">
               <div className="flex items-center gap-6">
                 <Skeleton className="h-7 w-7 rounded" />
@@ -101,7 +101,7 @@ function App() {
           </div>
         </header>
         
-        <main className="max-w-7xl mx-auto px-8 py-8">
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
           {/* Metrics grid skeleton */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[...Array(4)].map((_, i) => (
@@ -193,7 +193,7 @@ function App() {
         currentPage={currentPage}
         onPageChange={setCurrentPage}
       />
-      <main className="max-w-7xl mx-auto px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
         {renderPage()}
       </main>
     </div>

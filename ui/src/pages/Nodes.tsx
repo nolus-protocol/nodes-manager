@@ -18,7 +18,6 @@ import {
   TooltipTrigger,
   TooltipProvider,
   Skeleton,
-  ScrollArea,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -147,29 +146,31 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
               </Button>
             </div>
             {/* Filters */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-4">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex flex-col gap-4 mt-4">
+              <div className="relative w-full sm:max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name, server, or network..."
+                  placeholder="Search..."
                   className="pl-9"
                 />
               </div>
-              <Tabs value={filter} onValueChange={(v) => setFilter(v as NodeFilter)}>
-                <TabsList>
-                  {filters.map(f => (
-                    <TabsTrigger key={f.value} value={f.value}>
-                      {f.label}
-                      <Badge variant="secondary" className="ml-1.5 text-xs">
-                        {f.count}
-                      </Badge>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
+              <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                <Tabs value={filter} onValueChange={(v) => setFilter(v as NodeFilter)}>
+                  <TabsList className="w-max">
+                    {filters.map(f => (
+                      <TabsTrigger key={f.value} value={f.value} className="text-xs sm:text-sm">
+                        {f.label}
+                        <Badge variant="secondary" className="ml-1 sm:ml-1.5 text-xs">
+                          {f.count}
+                        </Badge>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -192,16 +193,16 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                 <p className="text-sm">Try adjusting your search or filter</p>
               </div>
             ) : (
-              <ScrollArea className="h-150">
-                <Table>
+              <div className="overflow-x-auto">
+                <Table className="min-w-[800px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Node</TableHead>
-                      <TableHead>Network</TableHead>
-                      <TableHead>Server</TableHead>
+                      <TableHead className="hidden sm:table-cell">Network</TableHead>
+                      <TableHead className="hidden md:table-cell">Server</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Block Height</TableHead>
-                      <TableHead>Next Operation</TableHead>
+                      <TableHead className="hidden sm:table-cell">Block Height</TableHead>
+                      <TableHead className="hidden lg:table-cell">Next Operation</TableHead>
                       <TableHead className="w-16">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -222,12 +223,12 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                               )}
                             </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden sm:table-cell">
                             <Badge variant="secondary" className="text-xs">
                               {node.network}
                             </Badge>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden md:table-cell">
                             <span className="text-sm text-muted-foreground">{node.server_host}</span>
                           </TableCell>
                           <TableCell>
@@ -235,12 +236,12 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                               {node.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden sm:table-cell">
                             <span className="text-sm font-mono">
                               {formatBlockHeight(node.latest_block_height)}
                             </span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden lg:table-cell">
                             {nextOp ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -272,7 +273,7 @@ export function NodesPage({ nodes, configs, onRefresh, isLoading = false }: Node
                     })}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             )}
           </CardContent>
         </Card>
