@@ -129,7 +129,7 @@ export function UpcomingSchedule({ configs, isLoading = false, maxItems = 8 }: U
             <p className="text-sm">Configure schedules in node settings</p>
           </div>
         ) : (
-          <ScrollArea className="h-80">
+          <ScrollArea>
             <div className="space-y-1 pr-4">
               {schedules.map((item, index) => {
                 const config = operationConfig[item.operationType];

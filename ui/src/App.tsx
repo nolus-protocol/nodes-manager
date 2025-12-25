@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Skeleton } from '@kostovster/ui';
 import { Navigation } from '@/components/layout/Navigation';
 import { Dashboard } from '@/pages/Dashboard';
@@ -75,43 +75,6 @@ function App() {
       window.removeEventListener('focus', handleFocus);
     };
   }, [loadAllData]);
-
-  const systemStatus = useMemo(() => {
-    const operationalNodes = nodeHealth.filter(n => {
-      const status = n.status.toLowerCase();
-      return status === 'synced' || status === 'catching up' || status === 'healthy';
-    }).length;
-
-    const operationalHermes = hermesHealth.filter(h => 
-      h.status.toLowerCase().replace(/[()]/g, '').includes('running')
-    ).length;
-
-    const operationalEtl = etlHealth.filter(e => 
-      e.status.toLowerCase() === 'healthy'
-    ).length;
-
-    const maintenanceNodes = nodeHealth.filter(n => 
-      n.status.toLowerCase() === 'maintenance'
-    ).length;
-
-    const total = nodeHealth.length + hermesHealth.length + etlHealth.length;
-    const operational = operationalNodes + operationalHermes + operationalEtl;
-    const healthPct = total > 0 ? Math.round((operational / total) * 100) : 0;
-
-    if (maintenanceNodes > 0) {
-      return {
-        status: 'degraded' as const,
-        message: `${maintenanceNodes} system${maintenanceNodes === 1 ? '' : 's'} in maintenance`,
-      };
-    }
-    if (healthPct === 100) {
-      return { status: 'healthy' as const, message: 'All systems operational' };
-    }
-    if (healthPct >= 80) {
-      return { status: 'degraded' as const, message: 'Minor issues detected' };
-    }
-    return { status: 'critical' as const, message: 'System issues detected' };
-  }, [nodeHealth, hermesHealth, etlHealth]);
 
   const handleRefresh = useCallback(() => {
     loadAllData(true);
@@ -227,8 +190,6 @@ function App() {
   return (
     <div className="min-h-screen bg-background">
       <Navigation 
-        systemStatus={systemStatus.status} 
-        statusMessage={systemStatus.message}
         currentPage={currentPage}
         onPageChange={setCurrentPage}
       />
