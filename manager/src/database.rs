@@ -19,6 +19,18 @@ pub struct HealthRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HermesHealthRecord {
+    pub hermes_name: String,
+    pub is_healthy: bool,
+    pub status: String,
+    pub uptime_seconds: Option<i64>,
+    pub error_message: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub server_host: String,
+    pub service_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceOperation {
     pub id: String,
     pub operation_type: String,
@@ -189,6 +201,38 @@ impl Database {
             return Err(e.into());
         }
         info!("✅ maintenance_operations indexes created");
+
+        info!("Step 5: Creating hermes_health_records table...");
+        let hermes_health_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS hermes_health_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hermes_name TEXT NOT NULL,
+                is_healthy BOOLEAN NOT NULL,
+                status TEXT NOT NULL,
+                uptime_seconds INTEGER,
+                error_message TEXT,
+                timestamp DATETIME NOT NULL,
+                server_host TEXT NOT NULL,
+                service_name TEXT NOT NULL
+            )
+        "#;
+
+        if let Err(e) = sqlx::query(hermes_health_table_sql)
+            .execute(&self.pool)
+            .await
+        {
+            error!("FAILED to create hermes_health_records table: {}", e);
+            return Err(e.into());
+        }
+        info!("✅ hermes_health_records table created");
+
+        info!("Step 6: Creating hermes_health_records index...");
+        let hermes_index_sql = "CREATE INDEX IF NOT EXISTS idx_hermes_health_name_timestamp ON hermes_health_records(hermes_name, timestamp DESC)";
+        if let Err(e) = sqlx::query(hermes_index_sql).execute(&self.pool).await {
+            error!("FAILED to create hermes_health_records index: {}", e);
+            return Err(e.into());
+        }
+        info!("✅ hermes_health_records index created");
 
         info!("All database tables and indexes created successfully");
         Ok(())
@@ -396,6 +440,81 @@ impl Database {
             Ok(Some(record))
         } else {
             debug!("No health record found for: {}", node_name);
+            Ok(None)
+        }
+    }
+
+    pub async fn store_hermes_health_record(&self, record: &HermesHealthRecord) -> Result<()> {
+        debug!("Storing hermes health record for: {}", record.hermes_name);
+
+        match sqlx::query(
+            r#"
+            INSERT INTO hermes_health_records (
+                hermes_name, is_healthy, status, uptime_seconds, error_message,
+                timestamp, server_host, service_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&record.hermes_name)
+        .bind(record.is_healthy)
+        .bind(&record.status)
+        .bind(record.uptime_seconds)
+        .bind(&record.error_message)
+        .bind(record.timestamp)
+        .bind(&record.server_host)
+        .bind(&record.service_name)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(_) => {
+                debug!("✅ Hermes health record stored for: {}", record.hermes_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "❌ Failed to store hermes health record for {}: {}",
+                    record.hermes_name, e
+                );
+                Err(e.into())
+            }
+        }
+    }
+
+    pub async fn get_latest_hermes_health_record(
+        &self,
+        hermes_name: &str,
+    ) -> Result<Option<HermesHealthRecord>> {
+        debug!("Querying latest hermes health record for: {}", hermes_name);
+
+        let row = sqlx::query(
+            r#"
+            SELECT hermes_name, is_healthy, status, uptime_seconds, error_message,
+                   timestamp, server_host, service_name
+            FROM hermes_health_records
+            WHERE hermes_name = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(hermes_name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let record = HermesHealthRecord {
+                hermes_name: row.try_get("hermes_name")?,
+                is_healthy: row.try_get("is_healthy")?,
+                status: row.try_get("status")?,
+                uptime_seconds: row.try_get("uptime_seconds")?,
+                error_message: row.try_get("error_message")?,
+                timestamp: row.try_get("timestamp")?,
+                server_host: row.try_get("server_host")?,
+                service_name: row.try_get("service_name")?,
+            };
+            debug!("✅ Found hermes health record for: {}", hermes_name);
+            Ok(Some(record))
+        } else {
+            debug!("No hermes health record found for: {}", hermes_name);
             Ok(None)
         }
     }

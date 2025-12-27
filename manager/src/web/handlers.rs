@@ -7,8 +7,6 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
-use tokio::time::timeout;
 use tracing::{error, info};
 
 use crate::operation_tracker::OperationStatus;
@@ -123,87 +121,17 @@ async fn convert_health_to_summary(
     }
 }
 
-// NOTE: Hermes health is not persisted to database, so we use a timeout-based approach
-// CHANGED: Now runs checks in parallel for better performance
-async fn get_hermes_instances(
-    state: &AppState,
-    use_timeout: bool,
-) -> Result<Vec<HermesInstance>, anyhow::Error> {
-    let timeout_duration = if use_timeout {
-        Duration::from_secs(2) // Fast timeout for cached mode
-    } else {
-        Duration::from_secs(10) // Normal timeout for refresh mode
-    };
-
-    // CHANGED: Spawn parallel tasks instead of sequential loop
-    let mut tasks = Vec::new();
-
-    for (hermes_name, hermes_config) in &state.config.hermes {
-        let hermes_name = hermes_name.clone();
-        let hermes_config = hermes_config.clone();
-        let http_manager = state.http_agent_manager.clone();
-
-        let task = tokio::spawn(async move {
-            let status = match timeout(
-                timeout_duration,
-                http_manager
-                    .check_service_status(&hermes_config.server_host, &hermes_config.service_name),
-            )
-            .await
-            {
-                Ok(Ok(service_status)) => format!("{:?}", service_status),
-                Ok(Err(_)) => "Unknown".to_string(),
-                Err(_) => "Timeout".to_string(),
-            };
-
-            let uptime_formatted = match timeout(
-                timeout_duration,
-                http_manager
-                    .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name),
-            )
-            .await
-            {
-                Ok(Ok(Some(uptime))) => {
-                    let total_seconds = uptime.as_secs();
-                    let hours = total_seconds / 3600;
-                    let minutes = (total_seconds % 3600) / 60;
-                    let seconds = total_seconds % 60;
-
-                    if hours > 0 {
-                        Some(format!("{}h {}m {}s", hours, minutes, seconds))
-                    } else if minutes > 0 {
-                        Some(format!("{}m {}s", minutes, seconds))
-                    } else {
-                        Some(format!("{}s", seconds))
-                    }
-                }
-                _ => Some("Unknown".to_string()),
-            };
-
-            HermesInstance {
-                name: hermes_name,
-                server_host: hermes_config.server_host,
-                service_name: hermes_config.service_name,
-                status,
-                uptime_formatted,
-                dependent_nodes: hermes_config.dependent_nodes.unwrap_or_default(),
-                in_maintenance: false,
-            }
-        });
-
-        tasks.push(task);
+// Convert HermesHealthStatus to HermesInstance for API response
+fn convert_hermes_health_to_instance(health: &crate::health::HermesHealthStatus) -> HermesInstance {
+    HermesInstance {
+        name: health.hermes_name.clone(),
+        server_host: health.server_host.clone(),
+        service_name: health.service_name.clone(),
+        status: health.status.clone(),
+        uptime_formatted: health.uptime_formatted.clone(),
+        dependent_nodes: health.dependent_nodes.clone(),
+        in_maintenance: health.in_maintenance,
     }
-
-    // Wait for all tasks to complete in parallel
-    let mut instances = Vec::new();
-    for task in tasks {
-        match task.await {
-            Ok(instance) => instances.push(instance),
-            Err(e) => error!("Hermes health check task failed: {}", e),
-        }
-    }
-
-    Ok(instances)
 }
 
 // === HEALTH MONITORING ENDPOINTS ===
@@ -288,14 +216,20 @@ pub async fn get_node_health(
     }
 }
 
-// CHANGED: Now uses fast timeout for cached-like behavior
+// Returns cached Hermes health data from database for instant response
 pub async fn get_all_hermes_health(
     State(state): State<AppState>,
 ) -> ApiResult<Vec<HermesInstance>> {
-    match get_hermes_instances(&state, true).await {
-        Ok(hermes_instances) => Ok(Json(ApiResponse::success(hermes_instances))),
+    match state.health_monitor.get_all_hermes_health_cached().await {
+        Ok(health_statuses) => {
+            let instances: Vec<HermesInstance> = health_statuses
+                .iter()
+                .map(convert_hermes_health_to_instance)
+                .collect();
+            Ok(Json(ApiResponse::success(instances)))
+        }
         Err(e) => {
-            error!("Failed to get all hermes health: {}", e);
+            error!("Failed to get all hermes health (cached): {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiResponse::error(e.to_string())),
@@ -304,13 +238,19 @@ pub async fn get_all_hermes_health(
     }
 }
 
-// NEW: Triggers fresh hermes checks with longer timeout (for refresh button)
+// Triggers fresh hermes checks and stores results (for refresh button)
 pub async fn refresh_all_hermes_health(
     State(state): State<AppState>,
 ) -> ApiResult<Vec<HermesInstance>> {
     info!("Manual refresh requested for all hermes instances");
-    match get_hermes_instances(&state, false).await {
-        Ok(hermes_instances) => Ok(Json(ApiResponse::success(hermes_instances))),
+    match state.health_monitor.check_all_hermes().await {
+        Ok(health_statuses) => {
+            let instances: Vec<HermesInstance> = health_statuses
+                .iter()
+                .map(convert_hermes_health_to_instance)
+                .collect();
+            Ok(Json(ApiResponse::success(instances)))
+        }
         Err(e) => {
             error!("Failed to refresh all hermes health: {}", e);
             Err((
@@ -325,20 +265,18 @@ pub async fn get_hermes_health(
     Path(hermes_name): Path<String>,
     State(state): State<AppState>,
 ) -> ApiResult<HermesInstance> {
-    match get_hermes_instances(&state, true).await {
-        Ok(instances) => {
-            if let Some(instance) = instances.into_iter().find(|i| i.name == hermes_name) {
-                Ok(Json(ApiResponse::success(instance)))
-            } else {
-                Err((
-                    StatusCode::NOT_FOUND,
-                    Json(ApiResponse::error(format!(
-                        "Hermes {} not found",
-                        hermes_name
-                    ))),
-                ))
-            }
+    match state.health_monitor.get_hermes_health(&hermes_name).await {
+        Ok(Some(health_status)) => {
+            let instance = convert_hermes_health_to_instance(&health_status);
+            Ok(Json(ApiResponse::success(instance)))
         }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(format!(
+                "Hermes {} not found",
+                hermes_name
+            ))),
+        )),
         Err(e) => {
             error!("Failed to get hermes health for {}: {}", hermes_name, e);
             Err((

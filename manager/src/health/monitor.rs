@@ -6,10 +6,11 @@ use super::auto_restore::{clear_auto_restore_checked_state, monitor_auto_restore
 use super::cosmos::check_cosmos_node_health;
 use super::log_monitor::monitor_logs_per_node;
 use super::solana::{check_solana_node_health, is_solana_network};
-use super::types::{AutoRestoreCooldown, BlockHeightState, HealthStatus};
+use super::types::{AutoRestoreCooldown, BlockHeightState, HealthStatus, HermesHealthStatus};
 
-use crate::config::{Config, NodeConfig};
-use crate::database::{Database, HealthRecord};
+use crate::config::{Config, HermesConfig, NodeConfig};
+use crate::database::{Database, HealthRecord, HermesHealthRecord};
+use crate::http::HttpAgentManager;
 use crate::maintenance_tracker::MaintenanceTracker;
 use crate::services::alert_service::AlertService;
 use crate::snapshot::SnapshotManager;
@@ -32,6 +33,7 @@ pub struct HealthMonitor {
     maintenance_tracker: Arc<MaintenanceTracker>,
     snapshot_manager: Arc<SnapshotManager>,
     alert_service: Arc<AlertService>,
+    http_manager: Arc<HttpAgentManager>,
     client: HttpClient,
     auto_restore_cooldowns: Arc<Mutex<HashMap<String, AutoRestoreCooldown>>>,
     block_height_states: Arc<Mutex<HashMap<String, BlockHeightState>>>,
@@ -45,6 +47,7 @@ impl HealthMonitor {
         maintenance_tracker: Arc<MaintenanceTracker>,
         snapshot_manager: Arc<SnapshotManager>,
         alert_service: Arc<AlertService>,
+        http_manager: Arc<HttpAgentManager>,
     ) -> Self {
         let client = HttpClient::builder()
             .timeout(Duration::from_secs(config.rpc_timeout_seconds))
@@ -57,6 +60,7 @@ impl HealthMonitor {
             maintenance_tracker,
             snapshot_manager,
             alert_service,
+            http_manager,
             client,
             auto_restore_cooldowns: Arc::new(Mutex::new(HashMap::new())),
             block_height_states: Arc::new(Mutex::new(HashMap::new())),
@@ -321,6 +325,206 @@ impl HealthMonitor {
                 Ok(Ok(None)) => {}
                 Ok(Err(e)) => error!("Failed to get cached health: {}", e),
                 Err(e) => error!("Health check task panicked: {}", e),
+            }
+        }
+
+        Ok(health_statuses)
+    }
+
+    // === HERMES HEALTH MONITORING ===
+
+    /// Check health of all configured Hermes instances
+    #[instrument(skip(self))]
+    pub async fn check_all_hermes(&self) -> Result<Vec<HermesHealthStatus>> {
+        let mut health_statuses = Vec::new();
+        let mut tasks = Vec::new();
+
+        for (hermes_name, hermes_config) in &self.config.hermes {
+            let hermes_name = hermes_name.clone();
+            let hermes_config = hermes_config.clone();
+            let monitor = self.clone();
+
+            let task = tokio::spawn(async move {
+                monitor
+                    .check_hermes_health(&hermes_name, &hermes_config)
+                    .await
+            });
+            tasks.push(task);
+        }
+
+        let results = join_all(tasks).await;
+        for result in results {
+            match result {
+                Ok(Ok(status)) => health_statuses.push(status),
+                Ok(Err(e)) => error!("Hermes health check failed: {}", e),
+                Err(e) => error!("Hermes health check task panicked: {}", e),
+            }
+        }
+
+        // Store results in database
+        for status in &health_statuses {
+            if let Err(e) = self.store_hermes_health_record(status).await {
+                error!(
+                    "Failed to store hermes health record for {}: {}",
+                    status.hermes_name, e
+                );
+            }
+        }
+
+        Ok(health_statuses)
+    }
+
+    /// Check individual Hermes instance health
+    async fn check_hermes_health(
+        &self,
+        hermes_name: &str,
+        hermes_config: &HermesConfig,
+    ) -> Result<HermesHealthStatus> {
+        let timeout_duration = Duration::from_secs(10);
+
+        // Check service status
+        let (status, error_message) = match tokio::time::timeout(
+            timeout_duration,
+            self.http_manager
+                .check_service_status(&hermes_config.server_host, &hermes_config.service_name),
+        )
+        .await
+        {
+            Ok(Ok(service_status)) => (format!("{:?}", service_status), None),
+            Ok(Err(e)) => ("Unknown".to_string(), Some(e.to_string())),
+            Err(_) => (
+                "Timeout".to_string(),
+                Some("Health check timed out".to_string()),
+            ),
+        };
+
+        // Check uptime
+        let uptime_seconds = match tokio::time::timeout(
+            timeout_duration,
+            self.http_manager
+                .get_service_uptime(&hermes_config.server_host, &hermes_config.service_name),
+        )
+        .await
+        {
+            Ok(Ok(Some(uptime))) => Some(uptime.as_secs()),
+            _ => None,
+        };
+
+        let uptime_formatted = uptime_seconds.map(|secs| {
+            let hours = secs / 3600;
+            let minutes = (secs % 3600) / 60;
+            let seconds = secs % 60;
+            if hours > 0 {
+                format!("{}h {}m {}s", hours, minutes, seconds)
+            } else if minutes > 0 {
+                format!("{}m {}s", minutes, seconds)
+            } else {
+                format!("{}s", seconds)
+            }
+        });
+
+        let is_healthy = status == "Running";
+
+        Ok(HermesHealthStatus {
+            hermes_name: hermes_name.to_string(),
+            server_host: hermes_config.server_host.clone(),
+            service_name: hermes_config.service_name.clone(),
+            is_healthy,
+            status,
+            uptime_seconds,
+            uptime_formatted,
+            error_message,
+            last_check: Utc::now(),
+            dependent_nodes: hermes_config.dependent_nodes.clone().unwrap_or_default(),
+            in_maintenance: false,
+        })
+    }
+
+    /// Store Hermes health record in database
+    async fn store_hermes_health_record(&self, status: &HermesHealthStatus) -> Result<()> {
+        let record = HermesHealthRecord {
+            hermes_name: status.hermes_name.clone(),
+            is_healthy: status.is_healthy,
+            status: status.status.clone(),
+            uptime_seconds: status.uptime_seconds.map(|s| s as i64),
+            error_message: status.error_message.clone(),
+            timestamp: status.last_check,
+            server_host: status.server_host.clone(),
+            service_name: status.service_name.clone(),
+        };
+
+        self.database.store_hermes_health_record(&record).await
+    }
+
+    /// Get cached health status for a single Hermes instance
+    pub async fn get_hermes_health(&self, hermes_name: &str) -> Result<Option<HermesHealthStatus>> {
+        let record = self
+            .database
+            .get_latest_hermes_health_record(hermes_name)
+            .await?;
+
+        match record {
+            Some(record) => {
+                let hermes_config = self
+                    .config
+                    .hermes
+                    .get(hermes_name)
+                    .ok_or_else(|| anyhow!("Hermes {} not found in configuration", hermes_name))?;
+
+                let uptime_formatted = record.uptime_seconds.map(|secs| {
+                    let secs = secs as u64;
+                    let hours = secs / 3600;
+                    let minutes = (secs % 3600) / 60;
+                    let seconds = secs % 60;
+                    if hours > 0 {
+                        format!("{}h {}m {}s", hours, minutes, seconds)
+                    } else if minutes > 0 {
+                        format!("{}m {}s", minutes, seconds)
+                    } else {
+                        format!("{}s", seconds)
+                    }
+                });
+
+                let status = HermesHealthStatus {
+                    hermes_name: record.hermes_name,
+                    server_host: record.server_host,
+                    service_name: record.service_name,
+                    is_healthy: record.is_healthy,
+                    status: record.status,
+                    uptime_seconds: record.uptime_seconds.map(|s| s as u64),
+                    uptime_formatted,
+                    error_message: record.error_message,
+                    last_check: record.timestamp,
+                    dependent_nodes: hermes_config.dependent_nodes.clone().unwrap_or_default(),
+                    in_maintenance: false,
+                };
+
+                Ok(Some(status))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get cached health status for all Hermes instances (parallel database reads)
+    pub async fn get_all_hermes_health_cached(&self) -> Result<Vec<HermesHealthStatus>> {
+        let mut tasks = Vec::new();
+
+        for hermes_name in self.config.hermes.keys() {
+            let hermes_name = hermes_name.clone();
+            let monitor = self.clone();
+
+            let task = tokio::spawn(async move { monitor.get_hermes_health(&hermes_name).await });
+
+            tasks.push(task);
+        }
+
+        let mut health_statuses = Vec::new();
+        for task in tasks {
+            match task.await {
+                Ok(Ok(Some(status))) => health_statuses.push(status),
+                Ok(Ok(None)) => {}
+                Ok(Err(e)) => error!("Failed to get cached hermes health: {}", e),
+                Err(e) => error!("Hermes health check task panicked: {}", e),
             }
         }
 

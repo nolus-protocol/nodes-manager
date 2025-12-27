@@ -118,6 +118,7 @@ async fn main() -> Result<()> {
         maintenance_tracker.clone(),
         snapshot_manager.clone(),
         alert_service.clone(),
+        http_manager.clone(),
     ));
     info!("Health monitor initialized with centralized alerting and auto-restore capability");
 
@@ -145,6 +146,11 @@ async fn main() -> Result<()> {
             // Check blockchain nodes
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
                 warn!("Node health monitoring error: {}", e);
+            }
+
+            // Check Hermes instances
+            if let Err(e) = health_monitor_clone.check_all_hermes().await {
+                warn!("Hermes health monitoring error: {}", e);
             }
         }
     });

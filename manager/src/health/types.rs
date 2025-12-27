@@ -21,6 +21,22 @@ pub struct HealthStatus {
     pub in_maintenance: bool,
 }
 
+/// Health status for a Hermes relayer instance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HermesHealthStatus {
+    pub hermes_name: String,
+    pub server_host: String,
+    pub service_name: String,
+    pub is_healthy: bool,
+    pub status: String,
+    pub uptime_seconds: Option<u64>,
+    pub uptime_formatted: Option<String>,
+    pub error_message: Option<String>,
+    pub last_check: DateTime<Utc>,
+    pub dependent_nodes: Vec<String>,
+    pub in_maintenance: bool,
+}
+
 /// Cosmos SDK RPC response structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcResponse {

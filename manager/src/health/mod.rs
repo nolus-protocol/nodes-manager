@@ -10,4 +10,4 @@ mod solana;
 pub mod types;
 
 pub use monitor::HealthMonitor;
-pub use types::HealthStatus;
+pub use types::{HealthStatus, HermesHealthStatus};
