@@ -4,7 +4,7 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
+
 use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -29,8 +29,7 @@ impl ServiceStatus {
     }
 }
 
-// REMOVED: Duplicate SnapshotInfo struct - now using crate::snapshot::SnapshotInfo
-
+#[derive(Clone)]
 pub struct HttpAgentManager {
     pub config: Arc<Config>,
     pub client: Client,
@@ -56,6 +55,78 @@ impl HttpAgentManager {
             operation_tracker,
             maintenance_tracker,
         }
+    }
+
+    /// Execute an operation with proper lifecycle management (tracking + maintenance window).
+    ///
+    /// This helper:
+    /// 1. Starts operation tracking
+    /// 2. Opens a maintenance window
+    /// 3. Executes the provided operation
+    /// 4. Closes the maintenance window
+    /// 5. Ends operation tracking
+    ///
+    /// Returns the result of the operation, ensuring cleanup happens even on errors.
+    async fn with_operation_lifecycle<T, F, Fut>(
+        &self,
+        node_name: &str,
+        operation_type: &str,
+        duration_minutes: u32,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        // Start operation tracking
+        self.operation_tracker
+            .try_start_operation(node_name, operation_type, None)
+            .await?;
+
+        // Get node config for server_host
+        let node_config = match self.config.nodes.get(node_name) {
+            Some(config) => config,
+            None => {
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(anyhow::anyhow!("Node {} not found", node_name));
+            }
+        };
+
+        // Start maintenance window
+        let maintenance_started = match self
+            .maintenance_tracker
+            .start_maintenance(
+                node_name,
+                operation_type,
+                duration_minutes,
+                &node_config.server_host,
+            )
+            .await
+        {
+            Ok(()) => true,
+            Err(e) => {
+                self.operation_tracker.finish_operation(node_name).await;
+                return Err(e);
+            }
+        };
+
+        // Execute the operation
+        let result = operation().await;
+
+        // Cleanup: finish operation tracking
+        self.operation_tracker.finish_operation(node_name).await;
+
+        // Cleanup: end maintenance window
+        if maintenance_started {
+            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
+                warn!(
+                    "Failed to end maintenance for {} {}: {}",
+                    operation_type, node_name, e
+                );
+            }
+        }
+
+        result
     }
 
     fn is_long_running_operation(endpoint: &str) -> bool {
@@ -358,47 +429,16 @@ impl HttpAgentManager {
 
     #[instrument(skip(self), fields(node = %node_name))]
     pub async fn restart_node(&self, node_name: &str) -> Result<()> {
-        self.operation_tracker
-            .try_start_operation(node_name, "node_restart", None)
-            .await?;
+        let node_name_owned = node_name.to_string();
+        let self_ref = self.clone();
 
-        let node_config = self.config.nodes.get(node_name).ok_or_else(|| {
-            let tracker = self.operation_tracker.clone();
-            let node_name_clone = node_name.to_string();
-            tokio::spawn(async move {
-                tracker.finish_operation(&node_name_clone).await;
-            });
-            anyhow::anyhow!("Node {} not found", node_name)
-        })?;
-
-        let maintenance_started = match self
-            .maintenance_tracker
-            .start_maintenance(
-                node_name,
-                "node_restart",
-                operation_timeouts::NODE_RESTART_MINUTES as u32,
-                &node_config.server_host,
-            )
-            .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                self.operation_tracker.finish_operation(node_name).await;
-                return Err(e);
-            }
-        };
-
-        let result = self.restart_node_impl(node_name).await;
-
-        self.operation_tracker.finish_operation(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                warn!("Failed to end maintenance for {}: {}", node_name, e);
-            }
-        }
-
-        result
+        self.with_operation_lifecycle(
+            node_name,
+            "node_restart",
+            operation_timeouts::NODE_RESTART_MINUTES as u32,
+            || async move { self_ref.restart_node_impl(&node_name_owned).await },
+        )
+        .await
     }
 
     async fn restart_node_impl(&self, node_name: &str) -> Result<()> {
@@ -437,47 +477,16 @@ impl HttpAgentManager {
 
     #[instrument(skip(self), fields(node = %node_name))]
     pub async fn execute_node_pruning(&self, node_name: &str) -> Result<()> {
-        self.operation_tracker
-            .try_start_operation(node_name, "pruning", None)
-            .await?;
+        let node_name_owned = node_name.to_string();
+        let self_ref = self.clone();
 
-        let node_config = self.config.nodes.get(node_name).ok_or_else(|| {
-            let tracker = self.operation_tracker.clone();
-            let node_name_clone = node_name.to_string();
-            tokio::spawn(async move {
-                tracker.finish_operation(&node_name_clone).await;
-            });
-            anyhow::anyhow!("Node {} not found", node_name)
-        })?;
-
-        let maintenance_started = match self
-            .maintenance_tracker
-            .start_maintenance(
-                node_name,
-                "pruning",
-                (operation_timeouts::PRUNING_HOURS * 60) as u32,
-                &node_config.server_host,
-            )
-            .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                self.operation_tracker.finish_operation(node_name).await;
-                return Err(e);
-            }
-        };
-
-        let result = self.execute_node_pruning_impl(node_name).await;
-
-        self.operation_tracker.finish_operation(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                warn!("Failed to end maintenance for pruning {}: {}", node_name, e);
-            }
-        }
-
-        result
+        self.with_operation_lifecycle(
+            node_name,
+            "pruning",
+            (operation_timeouts::PRUNING_HOURS * 60) as u32,
+            || async move { self_ref.execute_node_pruning_impl(&node_name_owned).await },
+        )
+        .await
     }
 
     async fn execute_node_pruning_impl(&self, node_name: &str) -> Result<()> {
@@ -537,50 +546,16 @@ impl HttpAgentManager {
     }
 
     pub async fn execute_state_sync(&self, node_name: &str) -> Result<()> {
-        self.operation_tracker
-            .try_start_operation(node_name, "state_sync", None)
-            .await?;
+        let node_name_owned = node_name.to_string();
+        let self_ref = self.clone();
 
-        let node_config = self.config.nodes.get(node_name).ok_or_else(|| {
-            let tracker = self.operation_tracker.clone();
-            let node_name_clone = node_name.to_string();
-            tokio::spawn(async move {
-                tracker.finish_operation(&node_name_clone).await;
-            });
-            anyhow::anyhow!("Node {} not found", node_name)
-        })?;
-
-        let maintenance_started = match self
-            .maintenance_tracker
-            .start_maintenance(
-                node_name,
-                "state_sync",
-                (operation_timeouts::STATE_SYNC_HOURS * 60) as u32,
-                &node_config.server_host,
-            )
-            .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                self.operation_tracker.finish_operation(node_name).await;
-                return Err(e);
-            }
-        };
-
-        let result = self.execute_state_sync_impl(node_name).await;
-
-        self.operation_tracker.finish_operation(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                warn!(
-                    "Failed to end maintenance for state sync {}: {}",
-                    node_name, e
-                );
-            }
-        }
-
-        result
+        self.with_operation_lifecycle(
+            node_name,
+            "state_sync",
+            (operation_timeouts::STATE_SYNC_HOURS * 60) as u32,
+            || async move { self_ref.execute_state_sync_impl(&node_name_owned).await },
+        )
+        .await
     }
 
     async fn execute_state_sync_impl(&self, node_name: &str) -> Result<()> {
@@ -597,30 +572,15 @@ impl HttpAgentManager {
             ));
         }
 
-        // Auto-detect network from RPC if not configured or set to "auto"
-        let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!(
-                "Auto-detecting network for {} from RPC {}",
-                node_name, node_config.rpc_url
-            );
-            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
-                Ok(detected_network) => {
-                    info!(
-                        "✓ Auto-detected network for {}: {}",
-                        node_name, detected_network
-                    );
-                    detected_network
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
-                        node_name, e
-                    ));
-                }
-            }
-        } else {
-            node_config.network.clone()
-        };
+        // Resolve network (from config or auto-detect from RPC)
+        let network = crate::rpc::resolve_network(&self.client, node_name, node_config)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to resolve network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                    node_name, e
+                )
+            })?;
 
         let rpc_sources = node_config.state_sync_rpc_sources.as_ref().ok_or_else(|| {
             anyhow::anyhow!("No RPC sources configured for state sync on {}", node_name)
@@ -653,7 +613,7 @@ impl HttpAgentManager {
             sync_params.trust_height, sync_params.trust_hash
         );
 
-        let daemon_binary = self.determine_daemon_binary(&network);
+        let daemon_binary = crate::rpc::determine_daemon_binary(&network);
 
         info!(
             "Sending state sync request to agent on {}",
@@ -680,130 +640,18 @@ impl HttpAgentManager {
         Ok(())
     }
 
-    /// Fetch network ID from RPC /status endpoint at runtime
-    /// Used as fallback when network is not configured
-    async fn fetch_block_height_from_rpc(&self, rpc_url: &str) -> Result<u64> {
-        let status_url = format!("{}/status", rpc_url);
-        let response = self
-            .client
-            .get(&status_url)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to query RPC status: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "RPC returned error status: {}",
-                response.status()
-            ));
-        }
-
-        let rpc_response: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse RPC response: {}", e))?;
-
-        let block_height_str = rpc_response["result"]["sync_info"]["latest_block_height"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Block height not found in RPC response"))?;
-
-        let block_height = block_height_str
-            .parse::<u64>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse block height: {}", e))?;
-
-        Ok(block_height)
-    }
-
-    async fn fetch_network_from_rpc(&self, rpc_url: &str) -> Result<String> {
-        let status_url = format!("{}/status", rpc_url);
-
-        let response = self
-            .client
-            .get(&status_url)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to fetch RPC status from {}: {}", status_url, e)
-            })?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "RPC status returned HTTP {}",
-                response.status()
-            ));
-        }
-
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse RPC status response: {}", e))?;
-
-        // Extract network from response: result.node_info.network
-        let network = json["result"]["node_info"]["network"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Network field not found in RPC response"))?
-            .to_string();
-
-        Ok(network)
-    }
-
-    fn determine_daemon_binary(&self, network: &str) -> String {
-        match network {
-            n if n.starts_with("pirin") || n.starts_with("nolus") => "nolusd".to_string(),
-            n if n.starts_with("osmosis") => "osmosisd".to_string(),
-            n if n.starts_with("neutron") => "neutrond".to_string(),
-            n if n.starts_with("rila") => "rila".to_string(),
-            n if n.starts_with("cosmos") => "gaiad".to_string(),
-            n if n.starts_with("solana") => "agave-validator".to_string(),
-            _ => format!("{}d", network.split('-').next().unwrap_or(network)),
-        }
-    }
-
     #[instrument(skip(self), fields(node = %node_name))]
     pub async fn create_node_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
-        self.operation_tracker
-            .try_start_operation(node_name, "snapshot_creation", None)
-            .await?;
+        let node_name_owned = node_name.to_string();
+        let self_ref = self.clone();
 
-        let node_config = self.config.nodes.get(node_name).ok_or_else(|| {
-            let tracker = self.operation_tracker.clone();
-            let node_name_clone = node_name.to_string();
-            tokio::spawn(async move {
-                tracker.finish_operation(&node_name_clone).await;
-            });
-            anyhow::anyhow!("Node {} not found", node_name)
-        })?;
-
-        let maintenance_started = match self
-            .maintenance_tracker
-            .start_maintenance(
-                node_name,
-                "snapshot_creation",
-                (operation_timeouts::SNAPSHOT_CREATION_HOURS * 60) as u32,
-                &node_config.server_host,
-            )
-            .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                self.operation_tracker.finish_operation(node_name).await;
-                return Err(e);
-            }
-        };
-
-        let result = self.create_node_snapshot_impl(node_name).await;
-
-        self.operation_tracker.finish_operation(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                info!("Failed to end maintenance for {}: {}", node_name, e);
-            }
-        }
-
-        result
+        self.with_operation_lifecycle(
+            node_name,
+            "snapshot_creation",
+            (operation_timeouts::SNAPSHOT_CREATION_HOURS * 60) as u32,
+            || async move { self_ref.create_node_snapshot_impl(&node_name_owned).await },
+        )
+        .await
     }
 
     async fn create_node_snapshot_impl(&self, node_name: &str) -> Result<SnapshotInfo> {
@@ -820,39 +668,23 @@ impl HttpAgentManager {
             ));
         }
 
-        // Auto-detect network from RPC if not configured or set to "auto"
-        let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!(
-                "Auto-detecting network for {} from RPC {}",
-                node_name, node_config.rpc_url
-            );
-            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
-                Ok(detected_network) => {
-                    info!(
-                        "✓ Auto-detected network for {}: {}",
-                        node_name, detected_network
-                    );
-                    detected_network
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
-                        node_name, e
-                    ));
-                }
-            }
-        } else {
-            node_config.network.clone()
-        };
+        // Resolve network (from config or auto-detect from RPC)
+        let network = crate::rpc::resolve_network(&self.client, node_name, node_config)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to resolve network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                    node_name, e
+                )
+            })?;
 
         // Fetch current block height from RPC for snapshot naming
         info!(
             "Fetching current block height for {} from RPC {}",
             node_name, node_config.rpc_url
         );
-        let block_height = self
-            .fetch_block_height_from_rpc(&node_config.rpc_url)
-            .await?;
+        let block_height =
+            crate::rpc::fetch_block_height_from_rpc(&self.client, &node_config.rpc_url).await?;
         info!("✓ Current block height for {}: {}", node_name, block_height);
 
         // Build snapshot name: network_date_blockheight (e.g., "pirin-1_20250121_17154420")
@@ -976,47 +808,20 @@ impl HttpAgentManager {
     }
 
     pub async fn restore_node_from_snapshot(&self, node_name: &str) -> Result<SnapshotInfo> {
-        self.operation_tracker
-            .try_start_operation(node_name, "snapshot_restore", None)
-            .await?;
+        let node_name_owned = node_name.to_string();
+        let self_ref = self.clone();
 
-        let node_config = self.config.nodes.get(node_name).ok_or_else(|| {
-            let tracker = self.operation_tracker.clone();
-            let node_name_clone = node_name.to_string();
-            tokio::spawn(async move {
-                tracker.finish_operation(&node_name_clone).await;
-            });
-            anyhow::anyhow!("Node {} not found", node_name)
-        })?;
-
-        let maintenance_started = match self
-            .maintenance_tracker
-            .start_maintenance(
-                node_name,
-                "snapshot_restore",
-                (operation_timeouts::SNAPSHOT_RESTORE_HOURS * 60) as u32,
-                &node_config.server_host,
-            )
-            .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                self.operation_tracker.finish_operation(node_name).await;
-                return Err(e);
-            }
-        };
-
-        let result = self.restore_node_from_snapshot_impl(node_name).await;
-
-        self.operation_tracker.finish_operation(node_name).await;
-
-        if maintenance_started {
-            if let Err(e) = self.maintenance_tracker.end_maintenance(node_name).await {
-                info!("Failed to end maintenance for {}: {}", node_name, e);
-            }
-        }
-
-        result
+        self.with_operation_lifecycle(
+            node_name,
+            "snapshot_restore",
+            (operation_timeouts::SNAPSHOT_RESTORE_HOURS * 60) as u32,
+            || async move {
+                self_ref
+                    .restore_node_from_snapshot_impl(&node_name_owned)
+                    .await
+            },
+        )
+        .await
     }
 
     async fn restore_node_from_snapshot_impl(&self, node_name: &str) -> Result<SnapshotInfo> {
@@ -1033,30 +838,15 @@ impl HttpAgentManager {
             ));
         }
 
-        // Auto-detect network from RPC if not configured or set to "auto"
-        let network = if node_config.network.is_empty() || node_config.network == "auto" {
-            info!(
-                "Auto-detecting network for {} from RPC {}",
-                node_name, node_config.rpc_url
-            );
-            match self.fetch_network_from_rpc(&node_config.rpc_url).await {
-                Ok(detected_network) => {
-                    info!(
-                        "✓ Auto-detected network for {}: {}",
-                        node_name, detected_network
-                    );
-                    detected_network
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to auto-detect network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
-                        node_name, e
-                    ));
-                }
-            }
-        } else {
-            node_config.network.clone()
-        };
+        // Resolve network (from config or auto-detect from RPC)
+        let network = crate::rpc::resolve_network(&self.client, node_name, node_config)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to resolve network for {}: {}. Please specify 'network' in config or ensure RPC is accessible.",
+                    node_name, e
+                )
+            })?;
 
         let deploy_path = node_config
             .deploy_path
@@ -1345,16 +1135,5 @@ impl HttpAgentManager {
             node_names.len()
         );
         Ok(true)
-    }
-}
-
-impl Clone for HttpAgentManager {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            client: self.client.clone(),
-            operation_tracker: self.operation_tracker.clone(),
-            maintenance_tracker: self.maintenance_tracker.clone(),
-        }
     }
 }

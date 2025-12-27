@@ -21,8 +21,6 @@ pub struct Config {
     pub nodes: HashMap<String, NodeConfig>,
     #[serde(skip)]
     pub hermes: HashMap<String, HermesConfig>,
-    #[serde(skip)]
-    pub etl: HashMap<String, EtlConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +44,6 @@ pub struct ServerConfigFile {
     pub defaults: Option<NodeDefaults>,
     pub nodes: HashMap<String, NodeConfig>,
     pub hermes: Option<HashMap<String, HermesConfig>>,
-    pub etl: Option<HashMap<String, EtlConfig>>,
 }
 
 /// Server-level path configuration for auto-derivation
@@ -174,15 +171,4 @@ pub struct HermesConfig {
     pub restart_schedule: Option<String>,
     pub dependent_nodes: Option<Vec<String>>,
     pub truncate_logs_enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EtlConfig {
-    pub server_host: String,
-    pub host: String,
-    pub port: u16,
-    pub endpoint: Option<String>,
-    pub enabled: bool,
-    pub timeout_seconds: Option<u64>,
-    pub description: Option<String>,
 }

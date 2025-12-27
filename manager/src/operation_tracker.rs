@@ -45,6 +45,7 @@ pub struct OperationStatus {
     pub total_active: usize,
 }
 
+#[derive(Clone, Default)]
 pub struct SimpleOperationTracker {
     active_operations: Arc<RwLock<HashMap<String, ActiveOperation>>>, // target_name -> operation
 }
@@ -180,20 +181,6 @@ impl SimpleOperationTracker {
         }
 
         cleaned_count as u32
-    }
-}
-
-impl Default for SimpleOperationTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clone for SimpleOperationTracker {
-    fn clone(&self) -> Self {
-        Self {
-            active_operations: self.active_operations.clone(),
-        }
     }
 }
 

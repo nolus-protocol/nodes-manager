@@ -2,7 +2,6 @@
 use super::{Config, ServerConfigFile};
 use anyhow::{anyhow, Result};
 use glob::glob;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
@@ -38,7 +37,6 @@ impl ConfigManager {
         let mut server_configs = HashMap::new();
         let mut all_nodes = HashMap::new();
         let mut all_hermes = HashMap::new();
-        let mut all_etl = HashMap::new();
 
         for entry in glob(&pattern).map_err(|e| anyhow!("Glob pattern error: {}", e))? {
             let path = entry.map_err(|e| anyhow!("Glob entry error: {}", e))?;
@@ -68,11 +66,11 @@ impl ConfigManager {
             // Store server configuration
             server_configs.insert(server_name.to_string(), server_config_file.server);
 
-            // FIXED: Collect nodes from this server with smart naming
+            // Collect nodes from this server with smart naming
             for (node_name, mut node_config) in server_config_file.nodes {
                 node_config.server_host = server_name.to_string();
 
-                // FIXED: Smart node naming - don't double-prefix if already prefixed
+                // Smart node naming - don't double-prefix if already prefixed
                 let final_node_name = if node_name.starts_with(&format!("{}-", server_name)) {
                     // Node name already includes server prefix, use as-is
                     node_name.clone()
@@ -87,7 +85,8 @@ impl ConfigManager {
                         "Auto-detecting network for {} from RPC {}",
                         final_node_name, node_config.rpc_url
                     );
-                    match Self::fetch_network_from_rpc(&node_config.rpc_url).await {
+                    match crate::rpc::fetch_network_from_rpc_standalone(&node_config.rpc_url).await
+                    {
                         Ok(detected_network) => {
                             info!(
                                 "✓ Auto-detected network for {}: {}",
@@ -108,12 +107,12 @@ impl ConfigManager {
                 all_nodes.insert(final_node_name, node_config);
             }
 
-            // FIXED: Collect Hermes instances from this server with smart naming
+            // Collect Hermes instances from this server with smart naming
             if let Some(hermes_configs) = server_config_file.hermes {
                 for (hermes_name, mut hermes_config) in hermes_configs {
                     hermes_config.server_host = server_name.to_string();
 
-                    // FIXED: Smart hermes naming - don't double-prefix if already prefixed
+                    // Smart hermes naming - don't double-prefix if already prefixed
                     let final_hermes_name = if hermes_name.starts_with(&format!("{}-", server_name))
                     {
                         // Hermes name already includes server prefix, use as-is
@@ -126,105 +125,19 @@ impl ConfigManager {
                     all_hermes.insert(final_hermes_name, hermes_config);
                 }
             }
-
-            // NEW: Collect ETL services from this server with smart naming
-            if let Some(etl_configs) = server_config_file.etl {
-                for (etl_name, mut etl_config) in etl_configs {
-                    etl_config.server_host = server_name.to_string();
-
-                    // Smart ETL naming - don't double-prefix if already prefixed
-                    let final_etl_name = if etl_name.starts_with(&format!("{}-", server_name)) {
-                        // ETL name already includes server prefix, use as-is
-                        etl_name
-                    } else {
-                        // ETL name doesn't include server prefix, add it
-                        format!("{}-{}", server_name, etl_name)
-                    };
-
-                    all_etl.insert(final_etl_name, etl_config);
-                }
-            }
         }
 
         config.servers = server_configs;
         config.nodes = all_nodes;
         config.hermes = all_hermes;
-        config.etl = all_etl;
 
         info!(
-            "Loaded {} servers, {} nodes, {} hermes instances, {} ETL services",
+            "Loaded {} servers, {} nodes, {} hermes instances",
             config.servers.len(),
             config.nodes.len(),
-            config.hermes.len(),
-            config.etl.len()
+            config.hermes.len()
         );
 
         Ok(config)
-    }
-
-    /// Fetch network ID from RPC /status endpoint
-    /// Returns the network field from the response (e.g., "pirin-1", "osmosis-1", "solana-mainnet", "solana-testnet", "solana-devnet")
-    async fn fetch_network_from_rpc(rpc_url: &str) -> Result<String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()?;
-
-        // First try Cosmos SDK format (GET /status)
-        let status_url = format!("{}/status", rpc_url);
-        let response = client.get(&status_url).send().await;
-
-        if let Ok(response) = response {
-            if response.status().is_success() {
-                if let Ok(json) = response.json::<Value>().await {
-                    // Extract network from Cosmos response: result.node_info.network
-                    if let Some(network) = json["result"]["node_info"]["network"].as_str() {
-                        return Ok(network.to_string());
-                    }
-                }
-            }
-        }
-
-        // If Cosmos format failed, try Solana JSON-RPC format
-        // Use getVersion to detect cluster type
-        let solana_request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "getVersion",
-            "params": [],
-            "id": 1
-        });
-
-        let response = client
-            .post(rpc_url)
-            .json(&solana_request)
-            .send()
-            .await
-            .map_err(|e| anyhow!("Failed to fetch Solana RPC version from {}: {}", rpc_url, e))?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!("Solana RPC returned HTTP {}", response.status()));
-        }
-
-        let json: Value = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse Solana RPC response: {}", e))?;
-
-        // If we got a valid Solana response, try to determine the cluster
-        if json.get("result").is_some() {
-            // Try to detect cluster from RPC URL patterns
-            let network = if rpc_url.contains("mainnet") {
-                "solana-mainnet".to_string()
-            } else if rpc_url.contains("testnet") {
-                "solana-testnet".to_string()
-            } else if rpc_url.contains("devnet") {
-                "solana-devnet".to_string()
-            } else {
-                // Default to mainnet if we can't determine
-                "solana-mainnet".to_string()
-            };
-            return Ok(network);
-        }
-
-        Err(anyhow!("Could not detect network type from RPC"))
     }
 }

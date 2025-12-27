@@ -8,6 +8,7 @@ use tracing::info;
 use crate::config::Config;
 use crate::snapshot::SnapshotManager;
 
+#[derive(Clone)]
 pub struct SnapshotService {
     config: Arc<Config>,
     snapshot_manager: Arc<SnapshotManager>,
@@ -152,15 +153,6 @@ impl SnapshotService {
                 "Neither snapshots nor auto-restore enabled for node {}",
                 node_name
             ))
-        }
-    }
-}
-
-impl Clone for SnapshotService {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            snapshot_manager: self.snapshot_manager.clone(),
         }
     }
 }

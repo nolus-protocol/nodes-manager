@@ -7,7 +7,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, NodeConfig};
 use crate::http::HttpAgentManager;
-use crate::maintenance_tracker::MaintenanceTracker;
 use crate::services::alert_service::AlertService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,10 +30,10 @@ pub struct SnapshotStats {
     pub compression_type: String,
 }
 
+#[derive(Clone)]
 pub struct SnapshotManager {
     config: Arc<Config>,
     http_manager: Arc<HttpAgentManager>,
-    maintenance_tracker: Arc<MaintenanceTracker>,
     alert_service: Arc<AlertService>,
 }
 
@@ -42,13 +41,11 @@ impl SnapshotManager {
     pub fn new(
         config: Arc<Config>,
         http_manager: Arc<HttpAgentManager>,
-        maintenance_tracker: Arc<MaintenanceTracker>,
         alert_service: Arc<AlertService>,
     ) -> Self {
         Self {
             config,
             http_manager,
-            maintenance_tracker,
             alert_service,
         }
     }
@@ -594,16 +591,5 @@ impl SnapshotManager {
             .nodes
             .get(node_name)
             .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_name))
-    }
-}
-
-impl Clone for SnapshotManager {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            http_manager: self.http_manager.clone(),
-            maintenance_tracker: self.maintenance_tracker.clone(),
-            alert_service: self.alert_service.clone(),
-        }
     }
 }

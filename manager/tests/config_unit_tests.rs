@@ -266,41 +266,6 @@ enabled = true
 }
 
 #[test]
-fn test_parse_etl_config() {
-    let server_toml = r#"
-[server]
-host = "localhost"
-agent_port = 8745
-api_key = "key"
-
-[nodes.dummy]
-rpc_url = "http://localhost:26657"
-server_host = "localhost"
-service_name = "dummy"
-enabled = true
-
-[etl.etl-service-1]
-server_host = "localhost"
-host = "localhost"
-port = 8080
-endpoint = "/health"
-enabled = true
-    "#;
-
-    let config: manager::config::ServerConfigFile = toml::from_str(server_toml).unwrap();
-
-    assert!(config.etl.is_some());
-    let etl_map = config.etl.unwrap();
-    assert!(etl_map.contains_key("etl-service-1"));
-
-    let etl = etl_map.get("etl-service-1").unwrap();
-    assert_eq!(etl.host, "localhost");
-    assert_eq!(etl.port, 8080);
-    assert_eq!(etl.endpoint, Some("/health".to_string()));
-    assert!(etl.enabled);
-}
-
-#[test]
 fn test_log_monitoring_config() {
     let server_toml = r#"
 [server]

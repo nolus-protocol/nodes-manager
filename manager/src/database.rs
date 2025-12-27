@@ -35,6 +35,12 @@ pub struct Database {
 }
 
 impl Database {
+    /// Expose pool for integration test queries
+    #[allow(dead_code)]
+    pub fn pool(&self) -> &Pool<Sqlite> {
+        &self.pool
+    }
+
     pub async fn new(database_path: &str) -> Result<Self> {
         info!("=== Starting database initialization ===");
         info!("Database path: {}", database_path);
@@ -394,52 +400,6 @@ impl Database {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn get_health_history(
-        &self,
-        node_name: &str,
-        limit: Option<i32>,
-    ) -> Result<Vec<HealthRecord>> {
-        let limit = limit.unwrap_or(100);
-        debug!(
-            "Querying health history for {} (limit: {})",
-            node_name, limit
-        );
-
-        let rows = sqlx::query(
-            r#"
-            SELECT node_name, is_healthy, error_message, timestamp,
-                   block_height, is_syncing, is_catching_up, validator_address
-            FROM health_records
-            WHERE node_name = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(node_name)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut records = Vec::with_capacity(rows.len());
-        for row in rows {
-            let record = HealthRecord {
-                node_name: row.try_get("node_name")?,
-                is_healthy: row.try_get("is_healthy")?,
-                error_message: row.try_get("error_message")?,
-                timestamp: row.try_get("timestamp")?,
-                block_height: row.try_get("block_height")?,
-                is_syncing: row.try_get("is_syncing")?,
-                is_catching_up: row.try_get("is_catching_up")?,
-                validator_address: row.try_get("validator_address")?,
-            };
-            records.push(record);
-        }
-
-        debug!("Found {} health records for: {}", records.len(), node_name);
-        Ok(records)
-    }
-
     pub async fn store_maintenance_operation(
         &self,
         operation: &MaintenanceOperation,
@@ -479,30 +439,25 @@ impl Database {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn get_maintenance_operations(
+    pub async fn get_maintenance_operation_by_id(
         &self,
-        limit: Option<i32>,
-    ) -> Result<Vec<MaintenanceOperation>> {
-        debug!("Querying maintenance operations with limit: {:?}", limit);
+        operation_id: &str,
+    ) -> Result<Option<MaintenanceOperation>> {
+        debug!("Querying maintenance operation by ID: {}", operation_id);
 
-        let limit_val = limit.unwrap_or(100);
-
-        let rows = sqlx::query(
+        let row = sqlx::query(
             r#"
             SELECT id, operation_type, target_name, status, started_at,
                    completed_at, error_message, details
             FROM maintenance_operations
-            ORDER BY started_at DESC
-            LIMIT ?
+            WHERE id = ?
             "#,
         )
-        .bind(limit_val)
-        .fetch_all(&self.pool)
+        .bind(operation_id)
+        .fetch_optional(&self.pool)
         .await?;
 
-        let mut operations = Vec::new();
-        for row in rows {
+        if let Some(row) = row {
             let operation = MaintenanceOperation {
                 id: row.try_get("id")?,
                 operation_type: row.try_get("operation_type")?,
@@ -513,10 +468,11 @@ impl Database {
                 error_message: row.try_get("error_message")?,
                 details: row.try_get("details")?,
             };
-            operations.push(operation);
+            debug!("✅ Found maintenance operation: {}", operation_id);
+            Ok(Some(operation))
+        } else {
+            debug!("No maintenance operation found with ID: {}", operation_id);
+            Ok(None)
         }
-
-        debug!("✅ Retrieved {} maintenance operations", operations.len());
-        Ok(operations)
     }
 }

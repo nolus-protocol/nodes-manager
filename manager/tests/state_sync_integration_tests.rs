@@ -32,7 +32,6 @@ async fn test_deploy_path_is_home_directory_not_data() {
         servers: HashMap::new(),
         nodes: HashMap::new(),
         hermes: HashMap::new(),
-        etl: HashMap::new(),
     };
 
     let node = NodeConfig {

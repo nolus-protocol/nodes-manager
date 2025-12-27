@@ -189,9 +189,10 @@ impl OperationExecutor {
         status: &str,
         error_message: Option<String>,
     ) -> Result<()> {
-        let operations = database.get_maintenance_operations(Some(100)).await?;
-
-        if let Some(mut operation) = operations.into_iter().find(|op| op.id == operation_id) {
+        if let Some(mut operation) = database
+            .get_maintenance_operation_by_id(operation_id)
+            .await?
+        {
             operation.status = status.to_string();
             operation.completed_at = Some(Utc::now());
             operation.error_message = error_message;

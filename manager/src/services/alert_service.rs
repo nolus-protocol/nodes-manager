@@ -52,6 +52,7 @@ struct AlertState {
     has_sent_alert: bool,
 }
 
+#[derive(Clone)]
 pub struct AlertService {
     webhook_url: String,
     client: Client,
@@ -703,17 +704,5 @@ impl AlertService {
 
         info!("Testing webhook connectivity to: {}", self.webhook_url);
         self.send_webhook(&test_payload).await
-    }
-}
-
-impl Clone for AlertService {
-    fn clone(&self) -> Self {
-        Self {
-            webhook_url: self.webhook_url.clone(),
-            client: self.client.clone(),
-            alert_states: self.alert_states.clone(),
-            previous_health_states: self.previous_health_states.clone(),
-            is_enabled: self.is_enabled,
-        }
     }
 }

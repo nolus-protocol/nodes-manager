@@ -4,17 +4,16 @@
 [![Release](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml/badge.svg)](https://github.com/nolus-protocol/nodes-manager/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, state sync orchestration, and ETL service monitoring through a centralized web interface.
+A comprehensive Rust-based infrastructure management system for 20+ blockchain nodes with advanced health monitoring, automated maintenance, network-wide snapshot management, and state sync orchestration through a centralized web interface.
 
 ## Features
 
 ### Core Functionality
 
-- **Multi-Service Health Monitoring**: Real-time monitoring of blockchain nodes, Hermes relayers, and ETL services with RPC-based status checks
+- **Multi-Service Health Monitoring**: Real-time monitoring of blockchain nodes and Hermes relayers with RPC-based status checks
 - **Automated Pruning**: Seamless integration with `cosmos-pruner` tool for efficient blockchain data management
 - **Network-Based Snapshot System**: Create, restore, and manage network-wide LZ4-compressed blockchain snapshots with cross-node recovery and validator state preservation
 - **State Sync Orchestration**: Automated state sync execution for rapid node synchronization from trusted snapshots
-- **ETL Service Monitoring**: HTTP health checks for custom ETL services with configurable endpoints and timeout handling
 - **Log Monitoring**: Pattern-based log monitoring with configurable alerts and context extraction
 - **Hermes Management**: Smart relayer restarts with RPC-based dependency validation
 - **Web Interface**: RESTful API with comprehensive endpoints for all operations
@@ -102,10 +101,10 @@ A comprehensive Rust-based infrastructure management system for 20+ blockchain n
                                  │
          ┌───────────────────────────────────────────────────────────┐
          │            Blockchain Infrastructure                      │
-         │  ┌─────────────┐  ┌─────────────┐  ┌──────────┐         │
-         │  │   Cosmos    │  │   Hermes    │  │   ETL    │         │
-         │  │   Nodes     │  │  Relayers   │  │ Services │         │
-         │  └─────────────┘  └─────────────┘  └──────────┘         │
+         │         ┌─────────────┐  ┌─────────────┐                 │
+         │         │   Cosmos    │  │   Hermes    │                 │
+         │         │   Nodes     │  │  Relayers   │                 │
+         │         └─────────────┘  └─────────────┘                 │
          └───────────────────────────────────────────────────────────┘
                                  │
          ┌───────────────────────────────────────────────────────────┐
@@ -280,16 +279,6 @@ log_path = "/var/log/hermes"
 restart_schedule = "0 0 16 * * 2"  # Tuesdays at 4PM UTC
 dependent_nodes = ["enterprise-osmosis", "enterprise-neutron"]
 truncate_logs_enabled = false
-
-# ETL service monitoring
-[etl.osmosis-etl]
-server_host = "enterprise"
-host = "192.168.11.206"
-port = 8080
-endpoint = "/health"
-enabled = true
-timeout_seconds = 10
-description = "Osmosis ETL indexer service"
 ```
 
 ## Usage
@@ -309,7 +298,7 @@ The manager will:
 - ✅ Initialize SQLite database
 - ✅ Test alert webhook connectivity
 - ✅ Clean up stuck operations from previous runs
-- ✅ Start health monitoring for nodes, Hermes, and ETL services
+- ✅ Start health monitoring for nodes and Hermes relayers
 - ✅ Start scheduled maintenance tasks
 - ✅ Launch web API on configured port (default 8095)
 
@@ -330,16 +319,6 @@ GET /api/health/hermes
 
 # Get specific Hermes health
 GET /api/health/hermes/{hermes_name}
-
-# Get all ETL services health
-GET /api/health/etl
-GET /api/health/etl?include_disabled=true
-
-# Get specific ETL service health
-GET /api/health/etl/{service_name}
-
-# Force refresh ETL health
-POST /api/health/etl/refresh
 ```
 
 #### Configuration Management
@@ -350,9 +329,6 @@ GET /api/config/nodes
 
 # Get all Hermes configurations
 GET /api/config/hermes
-
-# Get all ETL configurations
-GET /api/config/etl
 ```
 
 #### Manual Operations (Non-Blocking)
@@ -517,26 +493,6 @@ cosmos-pruner prune /opt/deploy/osmosis/data --blocks=8000 --versions=8000
 9. Disable state sync in config
 10. Restart service with clean config
 
-### ETL Service Monitoring
-
-**Features:**
-- **HTTP Health Checks**: Configurable endpoints for ETL service health validation
-- **Response Time Tracking**: Monitor response times and status codes
-- **Integration with AlertService**: Same progressive alerting as blockchain nodes
-- **Flexible Configuration**: Per-service timeout, endpoint, and description
-
-**Configuration:**
-```toml
-[etl.my-etl-service]
-server_host = "enterprise"
-host = "192.168.11.206"
-port = 8080
-endpoint = "/health"
-enabled = true
-timeout_seconds = 10
-description = "Custom ETL service"
-```
-
 ### Centralized Alert System
 
 **Progressive Rate Limiting:**
@@ -547,7 +503,7 @@ description = "Custom ETL service"
 - **Fifth+ Alerts**: Every 24 hours thereafter
 
 **Alert Types:**
-- `NodeHealth`: Health state changes for blockchain nodes and ETL services
+- `NodeHealth`: Health state changes for blockchain nodes
 - `AutoRestore`: Automatic restoration attempts and results
 - `Snapshot`: Snapshot creation and restoration operations
 - `Hermes`: Hermes relayer restart operations
@@ -740,7 +696,6 @@ The SQLite database (`data/nodes.db`) contains:
 - Maintenance windows automatically expire after 48 hours
 - Network snapshot operations support up to 24-hour timeouts
 - Auto-restore attempts have 2-hour cooldown periods
-- Cross-node recovery capability eliminates single points of failure
 
 ## Security Considerations
 
@@ -782,7 +737,6 @@ The SQLite database (`data/nodes.db`) contains:
 ## Performance
 
 - **Health checks**: 20+ nodes in <5 seconds (parallel execution)
-- **ETL checks**: Multiple services in <2 seconds (parallel HTTP requests)
 - **HTTP agent operations**: Direct communication per operation
 - **Database**: SQLite with indexed queries for fast access
 - **Memory usage**: ~50-150MB typical operation (includes network snapshot management)
@@ -858,28 +812,6 @@ snapshots_enabled = false  # Only restores, doesn't create
 [nodes.pirin-node-7]
 network = "pirin-1"
 auto_restore_enabled = true  # Can auto-restore from network snapshots
-```
-
-### ETL Service Configuration
-
-```toml
-[etl.osmosis-indexer]
-server_host = "mainnet-server"
-host = "192.168.1.100"
-port = 8080
-endpoint = "/health"
-enabled = true
-timeout_seconds = 10
-description = "Osmosis blockchain indexer"
-
-[etl.neutron-api]
-server_host = "mainnet-server"
-host = "192.168.1.100"
-port = 3000
-endpoint = "/api/health"
-enabled = true
-timeout_seconds = 5
-description = "Neutron API service"
 ```
 
 ## Contributing

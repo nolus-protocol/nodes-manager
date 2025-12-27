@@ -6,6 +6,7 @@ pub mod health;
 pub mod http;
 pub mod maintenance_tracker;
 pub mod operation_tracker;
+pub mod rpc;
 pub mod scheduler;
 pub mod services;
 pub mod snapshot;

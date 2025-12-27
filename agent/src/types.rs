@@ -75,18 +75,9 @@ pub struct JobInfo {
     pub error_message: Option<String>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-pub struct AsyncResponse {
-    pub success: bool,
-    pub job_id: String,
-    pub status: String,
-    pub message: String,
-}
-
 // === RESPONSE STRUCTURES ===
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct ApiResponse<T> {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,28 +98,17 @@ pub struct ApiResponse<T> {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compression: Option<String>,
-    // NEW: Job tracking fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_status: Option<String>,
 }
 
-impl<T> ApiResponse<T> {
+impl<T: Default> ApiResponse<T> {
     pub fn error(message: String) -> Self {
         Self {
-            success: false,
-            data: None,
-            output: None,
             error: Some(message),
-            status: None,
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-            job_id: None,
-            job_status: None,
+            ..Default::default()
         }
     }
 }
@@ -137,104 +117,40 @@ impl ApiResponse<()> {
     pub fn success() -> Self {
         Self {
             success: true,
-            data: None,
-            output: None,
-            error: None,
-            status: None,
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-            job_id: None,
-            job_status: None,
+            ..Default::default()
         }
     }
 
     pub fn success_with_output(output: String) -> Self {
         Self {
             success: true,
-            data: None,
             output: Some(output),
-            error: None,
-            status: None,
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-            job_id: None,
-            job_status: None,
+            ..Default::default()
         }
     }
 
     pub fn success_with_status(status: String) -> Self {
         Self {
             success: true,
-            data: None,
-            output: None,
-            error: None,
             status: Some(status),
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-            job_id: None,
-            job_status: None,
+            ..Default::default()
         }
     }
 
     pub fn success_with_uptime(uptime_seconds: u64) -> Self {
         Self {
             success: true,
-            data: None,
-            output: None,
-            error: None,
-            status: None,
             uptime_seconds: Some(uptime_seconds),
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
-            job_id: None,
-            job_status: None,
+            ..Default::default()
         }
     }
 
-    #[allow(dead_code)]
-    pub fn success_with_snapshot(filename: String, size_bytes: u64, path: String) -> Self {
+    pub fn success_with_job(job_id: String, job_status: String) -> Self {
         Self {
             success: true,
-            data: None,
-            output: None,
-            error: None,
-            status: None,
-            uptime_seconds: None,
-            filename: Some(filename),
-            size_bytes: Some(size_bytes),
-            path: Some(path),
-            compression: Some("directory".to_string()), // FIXED: Changed from gzip to directory
-            job_id: None,
-            job_status: None,
-        }
-    }
-
-    // NEW: Async job response
-    pub fn success_with_job(job_id: String, status: String) -> Self {
-        Self {
-            success: true,
-            data: None,
-            output: None,
-            error: None,
-            status: None,
-            uptime_seconds: None,
-            filename: None,
-            size_bytes: None,
-            path: None,
-            compression: None,
             job_id: Some(job_id),
-            job_status: Some(status),
+            job_status: Some(job_status),
+            ..Default::default()
         }
     }
 }

@@ -73,8 +73,6 @@ async fn start_custom_server(state: AppState) -> Result<()> {
 
 fn create_router(state: AppState) -> Router {
     Router::new()
-        // === ROOT ROUTE ===
-        .route("/", get(handlers::serve_index))
         // === HEALTH MONITORING ROUTES ===
         .route("/api/health/nodes", get(handlers::get_all_nodes_health))
         .route(
@@ -94,20 +92,9 @@ fn create_router(state: AppState) -> Router {
             "/api/health/hermes/{hermes_name}",
             get(handlers::get_hermes_health),
         )
-        // === NEW: ETL SERVICE HEALTH ROUTES ===
-        .route("/api/health/etl", get(handlers::get_all_etl_health))
-        .route(
-            "/api/health/etl/{service_name}",
-            get(handlers::get_etl_health),
-        )
-        .route(
-            "/api/health/etl/refresh",
-            post(handlers::refresh_etl_health),
-        )
         // === CONFIGURATION ROUTES ===
         .route("/api/config/nodes", get(handlers::get_all_node_configs))
         .route("/api/config/hermes", get(handlers::get_all_hermes_configs))
-        .route("/api/config/etl", get(handlers::get_all_etl_configs))
         // === MANUAL OPERATION ROUTES (WITH OPERATION TRACKING) ===
         .route(
             "/api/maintenance/nodes/{node_name}/restart",

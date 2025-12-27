@@ -8,11 +8,49 @@ mod common;
 
 use common::fixtures::*;
 use manager::config::ConfigManager;
-use manager::database::Database;
+use manager::database::{Database, MaintenanceOperation};
 use manager::services::{AlertService, OperationExecutor};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+
+/// Test helper to query maintenance operations from database
+async fn get_maintenance_operations(
+    db: &Database,
+    limit: i32,
+) -> anyhow::Result<Vec<MaintenanceOperation>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, operation_type, target_name, status, started_at,
+               completed_at, error_message, details
+        FROM maintenance_operations
+        ORDER BY started_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(db.pool())
+    .await?;
+
+    let mut operations = Vec::new();
+    for row in rows {
+        let operation = MaintenanceOperation {
+            id: row.try_get("id")?,
+            operation_type: row.try_get("operation_type")?,
+            target_name: row.try_get("target_name")?,
+            status: row.try_get("status")?,
+            started_at: row.try_get("started_at")?,
+            completed_at: row.try_get("completed_at")?,
+            error_message: row.try_get("error_message")?,
+            details: row.try_get("details")?,
+        };
+        operations.push(operation);
+    }
+
+    Ok(operations)
+}
 
 /// Helper to create a test OperationExecutor with all dependencies
 async fn setup_test_executor() -> (Arc<OperationExecutor>, Arc<Database>, Arc<AlertService>) {
@@ -74,8 +112,7 @@ async fn test_operation_completes_in_background() {
     );
 
     // Verify operation was recorded in database with "started" status
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -88,8 +125,7 @@ async fn test_operation_completes_in_background() {
     sleep(Duration::from_secs(3)).await;
 
     // Verify operation was updated to "completed"
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -117,8 +153,7 @@ async fn test_operation_failure_recorded_correctly() {
     sleep(Duration::from_millis(500)).await;
 
     // Verify operation was recorded with failure
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -170,8 +205,7 @@ async fn test_multiple_concurrent_operations_execute_independently() {
     assert_ne!(op1, op3);
 
     // All should be recorded as started
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 3);
@@ -181,8 +215,7 @@ async fn test_multiple_concurrent_operations_execute_independently() {
     sleep(Duration::from_millis(500)).await;
 
     // All should be completed
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 3);
@@ -235,8 +268,7 @@ async fn test_operation_records_correct_metadata() {
 
     sleep(Duration::from_millis(200)).await;
 
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -262,8 +294,7 @@ async fn test_operation_with_very_fast_completion() {
     // Even fast operations should be recorded
     sleep(Duration::from_millis(100)).await;
 
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -287,8 +318,7 @@ async fn test_error_message_preserved_in_database() {
 
     sleep(Duration::from_millis(200)).await;
 
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 1);
@@ -334,8 +364,7 @@ async fn test_mixed_success_and_failure_operations() {
 
     sleep(Duration::from_millis(200)).await;
 
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 4);
@@ -369,8 +398,7 @@ async fn test_operations_with_same_type_different_targets() {
 
     sleep(Duration::from_millis(200)).await;
 
-    let ops = database
-        .get_maintenance_operations(Some(10))
+    let ops = get_maintenance_operations(&database, 10)
         .await
         .expect("Should fetch operations");
     assert_eq!(ops.len(), 3);

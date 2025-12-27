@@ -11,6 +11,7 @@ mod health;
 mod http;
 mod maintenance_tracker;
 mod operation_tracker;
+mod rpc;
 mod scheduler;
 mod services;
 mod snapshot;
@@ -52,11 +53,10 @@ async fn main() -> Result<()> {
     let config_manager = ConfigManager::new("config".to_string()).await?;
     let config = config_manager.get_current_config();
     info!(
-        "Configuration loaded: {} nodes, {} hermes instances, {} servers, {} ETL services",
+        "Configuration loaded: {} nodes, {} hermes instances, {} servers",
         config.nodes.len(),
         config.hermes.len(),
-        config.servers.len(),
-        config.etl.len()
+        config.servers.len()
     );
 
     // Initialize database
@@ -107,7 +107,6 @@ async fn main() -> Result<()> {
     let snapshot_manager = Arc::new(SnapshotManager::new(
         config.clone(),
         http_manager.clone(),
-        maintenance_tracker.clone(),
         alert_service.clone(),
     ));
     info!("Snapshot manager initialized with centralized alerting");
@@ -122,7 +121,7 @@ async fn main() -> Result<()> {
     ));
     info!("Health monitor initialized with centralized alerting and auto-restore capability");
 
-    // Start periodic health monitoring with configurable interval (including ETL services)
+    // Start periodic health monitoring with configurable interval
     let health_monitor_clone = health_monitor.clone();
     let alert_service_clone = alert_service.clone();
     let check_interval = config.check_interval_seconds;
@@ -146,11 +145,6 @@ async fn main() -> Result<()> {
             // Check blockchain nodes
             if let Err(e) = health_monitor_clone.check_all_nodes().await {
                 warn!("Node health monitoring error: {}", e);
-            }
-
-            // NEW: Check ETL services
-            if let Err(e) = health_monitor_clone.check_all_etl_services().await {
-                warn!("ETL health monitoring error: {}", e);
             }
         }
     });
@@ -197,7 +191,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Background tasks started with {}s health check interval (including nodes, ETL services, auto-restore monitoring and centralized alerting)", check_interval);
+    info!("Background tasks started with {}s health check interval (including nodes, auto-restore monitoring and centralized alerting)", check_interval);
 
     // Additional startup alert validation
     if alert_service.is_enabled() {
