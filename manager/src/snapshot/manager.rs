@@ -158,11 +158,24 @@ impl SnapshotManager {
             backup_path, node_config.network
         );
 
-        let output = self
+        let output = match self
             .http_manager
             .execute_single_command(&node_config.server_host, &list_cmd)
             .await
-            .unwrap_or_default();
+        {
+            Ok(output) => output,
+            Err(e) => {
+                warn!(
+                    "Failed to list snapshots for node {} on {}: {}",
+                    node_name, node_config.server_host, e
+                );
+                return Err(anyhow::anyhow!(
+                    "Failed to list snapshots on {}: {}",
+                    node_config.server_host,
+                    e
+                ));
+            }
+        };
 
         let mut snapshots = Vec::new();
         for line in output.lines() {
@@ -318,7 +331,7 @@ impl SnapshotManager {
 
         // PHASE 2: Clean up orphaned LZ4 files that no longer have corresponding directories
         let orphaned_lz4_count = self
-            .cleanup_orphaned_lz4_files(node_name, node_config, retention_count)
+            .cleanup_orphaned_lz4_files(node_name, node_config)
             .await?;
 
         if orphaned_lz4_count > 0 {
@@ -336,24 +349,33 @@ impl SnapshotManager {
         &self,
         node_name: &str,
         node_config: &crate::config::NodeConfig,
-        retention_count: u32,
     ) -> Result<u32> {
         let backup_path = node_config
             .snapshot_backup_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No snapshot backup path configured"))?;
 
-        // Find all LZ4 files for this network
+        // Find all LZ4 files for this network (using portable command that works on both Linux and macOS)
         let list_lz4_cmd = format!(
-            "find '{}' -maxdepth 1 -type f -name '{}_*.tar.lz4' -printf '%f\\n' | sort",
+            "find '{}' -maxdepth 1 -type f -name '{}_*.tar.lz4' 2>/dev/null | while read f; do basename \"$f\"; done | sort",
             backup_path, node_config.network
         );
 
-        let output = self
+        let output = match self
             .http_manager
             .execute_single_command(&node_config.server_host, &list_lz4_cmd)
             .await
-            .unwrap_or_default();
+        {
+            Ok(output) => output,
+            Err(e) => {
+                warn!(
+                    "Failed to list LZ4 files for network {}: {}",
+                    node_config.network, e
+                );
+                // Don't fail the entire cleanup, just skip orphaned LZ4 cleanup
+                return Ok(0);
+            }
+        };
 
         if output.trim().is_empty() {
             debug!("No LZ4 files found for network {}", node_config.network);
@@ -403,26 +425,17 @@ impl SnapshotManager {
         }
 
         info!(
-            "Found {} orphaned LZ4 files for network {} (no matching directory)",
+            "Found {} orphaned LZ4 files for network {} (no matching directory) - will delete all",
             orphaned_lz4_files.len(),
             node_config.network
         );
 
-        // Sort orphaned files by their timestamp (newest first)
-        orphaned_lz4_files.sort_by(|a, b| b.1.cmp(&a.1));
-
-        // Keep only retention_count of orphaned LZ4 files (to match the retention policy)
-        let lz4_files_to_delete = if orphaned_lz4_files.len() > retention_count as usize {
-            &orphaned_lz4_files[(retention_count as usize)..]
-        } else {
-            // If we have fewer orphaned files than retention count, don't delete any
-            // (they might be from recent snapshots being compressed)
-            return Ok(0);
-        };
-
+        // Orphaned LZ4 files (without matching directories) should be deleted
+        // These are leftover archives from snapshots that have already been cleaned up
+        // We delete ALL orphaned files since they serve no purpose without their directories
         let mut deleted_count = 0;
 
-        for (lz4_file, _basename) in lz4_files_to_delete {
+        for (lz4_file, _basename) in &orphaned_lz4_files {
             let lz4_path = format!("{}/{}", backup_path, lz4_file);
             let delete_cmd = format!("rm -f '{}'", lz4_path);
 

@@ -12,6 +12,7 @@ use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
+use crate::scheduler::MaintenanceScheduler;
 use crate::services::{HermesService, OperationExecutor, SnapshotService, StateSyncService};
 use crate::snapshot::SnapshotManager;
 
@@ -19,6 +20,10 @@ use crate::snapshot::SnapshotManager;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
+    // Configuration management
+    pub config_manager: Arc<ConfigManager>,
+    // Scheduler for re-registering jobs on config changes
+    pub scheduler: Arc<MaintenanceScheduler>,
     // Business logic services with AlertService integration
     pub operation_executor: Arc<OperationExecutor>,
     pub hermes_service: Arc<HermesService>,
@@ -37,7 +42,8 @@ impl AppState {
         _database: Arc<Database>,
         health_monitor: Arc<HealthMonitor>,
         http_manager: Arc<HttpAgentManager>,
-        _config_manager: Arc<ConfigManager>,
+        config_manager: Arc<ConfigManager>,
+        scheduler: Arc<MaintenanceScheduler>,
         _snapshot_manager: Arc<SnapshotManager>,
         _operation_tracker: Arc<SimpleOperationTracker>,
         operation_executor: Arc<OperationExecutor>,
@@ -48,6 +54,8 @@ impl AppState {
     ) -> Self {
         Self {
             config,
+            config_manager,
+            scheduler,
             operation_executor,
             hermes_service,
             snapshot_service,

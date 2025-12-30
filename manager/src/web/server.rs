@@ -4,12 +4,13 @@ use crate::database::Database;
 use crate::health::HealthMonitor;
 use crate::http::HttpAgentManager;
 use crate::operation_tracker::SimpleOperationTracker;
+use crate::scheduler::MaintenanceScheduler;
 use crate::services::{HermesService, OperationExecutor, SnapshotService, StateSyncService};
 use crate::snapshot::SnapshotManager;
 use crate::web::{handlers, AppState};
 use anyhow::Result;
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub async fn start_web_server(
     health_monitor: Arc<HealthMonitor>,
     http_manager: Arc<HttpAgentManager>,
     config_manager: Arc<ConfigManager>,
+    scheduler: Arc<MaintenanceScheduler>,
     snapshot_manager: Arc<SnapshotManager>,
     operation_tracker: Arc<SimpleOperationTracker>,
     operation_executor: Arc<OperationExecutor>,
@@ -38,6 +40,7 @@ pub async fn start_web_server(
         health_monitor,
         http_manager,
         config_manager,
+        scheduler,
         snapshot_manager,
         operation_tracker,
         operation_executor,
@@ -169,6 +172,41 @@ fn create_router(state: AppState) -> Router {
             "/api/maintenance/schedule",
             get(handlers::get_maintenance_schedule),
         )
+        // === CONFIGURATION MANAGEMENT ROUTES ===
+        // Server configuration
+        .route("/api/admin/servers", get(handlers::get_all_servers))
+        .route("/api/admin/servers", post(handlers::create_server))
+        .route("/api/admin/servers/{id}", get(handlers::get_server))
+        .route("/api/admin/servers/{id}", put(handlers::update_server))
+        .route("/api/admin/servers/{id}", delete(handlers::delete_server))
+        // Node configuration
+        .route("/api/admin/nodes", get(handlers::get_all_nodes_config))
+        .route("/api/admin/nodes", post(handlers::create_node))
+        .route("/api/admin/nodes/{id}", get(handlers::get_node_config))
+        .route("/api/admin/nodes/{id}", put(handlers::update_node))
+        .route(
+            "/api/admin/nodes/{id}",
+            delete(handlers::delete_node_config),
+        )
+        .route("/api/admin/nodes/{id}/toggle", patch(handlers::toggle_node))
+        // Hermes configuration
+        .route("/api/admin/hermes", get(handlers::get_all_hermes_config))
+        .route("/api/admin/hermes", post(handlers::create_hermes))
+        .route("/api/admin/hermes/{id}", get(handlers::get_hermes_config))
+        .route("/api/admin/hermes/{id}", put(handlers::update_hermes))
+        .route(
+            "/api/admin/hermes/{id}",
+            delete(handlers::delete_hermes_config),
+        )
+        // Global settings
+        .route("/api/admin/settings", get(handlers::get_global_settings))
+        .route("/api/admin/settings", put(handlers::update_global_settings))
+        // Import/Export
+        .route(
+            "/api/admin/config/import",
+            post(handlers::import_config_from_toml),
+        )
+        .route("/api/admin/config/source", get(handlers::get_config_source))
         // === STATIC FILES ===
         .nest_service("/assets", ServeDir::new("ui/dist/assets"))
         // Add middleware

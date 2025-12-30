@@ -1,46 +1,28 @@
-// File: manager/src/database.rs
+//! Database layer for the nodes manager.
+//!
+//! This module provides SQLite persistence for:
+//! - Health records (node and Hermes health history)
+//! - Maintenance operations (tracking operation status)
+//! - Configuration (servers, nodes, hermes, settings)
+//!
+//! The module is organized into submodules:
+//! - `records` - All record types (entities)
+//! - `health` - Health record operations
+//! - `maintenance` - Maintenance operation tracking
+//! - `config` - Configuration CRUD operations
+
+mod config;
+mod health;
+mod maintenance;
+mod records;
+
+pub use records::*;
+
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
 use sqlx::{Pool, Row, Sqlite, SqlitePool};
 use std::path::Path;
 use tracing::{debug, error, info, warn};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthRecord {
-    pub node_name: String,
-    pub is_healthy: bool,
-    pub error_message: Option<String>,
-    pub timestamp: DateTime<Utc>,
-    pub block_height: Option<i64>,
-    pub is_syncing: Option<i32>,
-    pub is_catching_up: Option<i32>,
-    pub validator_address: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HermesHealthRecord {
-    pub hermes_name: String,
-    pub is_healthy: bool,
-    pub status: String,
-    pub uptime_seconds: Option<i64>,
-    pub error_message: Option<String>,
-    pub timestamp: DateTime<Utc>,
-    pub server_host: String,
-    pub service_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MaintenanceOperation {
-    pub id: String,
-    pub operation_type: String,
-    pub target_name: String,
-    pub status: String,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub error_message: Option<String>,
-    pub details: Option<String>,
-}
 
 pub struct Database {
     pool: Pool<Sqlite>,
@@ -73,11 +55,11 @@ impl Database {
 
         let pool = match SqlitePool::connect(&database_url).await {
             Ok(pool) => {
-                info!("✅ Successfully connected to SQLite database");
+                info!("Successfully connected to SQLite database");
                 pool
             }
             Err(e) => {
-                error!("❌ FAILED to connect to database: {}", e);
+                error!("FAILED to connect to database: {}", e);
                 error!("   Database path: {}", database_path);
                 error!("   Connection URL: {}", database_url);
                 return Err(e.into());
@@ -88,9 +70,9 @@ impl Database {
 
         info!("Starting table initialization...");
         match database.initialize_tables().await {
-            Ok(_) => info!("✅ Database tables initialized successfully"),
+            Ok(_) => info!("Database tables initialized successfully"),
             Err(e) => {
-                error!("❌ CRITICAL: Database table initialization failed: {}", e);
+                error!("CRITICAL: Database table initialization failed: {}", e);
                 return Err(e);
             }
         }
@@ -101,15 +83,15 @@ impl Database {
             Ok(cleaned_count) => {
                 if cleaned_count > 0 {
                     warn!(
-                        "🧹 Cleaned up {} stuck maintenance operations on startup",
+                        "Cleaned up {} stuck maintenance operations on startup",
                         cleaned_count
                     );
                 } else {
-                    info!("✅ No stuck maintenance operations found");
+                    info!("No stuck maintenance operations found");
                 }
             }
             Err(e) => {
-                error!("❌ Failed to cleanup stuck maintenance operations: {}", e);
+                error!("Failed to cleanup stuck maintenance operations: {}", e);
                 // Don't fail startup for cleanup issues, just log
                 warn!("Continuing with startup despite cleanup failure");
             }
@@ -118,9 +100,9 @@ impl Database {
         // Test database with a simple query
         info!("Testing database connectivity...");
         match database.test_database().await {
-            Ok(_) => info!("✅ Database test successful"),
+            Ok(_) => info!("Database test successful"),
             Err(e) => {
-                error!("❌ Database test failed: {}", e);
+                error!("Database test failed: {}", e);
                 return Err(e);
             }
         }
@@ -152,7 +134,7 @@ impl Database {
             error!("SQL was: {}", health_table_sql);
             return Err(e.into());
         }
-        info!("✅ health_records table created");
+        info!("health_records table created");
 
         info!("Step 2: Creating health_records index...");
         let health_index_sql = "CREATE INDEX IF NOT EXISTS idx_health_node_timestamp ON health_records(node_name, timestamp DESC)";
@@ -160,7 +142,7 @@ impl Database {
             error!("FAILED to create health_records index: {}", e);
             return Err(e.into());
         }
-        info!("✅ health_records index created");
+        info!("health_records index created");
 
         info!("Step 3: Creating maintenance_operations table...");
         let maintenance_table_sql = r#"
@@ -180,7 +162,7 @@ impl Database {
             error!("FAILED to create maintenance_operations table: {}", e);
             return Err(e.into());
         }
-        info!("✅ maintenance_operations table created");
+        info!("maintenance_operations table created");
 
         info!("Step 4: Creating maintenance_operations indexes...");
         let maintenance_index1_sql = "CREATE INDEX IF NOT EXISTS idx_maintenance_target ON maintenance_operations(target_name, started_at DESC)";
@@ -200,7 +182,7 @@ impl Database {
             error!("FAILED to create maintenance status index: {}", e);
             return Err(e.into());
         }
-        info!("✅ maintenance_operations indexes created");
+        info!("maintenance_operations indexes created");
 
         info!("Step 5: Creating hermes_health_records table...");
         let hermes_health_table_sql = r#"
@@ -224,7 +206,7 @@ impl Database {
             error!("FAILED to create hermes_health_records table: {}", e);
             return Err(e.into());
         }
-        info!("✅ hermes_health_records table created");
+        info!("hermes_health_records table created");
 
         info!("Step 6: Creating hermes_health_records index...");
         let hermes_index_sql = "CREATE INDEX IF NOT EXISTS idx_hermes_health_name_timestamp ON hermes_health_records(hermes_name, timestamp DESC)";
@@ -232,7 +214,128 @@ impl Database {
             error!("FAILED to create hermes_health_records index: {}", e);
             return Err(e.into());
         }
-        info!("✅ hermes_health_records index created");
+        info!("hermes_health_records index created");
+
+        // ====================================================================
+        // Configuration tables (for DB-backed configuration management)
+        // ====================================================================
+
+        info!("Step 7: Creating config_servers table...");
+        let servers_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS config_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                host TEXT NOT NULL,
+                agent_port INTEGER NOT NULL DEFAULT 8745,
+                api_key_ref TEXT NOT NULL,
+                request_timeout_seconds INTEGER NOT NULL DEFAULT 300,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        "#;
+        if let Err(e) = sqlx::query(servers_table_sql).execute(&self.pool).await {
+            error!("FAILED to create config_servers table: {}", e);
+            return Err(e.into());
+        }
+        info!("config_servers table created");
+
+        info!("Step 8: Creating config_nodes table...");
+        let nodes_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS config_nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                server_id TEXT NOT NULL REFERENCES config_servers(id),
+                network TEXT NOT NULL,
+                rpc_url TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                service_name TEXT NOT NULL,
+                deploy_path TEXT,
+                log_path TEXT,
+                snapshot_backup_path TEXT,
+                pruning_enabled BOOLEAN NOT NULL DEFAULT 0,
+                pruning_schedule TEXT,
+                pruning_keep_blocks INTEGER,
+                pruning_keep_versions INTEGER,
+                snapshots_enabled BOOLEAN NOT NULL DEFAULT 0,
+                snapshot_schedule TEXT,
+                snapshot_retention_count INTEGER,
+                auto_restore_enabled BOOLEAN NOT NULL DEFAULT 0,
+                state_sync_enabled BOOLEAN NOT NULL DEFAULT 0,
+                state_sync_schedule TEXT,
+                state_sync_rpc_sources TEXT,
+                state_sync_trust_height_offset INTEGER,
+                state_sync_max_sync_timeout_seconds INTEGER,
+                log_monitoring_enabled BOOLEAN NOT NULL DEFAULT 0,
+                log_monitoring_patterns TEXT,
+                truncate_logs_enabled BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        "#;
+        if let Err(e) = sqlx::query(nodes_table_sql).execute(&self.pool).await {
+            error!("FAILED to create config_nodes table: {}", e);
+            return Err(e.into());
+        }
+        info!("config_nodes table created");
+
+        info!("Step 9: Creating config_nodes indexes...");
+        let nodes_server_idx =
+            "CREATE INDEX IF NOT EXISTS idx_config_nodes_server ON config_nodes(server_id)";
+        if let Err(e) = sqlx::query(nodes_server_idx).execute(&self.pool).await {
+            error!("FAILED to create config_nodes server index: {}", e);
+            return Err(e.into());
+        }
+        let nodes_network_idx =
+            "CREATE INDEX IF NOT EXISTS idx_config_nodes_network ON config_nodes(network)";
+        if let Err(e) = sqlx::query(nodes_network_idx).execute(&self.pool).await {
+            error!("FAILED to create config_nodes network index: {}", e);
+            return Err(e.into());
+        }
+        info!("config_nodes indexes created");
+
+        info!("Step 10: Creating config_hermes table...");
+        let hermes_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS config_hermes (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                server_id TEXT NOT NULL REFERENCES config_servers(id),
+                service_name TEXT NOT NULL,
+                log_path TEXT,
+                restart_schedule TEXT,
+                dependent_nodes TEXT,
+                truncate_logs_enabled BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        "#;
+        if let Err(e) = sqlx::query(hermes_table_sql).execute(&self.pool).await {
+            error!("FAILED to create config_hermes table: {}", e);
+            return Err(e.into());
+        }
+        info!("config_hermes table created");
+
+        info!("Step 11: Creating config_hermes index...");
+        let hermes_server_idx =
+            "CREATE INDEX IF NOT EXISTS idx_config_hermes_server ON config_hermes(server_id)";
+        if let Err(e) = sqlx::query(hermes_server_idx).execute(&self.pool).await {
+            error!("FAILED to create config_hermes server index: {}", e);
+            return Err(e.into());
+        }
+        info!("config_hermes index created");
+
+        info!("Step 12: Creating global_settings table...");
+        let settings_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS global_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        "#;
+        if let Err(e) = sqlx::query(settings_table_sql).execute(&self.pool).await {
+            error!("FAILED to create global_settings table: {}", e);
+            return Err(e.into());
+        }
+        info!("global_settings table created");
 
         info!("All database tables and indexes created successfully");
         Ok(())
@@ -330,7 +433,7 @@ impl Database {
             error!("Expected 2 tables, found {}: {:?}", tables.len(), tables);
             return Err(anyhow::anyhow!("Database tables not properly created"));
         }
-        info!("✅ Both required tables exist: {:?}", tables);
+        info!("Both required tables exist: {:?}", tables);
 
         // Test 2: Insert a test health record
         info!("Testing health_records insert...");
@@ -349,7 +452,7 @@ impl Database {
             error!("Failed to insert test health record: {}", e);
             return Err(e);
         }
-        info!("✅ Test health record inserted successfully");
+        info!("Test health record inserted successfully");
 
         // Test 3: Read the test record back
         info!("Testing health_records query...");
@@ -357,7 +460,7 @@ impl Database {
             error!("Failed to query test health record: {}", e);
             return Err(e);
         }
-        info!("✅ Test health record queried successfully");
+        info!("Test health record queried successfully");
 
         // Test 4: Cleanup test record
         if let Err(e) = sqlx::query("DELETE FROM health_records WHERE node_name = 'test-node'")
@@ -366,232 +469,9 @@ impl Database {
         {
             warn!("Failed to cleanup test record (non-critical): {}", e);
         } else {
-            info!("✅ Test record cleaned up");
+            info!("Test record cleaned up");
         }
 
         Ok(())
-    }
-
-    pub async fn store_health_record(&self, record: &HealthRecord) -> Result<()> {
-        debug!("Storing health record for: {}", record.node_name);
-
-        match sqlx::query(
-            r#"
-            INSERT INTO health_records (
-                node_name, is_healthy, error_message, timestamp,
-                block_height, is_syncing, is_catching_up, validator_address
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&record.node_name)
-        .bind(record.is_healthy)
-        .bind(&record.error_message)
-        .bind(record.timestamp)
-        .bind(record.block_height)
-        .bind(record.is_syncing)
-        .bind(record.is_catching_up)
-        .bind(&record.validator_address)
-        .execute(&self.pool)
-        .await
-        {
-            Ok(_) => {
-                debug!("✅ Health record stored for: {}", record.node_name);
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "❌ Failed to store health record for {}: {}",
-                    record.node_name, e
-                );
-                Err(e.into())
-            }
-        }
-    }
-
-    pub async fn get_latest_health_record(&self, node_name: &str) -> Result<Option<HealthRecord>> {
-        debug!("Querying latest health record for: {}", node_name);
-
-        let row = sqlx::query(
-            r#"
-            SELECT node_name, is_healthy, error_message, timestamp,
-                   block_height, is_syncing, is_catching_up, validator_address
-            FROM health_records
-            WHERE node_name = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(node_name)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let record = HealthRecord {
-                node_name: row.try_get("node_name")?,
-                is_healthy: row.try_get("is_healthy")?,
-                error_message: row.try_get("error_message")?,
-                timestamp: row.try_get("timestamp")?,
-                block_height: row.try_get("block_height")?,
-                is_syncing: row.try_get("is_syncing")?,
-                is_catching_up: row.try_get("is_catching_up")?,
-                validator_address: row.try_get("validator_address")?,
-            };
-            debug!("✅ Found health record for: {}", node_name);
-            Ok(Some(record))
-        } else {
-            debug!("No health record found for: {}", node_name);
-            Ok(None)
-        }
-    }
-
-    pub async fn store_hermes_health_record(&self, record: &HermesHealthRecord) -> Result<()> {
-        debug!("Storing hermes health record for: {}", record.hermes_name);
-
-        match sqlx::query(
-            r#"
-            INSERT INTO hermes_health_records (
-                hermes_name, is_healthy, status, uptime_seconds, error_message,
-                timestamp, server_host, service_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&record.hermes_name)
-        .bind(record.is_healthy)
-        .bind(&record.status)
-        .bind(record.uptime_seconds)
-        .bind(&record.error_message)
-        .bind(record.timestamp)
-        .bind(&record.server_host)
-        .bind(&record.service_name)
-        .execute(&self.pool)
-        .await
-        {
-            Ok(_) => {
-                debug!("✅ Hermes health record stored for: {}", record.hermes_name);
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "❌ Failed to store hermes health record for {}: {}",
-                    record.hermes_name, e
-                );
-                Err(e.into())
-            }
-        }
-    }
-
-    pub async fn get_latest_hermes_health_record(
-        &self,
-        hermes_name: &str,
-    ) -> Result<Option<HermesHealthRecord>> {
-        debug!("Querying latest hermes health record for: {}", hermes_name);
-
-        let row = sqlx::query(
-            r#"
-            SELECT hermes_name, is_healthy, status, uptime_seconds, error_message,
-                   timestamp, server_host, service_name
-            FROM hermes_health_records
-            WHERE hermes_name = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(hermes_name)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let record = HermesHealthRecord {
-                hermes_name: row.try_get("hermes_name")?,
-                is_healthy: row.try_get("is_healthy")?,
-                status: row.try_get("status")?,
-                uptime_seconds: row.try_get("uptime_seconds")?,
-                error_message: row.try_get("error_message")?,
-                timestamp: row.try_get("timestamp")?,
-                server_host: row.try_get("server_host")?,
-                service_name: row.try_get("service_name")?,
-            };
-            debug!("✅ Found hermes health record for: {}", hermes_name);
-            Ok(Some(record))
-        } else {
-            debug!("No hermes health record found for: {}", hermes_name);
-            Ok(None)
-        }
-    }
-
-    pub async fn store_maintenance_operation(
-        &self,
-        operation: &MaintenanceOperation,
-    ) -> Result<()> {
-        debug!("Storing maintenance operation: {}", operation.id);
-
-        match sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO maintenance_operations (
-                id, operation_type, target_name, status, started_at,
-                completed_at, error_message, details
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&operation.id)
-        .bind(&operation.operation_type)
-        .bind(&operation.target_name)
-        .bind(&operation.status)
-        .bind(operation.started_at)
-        .bind(operation.completed_at)
-        .bind(&operation.error_message)
-        .bind(&operation.details)
-        .execute(&self.pool)
-        .await
-        {
-            Ok(_) => {
-                debug!("✅ Maintenance operation stored: {}", operation.id);
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "❌ Failed to store maintenance operation {}: {}",
-                    operation.id, e
-                );
-                Err(e.into())
-            }
-        }
-    }
-
-    pub async fn get_maintenance_operation_by_id(
-        &self,
-        operation_id: &str,
-    ) -> Result<Option<MaintenanceOperation>> {
-        debug!("Querying maintenance operation by ID: {}", operation_id);
-
-        let row = sqlx::query(
-            r#"
-            SELECT id, operation_type, target_name, status, started_at,
-                   completed_at, error_message, details
-            FROM maintenance_operations
-            WHERE id = ?
-            "#,
-        )
-        .bind(operation_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let operation = MaintenanceOperation {
-                id: row.try_get("id")?,
-                operation_type: row.try_get("operation_type")?,
-                target_name: row.try_get("target_name")?,
-                status: row.try_get("status")?,
-                started_at: row.try_get("started_at")?,
-                completed_at: row.try_get("completed_at")?,
-                error_message: row.try_get("error_message")?,
-                details: row.try_get("details")?,
-            };
-            debug!("✅ Found maintenance operation: {}", operation_id);
-            Ok(Some(operation))
-        } else {
-            debug!("No maintenance operation found with ID: {}", operation_id);
-            Ok(None)
-        }
     }
 }

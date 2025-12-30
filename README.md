@@ -18,6 +18,7 @@ A comprehensive Rust-based infrastructure management system for 20+ blockchain n
 - **Hermes Management**: Smart relayer restarts with RPC-based dependency validation
 - **Web Interface**: RESTful API with comprehensive endpoints for all operations
 - **Centralized Alert System**: Progressive rate-limited webhook notifications with recovery detection
+- **Database-Backed Configuration**: RESTful API for managing servers, nodes, and Hermes instances with immediate effect
 - **Configuration Hot-Reload**: Multi-server support with automatic configuration reloading
 - **Smart Path Derivation**: Automatic path configuration based on server-level defaults
 
@@ -167,6 +168,23 @@ export AGENT_API_KEY="your-secure-api-key-here"
 ```
 
 ## Configuration
+
+The manager supports two configuration modes:
+
+1. **Database-Backed (Primary)**: Configuration stored in SQLite, managed via REST API (`/api/admin/*`). Changes take effect immediately.
+2. **TOML Files (Import/Legacy)**: Traditional file-based configuration. Auto-imported to database on first startup.
+
+### Secrets Management
+
+API keys are stored separately in `config/secrets.toml` and never exposed via API:
+
+```toml
+[servers]
+enterprise = "your-api-key-for-enterprise-server"
+discovery = "your-api-key-for-discovery-server"
+```
+
+The database stores only references (e.g., `api_key_ref = "enterprise"`), and secrets are applied at runtime.
 
 ### Main Configuration
 
@@ -324,12 +342,48 @@ GET /api/health/hermes/{hermes_name}
 #### Configuration Management
 
 ```bash
-# Get all node configurations
+# Get all node configurations (read-only view)
 GET /api/config/nodes
 
-# Get all Hermes configurations
+# Get all Hermes configurations (read-only view)
 GET /api/config/hermes
 ```
+
+#### Configuration Administration (CRUD)
+
+```bash
+# Server management
+GET    /api/admin/servers              # List all servers
+POST   /api/admin/servers              # Create server (validates connectivity)
+GET    /api/admin/servers/{id}         # Get server by ID
+PUT    /api/admin/servers/{id}         # Update server
+DELETE /api/admin/servers/{id}         # Delete server
+
+# Node management
+GET    /api/admin/nodes                # List all nodes
+POST   /api/admin/nodes                # Create node (validates RPC connectivity)
+GET    /api/admin/nodes/{id}           # Get node by ID
+PUT    /api/admin/nodes/{id}           # Update node
+DELETE /api/admin/nodes/{id}           # Delete node
+PATCH  /api/admin/nodes/{id}/toggle    # Enable/disable node
+
+# Hermes management
+GET    /api/admin/hermes               # List all Hermes instances
+POST   /api/admin/hermes               # Create Hermes instance
+GET    /api/admin/hermes/{id}          # Get Hermes by ID
+PUT    /api/admin/hermes/{id}          # Update Hermes instance
+DELETE /api/admin/hermes/{id}          # Delete Hermes instance
+
+# Global settings
+GET    /api/admin/settings             # Get all global settings
+PUT    /api/admin/settings             # Update global settings
+
+# Import/Export
+POST   /api/admin/config/import        # Re-import from TOML files
+GET    /api/admin/config/source        # Get current config source (Database/TomlFiles)
+```
+
+**Note**: All admin CRUD operations automatically reload the scheduler, so schedule changes take effect immediately without restart.
 
 #### Manual Operations (Non-Blocking)
 

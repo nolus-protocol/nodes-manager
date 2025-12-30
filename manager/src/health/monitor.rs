@@ -465,11 +465,10 @@ impl HealthMonitor {
 
         match record {
             Some(record) => {
-                let hermes_config = self
-                    .config
-                    .hermes
-                    .get(hermes_name)
-                    .ok_or_else(|| anyhow!("Hermes {} not found in configuration", hermes_name))?;
+                let hermes_config =
+                    self.config.hermes.get(hermes_name).ok_or_else(|| {
+                        anyhow!("Hermes {} not found in configuration", hermes_name)
+                    })?;
 
                 let uptime_formatted = record.uptime_seconds.map(|secs| {
                     let secs = secs as u64;

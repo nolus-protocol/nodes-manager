@@ -1,6 +1,12 @@
 // File: manager/src/config/mod.rs
 pub mod manager;
+pub mod secrets;
+pub mod store;
+
 pub use manager::ConfigManager;
+pub use secrets::SecretsLoader;
+pub use store::{ConfigStore, ImportResult};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

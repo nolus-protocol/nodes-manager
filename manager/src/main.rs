@@ -49,19 +49,21 @@ async fn main() -> Result<()> {
 
     info!("Starting Blockchain Infrastructure Manager");
 
-    // Load configuration
-    let config_manager = ConfigManager::new("config".to_string()).await?;
-    let config = config_manager.get_current_config();
-    info!(
-        "Configuration loaded: {} nodes, {} hermes instances, {} servers",
-        config.nodes.len(),
-        config.hermes.len(),
-        config.servers.len()
-    );
-
-    // Initialize database
+    // Initialize database first (needed for DB-backed configuration)
     let database = Arc::new(Database::new("data/nodes.db").await?);
     info!("Database initialized");
+
+    // Load configuration (from database if available, otherwise from TOML files)
+    let config_manager =
+        Arc::new(ConfigManager::new("config".to_string(), database.clone()).await?);
+    let config = config_manager.get_current_config().await;
+    info!(
+        "Configuration loaded: {} nodes, {} hermes instances, {} servers (source: {:?})",
+        config.nodes.len(),
+        config.hermes.len(),
+        config.servers.len(),
+        config_manager.get_source()
+    );
 
     // Initialize operation tracker
     let operation_tracker = Arc::new(SimpleOperationTracker::new());
@@ -270,7 +272,8 @@ async fn main() -> Result<()> {
         database,
         health_monitor,
         http_manager,
-        Arc::new(config_manager),
+        config_manager,
+        scheduler,
         snapshot_manager,
         operation_tracker,
         operation_executor,

@@ -72,10 +72,11 @@ async fn setup_test_executor() -> (Arc<OperationExecutor>, Arc<Database>, Arc<Al
         });
 
     let test_config = config_builder.build();
-    let config_manager = ConfigManager::new(test_config.config_dir().to_string_lossy().to_string())
-        .await
-        .expect("Failed to create config manager");
-    let config = config_manager.get_current_config();
+    let config_manager =
+        ConfigManager::new_legacy(test_config.config_dir().to_string_lossy().to_string())
+            .await
+            .expect("Failed to create config manager");
+    let config = config_manager.get_current_config().await;
 
     // Create alert service (disabled for tests)
     let alert_service = Arc::new(AlertService::new("".to_string()));
